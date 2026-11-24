@@ -15,6 +15,8 @@ import '../services/drawer_window_service.dart';
 import '../services/p2p_ffi.dart';
 
 class DropDrawerController extends ChangeNotifier {
+  static final bool _tracksLiveP2pPath = Platform.isWindows || Platform.isMacOS;
+
   final DrawerWindowService windowService = DrawerWindowService();
   final P2pFfiBridge p2p = P2pFfiBridge();
 
@@ -244,7 +246,7 @@ class DropDrawerController extends ChangeNotifier {
       final channel = switch (pathKind) {
         'direct' => 'p2p_direct',
         'relay' => 'p2p_relay',
-        _ => Platform.isWindows ? 'p2p_connecting' : 'p2p_relay',
+        _ => _tracksLiveP2pPath ? 'p2p_connecting' : 'p2p_relay',
       };
       final savedPath = ev['saved_path'] as String?;
       final finished = ev['finished'] as bool? ?? false;
@@ -650,7 +652,7 @@ class DropDrawerController extends ChangeNotifier {
           transferred: 0,
           total: item.size,
           speedBps: 0,
-          channel: Platform.isWindows ? 'p2p_connecting' : 'p2p_direct',
+          channel: _tracksLiveP2pPath ? 'p2p_connecting' : 'p2p_direct',
           finished: false,
         );
         notifyListeners();
