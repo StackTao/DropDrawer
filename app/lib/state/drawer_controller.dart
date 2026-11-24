@@ -55,6 +55,7 @@ class DropDrawerController extends ChangeNotifier {
   final Map<String, String> localFilePaths = {};
   final Map<String, TransferProgress> activeTransfers = {};
   final Map<String, TransferProgress> outgoingTransfers = {};
+  final Set<String> _cancellingSends = {};
   final Map<String, String> _p2pDownloadIds = {};
   final Map<String, TransferCancelToken> _activeCancelTokens = {};
   String? statusBanner;
@@ -108,6 +109,7 @@ class DropDrawerController extends ChangeNotifier {
             localFilePaths[entry.key] = path;
           }
         }
+        await windowService.pruneClipboardFiles(localFilePaths.values);
       } catch (_) {}
     }
 
@@ -168,6 +170,7 @@ class DropDrawerController extends ChangeNotifier {
       _activeCancelTokens.remove(id);
     }
     _p2pDownloadIds.clear();
+    _cancellingSends.clear();
     outgoingTransfers.clear();
     activeTransfers.clear();
     p2p.shutdown();
@@ -280,6 +283,9 @@ class DropDrawerController extends ChangeNotifier {
 
       if (sendingTo != null) {
         if (finished) {
+          if (_cancellingSends.remove(transferId) && !cancelled && err == null) {
+            statusBanner = '发送已完成';
+          }
           outgoingTransfers.remove(transferId);
           if (cancelled) statusBanner = '已取消发送';
           if (err != null) statusBanner = 'P2P 发送失败：$err';
@@ -294,7 +300,7 @@ class DropDrawerController extends ChangeNotifier {
         _p2pDownloadIds.remove(itemId);
         _activeCancelTokens.remove(itemId);
       }
-      if (cancelled || (finished && err != null && token?.isCancelled == true)) {
+      if (cancelled) {
         activeTransfers.remove(itemId);
         statusBanner = '已取消下载';
         continue;
@@ -306,7 +312,7 @@ class DropDrawerController extends ChangeNotifier {
       }
       if (finished && err != null) {
         final item = items.where((i) => i.id == itemId).firstOrNull;
-        if (item != null && item.cloudReady) {
+        if (item != null && item.cloudReady && token?.isCancelled != true) {
           unawaited(downloadItem(item, cloudOnly: true));
         }
       } else if (finished && savedPath != null) {
@@ -580,13 +586,18 @@ class DropDrawerController extends ChangeNotifier {
     _activeCancelTokens[itemId]?.cancel();
   }
 
+  bool isCancelling(String itemId) => _activeCancelTokens[itemId]?.isCancelled ?? false;
+  bool isCancellingSend(String transferId) => _cancellingSends.contains(transferId);
+
   void cancelOutgoingTransfer(String transferId) {
+    if (!_cancellingSends.add(transferId)) return;
     try {
       p2p.cancelTransfer(transferId);
-    } catch (_) {}
-    outgoingTransfers.remove(transferId);
-    statusBanner = '已取消发送';
-    notifyListeners();
+      setBanner('正在取消发送');
+    } catch (e) {
+      _cancellingSends.remove(transferId);
+      setBanner('取消发送失败：$e');
+    }
   }
 
   Future<void> retryTransfer(DrawerItem item) async {
@@ -699,9 +710,13 @@ class DropDrawerController extends ChangeNotifier {
       finished: false,
     );
     cancel.attach(() {
-      _activeCancelTokens.remove(item.id);
-      activeTransfers.remove(item.id);
-      setBanner('已取消下载');
+      if (activeTransfers[item.id]?.channel == 'preparing') {
+        _activeCancelTokens.remove(item.id);
+        activeTransfers.remove(item.id);
+        setBanner('已取消下载');
+      } else {
+        setBanner('正在取消下载');
+      }
     });
     notifyListeners();
     try {
@@ -726,12 +741,11 @@ class DropDrawerController extends ChangeNotifier {
         );
         _p2pDownloadIds[item.id] = id;
         cancel.attach(() {
-          if (_p2pDownloadIds[item.id] == id) {
-            _p2pDownloadIds.remove(item.id);
-          }
           try {
             p2p.cancelTransfer(id);
-          } catch (_) {}
+          } catch (e) {
+            setBanner('取消下载失败：$e');
+          }
         });
         activeTransfers[item.id] = TransferProgress(
           itemId: item.id,
@@ -811,7 +825,6 @@ class DropDrawerController extends ChangeNotifier {
         },
       );
 
-      if (cancelToken.isCancelled) return;
       localFilePaths[itemId] = saved;
       unawaited(_persistLocalFilePaths());
       activeTransfers[itemId] = TransferProgress(

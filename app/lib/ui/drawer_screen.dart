@@ -399,8 +399,10 @@ class _DrawerScreenState extends State<DrawerScreen> {
     return DropRegion(
       formats: const [Formats.fileUri, Formats.plainText],
       hitTestBehavior: HitTestBehavior.opaque,
-      onDropOver: (_) {
-        unawaited(c.windowService.showDragGuide());
+      onDropOver: (event) {
+        if (event.session.items.any((item) => item.canProvide(Formats.fileUri))) {
+          unawaited(c.windowService.showDragGuide());
+        }
         return DropOperation.copy;
       },
       onPerformDrop: (event) => _handleDropSession(c, event, expandAfterDrop: true),
@@ -1788,9 +1790,9 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                       CupertinoButton(
                         padding: const EdgeInsets.symmetric(horizontal: 4),
                         minimumSize: const Size(0, 24),
-                        onPressed: () => c.cancelTransfer(item.id),
+                        onPressed: c.isCancelling(item.id) ? null : () => c.cancelTransfer(item.id),
                         child: Text(
-                          progress.channel == 'upload' ? '取消上传' : '取消下载',
+                          c.isCancelling(item.id) ? '正在取消' : (progress.channel == 'upload' ? '取消上传' : '取消下载'),
                           style: const TextStyle(fontSize: 10, color: MacPalette.red),
                         ),
                       ),
@@ -1812,8 +1814,8 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                   CupertinoButton(
                     minimumSize: const Size(0, 24),
                     padding: const EdgeInsets.symmetric(horizontal: 4),
-                    onPressed: () => c.cancelOutgoingTransfer(entry.key),
-                    child: const Text('取消发送', style: TextStyle(fontSize: 10, color: MacPalette.red)),
+                    onPressed: c.isCancellingSend(entry.key) ? null : () => c.cancelOutgoingTransfer(entry.key),
+                    child: Text(c.isCancellingSend(entry.key) ? '正在取消' : '取消发送', style: const TextStyle(fontSize: 10, color: MacPalette.red)),
                   ),
                 ],
               ),

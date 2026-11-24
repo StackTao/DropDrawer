@@ -362,9 +362,9 @@ class ItemPreviewView extends StatelessWidget {
                     CupertinoButton(
                       padding: const EdgeInsets.symmetric(horizontal: 4),
                       minimumSize: const Size(0, 24),
-                      onPressed: () => c.cancelTransfer(item.id),
+                      onPressed: c.isCancelling(item.id) ? null : () => c.cancelTransfer(item.id),
                       child: Text(
-                        progress.channel == 'upload' ? '取消上传' : '取消下载',
+                        c.isCancelling(item.id) ? '正在取消' : (progress.channel == 'upload' ? '取消上传' : '取消下载'),
                         style: const TextStyle(fontSize: 11, color: MacPalette.red),
                       ),
                     ),
@@ -389,10 +389,10 @@ class ItemPreviewView extends StatelessWidget {
                 CupertinoButton(
                   padding: const EdgeInsets.symmetric(horizontal: 4),
                   minimumSize: const Size(0, 24),
-                  onPressed: () => c.cancelOutgoingTransfer(entry.key),
-                  child: const Text(
-                    '取消发送',
-                    style: TextStyle(fontSize: 11, color: MacPalette.red),
+                  onPressed: c.isCancellingSend(entry.key) ? null : () => c.cancelOutgoingTransfer(entry.key),
+                  child: Text(
+                    c.isCancellingSend(entry.key) ? '正在取消' : '取消发送',
+                    style: const TextStyle(fontSize: 11, color: MacPalette.red),
                   ),
                 ),
               ],

@@ -2,9 +2,15 @@ name: Windows installer
 
 on:
   workflow_dispatch:
+    inputs:
+      previous_run:
+        description: "Optional Windows installer run to upgrade from in the smoke test"
+        required: false
+        type: string
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   windows-x64:
@@ -41,6 +47,7 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $true
           $env:PUB_CACHE = Join-Path $env:RUNNER_TEMP 'pub-cache'
           flutter pub get --enforce-lockfile
+          flutter test --no-pub
           flutter build windows --release --no-pub
 
       - name: Build native P2P library
@@ -70,39 +77,60 @@ jobs:
           $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
           & $iscc "/DAppVersion=$version" 'deploy/windows/DropDrawer.iss'
 
-      - name: Verify install, native DLL, and launch
+      - name: Download previous installer for upgrade test
+        if: inputs.previous_run != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIOUS_RUN: ${{ inputs.previous_run }}
+        run: gh run download $env:PREVIOUS_RUN -n DropDrawer-Windows-x64 -D previous-installer
+
+      - name: Verify running upgrade, native DLL, and running uninstall
         run: |
           $installDir = Join-Path $env:RUNNER_TEMP 'DropDrawer Test'
-          $installer = Start-Process -FilePath $env:INSTALLER_PATH -Wait -PassThru -ArgumentList @(
-            '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', ('/DIR="' + $installDir + '"')
-          )
-          if ($installer.ExitCode -ne 0) { throw "Installer failed with exit code $($installer.ExitCode)." }
-
-          $dll = [System.Runtime.InteropServices.NativeLibrary]::Load((Join-Path $installDir 'dropdrawer_p2p.dll'))
-          try {
-            [void][System.Runtime.InteropServices.NativeLibrary]::GetExport($dll, 'dropdrawer_p2p_start')
-          } finally {
-            [System.Runtime.InteropServices.NativeLibrary]::Free($dll)
-          }
-
           $appExe = Join-Path $installDir 'dropdrawer_app.exe'
-          $app = Start-Process -FilePath $appExe -WorkingDirectory $env:RUNNER_TEMP -PassThru
-          try {
+          $silent = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART')
+          function InstallDrawer($setup) {
+            $p = Start-Process $setup -Wait -PassThru -ArgumentList ($silent + ('/DIR="' + $installDir + '"'))
+            if ($p.ExitCode -ne 0) { throw "Setup exited with $($p.ExitCode)" }
+          }
+          function HideToTray($p) {
             $deadline = (Get-Date).AddSeconds(30)
             do {
-              Start-Sleep -Milliseconds 500
-              $app.Refresh()
-            } until ($app.HasExited -or $app.MainWindowHandle -ne 0 -or (Get-Date) -ge $deadline)
-            if ($app.HasExited) { throw "DropDrawer exited with code $($app.ExitCode)." }
-            if ($app.MainWindowHandle -eq 0) { throw 'DropDrawer did not open a window.' }
+              Start-Sleep -Milliseconds 250
+              $p.Refresh()
+            } until ($p.HasExited -or $p.MainWindowHandle -ne 0 -or (Get-Date) -ge $deadline)
+            if ($p.HasExited -or !$p.CloseMainWindow()) { throw 'Could not hide DropDrawer to tray' }
+            Start-Sleep -Milliseconds 500
+            $p.Refresh()
+            if ($p.HasExited -or $p.MainWindowHandle -ne 0) { throw 'Could not confirm tray residency' }
+          }
 
-            $second = Start-Process -FilePath $appExe -WorkingDirectory $env:RUNNER_TEMP -PassThru
-            if (!$second.WaitForExit(10000)) {
-              Stop-Process -Id $second.Id
-              throw 'A second DropDrawer instance kept running.'
+          $previous = 'previous-installer/DropDrawer-Windows-x64-Setup.exe'
+          if (Test-Path $previous) { InstallDrawer $previous } else { InstallDrawer $env:INSTALLER_PATH }
+          $app = Start-Process $appExe -WorkingDirectory $installDir -PassThru
+          try {
+            HideToTray $app
+            InstallDrawer $env:INSTALLER_PATH
+            if (!$app.WaitForExit(5000)) { throw 'Upgrade left the old tray process running' }
+            $dll = [System.Runtime.InteropServices.NativeLibrary]::Load((Join-Path $installDir 'dropdrawer_p2p.dll'))
+            try {
+              [void][System.Runtime.InteropServices.NativeLibrary]::GetExport($dll, 'dropdrawer_p2p_cancel_transfer')
+            } finally {
+              [System.Runtime.InteropServices.NativeLibrary]::Free($dll)
             }
-            if ($second.ExitCode -ne 0 -or $app.HasExited) {
-              throw 'Reopening DropDrawer failed.'
+            $app = Start-Process $appExe -WorkingDirectory $installDir -PassThru
+            HideToTray $app
+            $second = Start-Process $appExe -WorkingDirectory $installDir -PassThru
+            if (!$second.WaitForExit(10000) -or $second.ExitCode -ne 0 -or $app.HasExited) {
+              throw 'Single-instance activation failed'
+            }
+            HideToTray $app
+            $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+            Set-ItemProperty $runKey -Name DropDrawer -Value ('"' + $appExe + '" --background')
+            $uninstall = Start-Process (Join-Path $installDir 'unins000.exe') -Wait -PassThru -ArgumentList $silent
+            if ($uninstall.ExitCode -ne 0 -or !$app.WaitForExit(5000) -or (Test-Path $appExe) -or
+                (Get-ItemPropertyValue $runKey DropDrawer -ErrorAction SilentlyContinue)) {
+              throw 'Running uninstall failed to remove the app, process or startup entry'
             }
           } finally {
             if (!$app.HasExited) { Stop-Process -Id $app.Id }

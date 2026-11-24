@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -151,7 +150,6 @@ class DrawerWindowService {
       if (isWindows) {
         final dir = await getApplicationSupportDirectory();
         final clipDir = Directory(p.join(dir.path, 'clipboard'));
-        unawaited(_pruneOldClipboardFiles(clipDir));
         final name = 'Screenshot-${DateTime.now().microsecondsSinceEpoch}.png';
         arguments = {'imagePath': p.join(clipDir.path, name)};
       }
@@ -205,27 +203,23 @@ class DrawerWindowService {
     try {
       if (isWindows) {
         final buffer = await ui.ImmutableBuffer.fromFilePath(path);
+        final codec = await ui.instantiateImageCodecWithSize(
+          buffer,
+          getTargetSize: (width, height) => ui.TargetImageSize(
+            width: width >= height && width > 256 ? 256 : null,
+            height: height > width && height > 256 ? 256 : null,
+          ),
+        );
         try {
-          final codec = await ui.instantiateImageCodecWithSize(
-            buffer,
-            getTargetSize: (width, height) => ui.TargetImageSize(
-              width: width >= height && width > 256 ? 256 : null,
-              height: height > width && height > 256 ? 256 : null,
-            ),
-          );
+          final frame = await codec.getNextFrame();
           try {
-            final frame = await codec.getNextFrame();
-            try {
-              final data = await frame.image.toByteData(format: ui.ImageByteFormat.png);
-              return data == null ? null : base64Encode(data.buffer.asUint8List());
-            } finally {
-              frame.image.dispose();
-            }
+            final data = await frame.image.toByteData(format: ui.ImageByteFormat.png);
+            return data == null ? null : base64Encode(data.buffer.asUint8List());
           } finally {
-            codec.dispose();
+            frame.image.dispose();
           }
         } finally {
-          buffer.dispose();
+          codec.dispose();
         }
       }
       return await _channel.invokeMethod<String>('generateThumbnail', {'path': path});
@@ -278,23 +272,25 @@ class DrawerWindowService {
     });
   }
 
-  Future<void> _pruneOldClipboardFiles(Directory clipDir) async {
+  Future<void> pruneClipboardFiles(Iterable<String> retainedPaths) async {
+    if (!isWindows) return;
     try {
-      if (!await clipDir.exists()) return;
+      final support = await getApplicationSupportDirectory();
+      final dir = Directory(p.join(support.path, 'clipboard'));
+      if (!await dir.exists()) return;
+      final retained = retainedPaths.map(p.canonicalize).toSet();
       final cutoff = DateTime.now().subtract(const Duration(hours: 24));
-      final files = <File>[];
-      await for (final entity in clipDir.list()) {
-        if (entity is File) files.add(entity);
-      }
-      files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
-      for (var i = 0; i < files.length; i++) {
-        if (i >= 20 || files[i].lastModifiedSync().isBefore(cutoff)) {
-          try {
-            await files[i].delete();
-          } catch (_) {}
+      final screenshot = RegExp(r'^Screenshot-[0-9]+\.png$');
+      await for (final file in dir.list(followLinks: false)) {
+        if (file is File && screenshot.hasMatch(p.basename(file.path)) &&
+            !retained.contains(p.canonicalize(file.path)) &&
+            (await file.lastModified()).isBefore(cutoff)) {
+          await file.delete();
         }
       }
-    } catch (_) {}
+    } on FileSystemException {
+      // Cache maintenance can be retried at the next startup.
+    }
   }
 
   Future<bool> requestAccessibilityPermission() async {

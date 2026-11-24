@@ -19,12 +19,17 @@ pub(super) const PROBE_CODE: u32 = 0x4450;
 pub(super) struct Cancelled;
 
 const MAX_BUFFERED_EVENTS: usize = 256;
-const MAX_TERMINAL_EVENTS: usize = 1024;
 
 #[derive(Default)]
 pub(super) struct Transfers {
     cancellations: DashMap<String, oneshot::Sender<()>>,
-    events: Mutex<VecDeque<P2pTransferProgress>>,
+    events: Mutex<Events>,
+}
+
+#[derive(Default)]
+struct Events {
+    live: VecDeque<P2pTransferProgress>,
+    finished: Vec<P2pTransferProgress>,
 }
 
 impl Transfers {
@@ -59,28 +64,24 @@ impl Transfers {
 
     pub fn report(&self, progress: &P2pTransferProgress) {
         let mut events = self.events.lock().unwrap_or_else(|e| e.into_inner());
-        // Keep the latest live update per transfer while preserving terminal events.
-        if !progress.finished {
-            events.retain(|e| e.finished || e.transfer_id != progress.transfer_id);
-        }
-        events.push_back(progress.clone());
-        while events.len() > MAX_BUFFERED_EVENTS {
-            if let Some(idx) = events.iter().position(|e| !e.finished) {
-                events.remove(idx);
-            } else if events.len() > MAX_TERMINAL_EVENTS {
-                events.pop_front();
-            } else {
-                break;
+        if progress.finished {
+            events.finished.push(progress.clone());
+        } else {
+            events
+                .live
+                .retain(|e| e.transfer_id != progress.transfer_id);
+            events.live.push_back(progress.clone());
+            if events.live.len() > MAX_BUFFERED_EVENTS {
+                events.live.pop_front();
             }
         }
     }
 
     pub fn drain(&self) -> Vec<P2pTransferProgress> {
-        self.events
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .drain(..)
-            .collect()
+        let mut events = self.events.lock().unwrap_or_else(|e| e.into_inner());
+        let mut batch: Vec<_> = events.live.drain(..).collect();
+        batch.append(&mut events.finished);
+        batch
     }
 }
 

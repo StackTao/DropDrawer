@@ -346,16 +346,8 @@ class ApiClient {
       await sink.close();
       sink = null;
       if (cancelToken?.isCancelled ?? false) throw TransferCancelledException();
-      if (Platform.isWindows && await outFile.exists()) {
-        try {
-          await partial.rename(destPath);
-        } on FileSystemException {
-          await outFile.delete();
-          await partial.rename(destPath);
-        }
-      } else {
-        await partial.rename(destPath);
-      }
+      // Staging is on the same volume. A failed replacement preserves the destination.
+      await partial.rename(destPath);
       return destPath;
     } catch (e) {
       try {

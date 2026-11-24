@@ -13,10 +13,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use iroh::{
     Endpoint, EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr,
-    endpoint::{Connection, ConnectionError, RelayMode},
+    endpoint::{Connection, ConnectionError, RelayMode, StoppedError, VarInt},
 };
 use protocol::{P2pPathKind, P2pTransferProgress};
 use serde::{Deserialize, Serialize};
@@ -67,14 +67,28 @@ struct AuthorizedToken {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+struct LegacyPrefix {
+    size: u64,
+    hash: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct PullRequestHeader {
     item_id: String,
     token: String,
     offset: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    legacy_prefix: Option<LegacyPrefix>,
+    #[serde(default)]
+    wants_receipt: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct PullResponseHeader {
+    #[serde(default)]
+    resumed_legacy: bool,
+    #[serde(default)]
+    supports_receipt: bool,
     ok: bool,
     error: Option<String>,
     size: u64,
@@ -95,6 +109,7 @@ struct DownloadFileReq {
 
 pub struct P2pNode {
     endpoint: Endpoint,
+    partial_paths: DashSet<PathBuf>,
     shared_files: Arc<DashMap<String, SharedFileEntry>>,
     /// Map of `token -> AuthorizedToken`. If empty & `require_auth_token` is false, allows test pulls.
     authorized_tokens: Arc<DashMap<String, AuthorizedToken>>,
@@ -176,6 +191,7 @@ impl P2pNode {
 
         Ok(Arc::new(Self {
             endpoint,
+            partial_paths: DashSet::new(),
             shared_files,
             authorized_tokens,
             require_auth_token,
@@ -308,6 +324,9 @@ impl P2pNode {
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         self.relay_probe.schedule(&conn, Some(remote_addr));
         let part_path = part_path_for(&dest_path);
+        let _destination = PartialLease::acquire(&self.partial_paths, &part_path)
+            .ok_or_else(|| anyhow::anyhow!("download destination is already in use"))?;
+        let legacy = dest_path.with_extension("dropdrawer.part");
         let mut partial_file = None;
         let receive = async {
             let (mut send, mut recv) = conn.open_bi().await?;
@@ -316,19 +335,33 @@ impl P2pNode {
             if let Some(parent) = dest_path.parent() {
                 tokio::fs::create_dir_all(parent).await?;
             }
-            let existing_offset = if part_path.exists() {
-                tokio::fs::metadata(&part_path)
-                    .await
-                    .map(|m| m.len())
-                    .unwrap_or(0)
-            } else {
-                0
+            let existing = tokio::fs::metadata(&part_path).await;
+            let mut existing_offset = match existing {
+                Ok(meta) => meta.len(),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
+                Err(e) => return Err(e.into()),
             };
-
+            let legacy_lease = if existing_offset == 0 && legacy != part_path {
+                PartialLease::acquire(&self.partial_paths, &legacy)
+            } else {
+                None
+            };
+            let legacy_prefix = if legacy_lease.is_some()
+                && tokio::fs::symlink_metadata(&legacy)
+                    .await
+                    .is_ok_and(|m| m.is_file())
+            {
+                let (size, hash) = compute_file_blake3(&legacy).await?;
+                Some(LegacyPrefix { size, hash })
+            } else {
+                None
+            };
             let req_header = PullRequestHeader {
                 item_id: progress.item_id.clone(),
                 token: req.transfer_token,
                 offset: existing_offset,
+                wants_receipt: true,
+                legacy_prefix,
             };
             write_frame(&mut send, &serde_json::to_vec(&req_header)?).await?;
             send.finish()?;
@@ -342,6 +375,17 @@ impl P2pNode {
                 );
             }
 
+            if resp_header.resumed_legacy {
+                let prefix = req_header
+                    .legacy_prefix
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("unexpected legacy resume offset"))?;
+                // Both endpoints verified the old prefix against the requested source.
+                // The leases keep another local transfer from moving either path.
+                std::fs::rename(&legacy, &part_path)?;
+                existing_offset = prefix.size;
+            }
+            drop(legacy_lease);
             let total_bytes = resp_header.size;
             let mut offset = if existing_offset <= total_bytes {
                 existing_offset
@@ -445,6 +489,11 @@ impl P2pNode {
             conn.close(transfers::CANCEL_CODE.into(), b"transfer cancelled");
             return Err(Cancelled.into());
         }
+        if matches!(conn.close_reason(), Some(ConnectionError::ApplicationClosed(reason))
+            if reason.error_code == CANCEL_CODE.into())
+        {
+            return Err(Cancelled.into());
+        }
         if actual_size != total_bytes || actual_hash != resp_header.blake3_hash {
             let _ = tokio::fs::remove_file(&part_path).await;
             anyhow::bail!(
@@ -457,6 +506,9 @@ impl P2pNode {
         }
 
         tokio::fs::rename(&part_path, &dest_path).await?;
+        if resp_header.supports_receipt {
+            conn.close(DELIVERED_CODE.into(), b"file verified and saved");
+        }
         progress.bytes_transferred = total_bytes;
         progress.speed_bps = 0;
         progress.saved_path = Some(dest_path.to_string_lossy().to_string());
@@ -499,6 +551,8 @@ async fn handle_incoming_connection(
         };
         if !valid {
             let resp = PullResponseHeader {
+                resumed_legacy: false,
+                supports_receipt: false,
                 ok: false,
                 error: Some("unauthorized or expired P2P transfer token".to_string()),
                 size: 0,
@@ -512,6 +566,8 @@ async fn handle_incoming_connection(
 
     let Some(entry) = shared_files.get(&req.item_id).map(|e| e.clone()) else {
         let resp = PullResponseHeader {
+            resumed_legacy: false,
+            supports_receipt: false,
             ok: false,
             error: Some("file not found on source device".to_string()),
             size: 0,
@@ -526,6 +582,8 @@ async fn handle_incoming_connection(
         Ok(f) => f,
         Err(err) => {
             let resp = PullResponseHeader {
+                resumed_legacy: false,
+                supports_receipt: false,
                 ok: false,
                 error: Some(format!("source file unreadable: {err}")),
                 size: 0,
@@ -537,12 +595,6 @@ async fn handle_incoming_connection(
         }
     };
 
-    let resp = PullResponseHeader {
-        ok: true,
-        error: None,
-        size: entry.size,
-        blake3_hash: entry.blake3_hash.clone(),
-    };
     let mut transfer = transfers.begin(req.item_id, Some(conn.remote_id().to_string()));
     let progress = &mut transfer.progress;
     progress.total_bytes = entry.size;
@@ -550,13 +602,41 @@ async fn handle_incoming_connection(
     progress.bytes_transferred = req.offset.min(entry.size);
     transfers.report(progress);
     let send_file = async {
-        write_frame(&mut send, &serde_json::to_vec(&resp)?).await?;
-
-        let start_offset = req.offset.min(entry.size);
-        if start_offset > 0 {
-            file.seek(std::io::SeekFrom::Start(start_offset)).await?;
+        let mut start_offset = if req.offset <= entry.size {
+            req.offset
+        } else {
+            0
+        };
+        let mut resumed_legacy = false;
+        if let Some(prefix) = req.legacy_prefix {
+            if req.offset == 0 && prefix.size > 0 && prefix.size <= entry.size {
+                let mut reader = (&mut file).take(prefix.size);
+                let mut hasher = blake3::Hasher::new();
+                let mut buf = vec![0; CHUNK_SIZE];
+                loop {
+                    let n = reader.read(&mut buf).await?;
+                    if n == 0 {
+                        break;
+                    }
+                    hasher.update(&buf[..n]);
+                }
+                resumed_legacy = hasher.finalize().to_hex().as_str() == prefix.hash;
+                if resumed_legacy {
+                    start_offset = prefix.size;
+                }
+            }
         }
-
+        file.seek(std::io::SeekFrom::Start(start_offset)).await?;
+        let resp = PullResponseHeader {
+            ok: true,
+            error: None,
+            size: entry.size,
+            blake3_hash: entry.blake3_hash,
+            resumed_legacy,
+            supports_receipt: req.wants_receipt,
+        };
+        write_frame(&mut send, &serde_json::to_vec(&resp)?).await?;
+        progress.bytes_transferred = start_offset;
         let mut buf = vec![0u8; CHUNK_SIZE];
         let mut last_report = Instant::now();
         let mut bytes_since_report = 0u64;
@@ -581,29 +661,59 @@ async fn handle_incoming_connection(
                 bytes_since_report = 0;
             }
         }
+        anyhow::ensure!(
+            progress.bytes_transferred == entry.size,
+            "source size changed while sending"
+        );
         send.finish()?;
-        // Wait briefly for peer to acknowledge the FIN. Once all bytes and FIN
-        // are sent, the peer may close the connection immediately after reading
-        // EOF without raising an error, so only treat an explicit cancel code
-        // as cancellation and ignore benign post-EOF close errors.
-        match send.stopped().await {
-            Ok(_) => Ok(()),
-            Err(_) => {
-                if matches!(
-                    conn.close_reason(),
-                    Some(ConnectionError::ApplicationClosed(reason))
-                        if reason.error_code == CANCEL_CODE.into()
-                ) {
-                    Err(Cancelled.into())
-                } else {
-                    Ok(())
-                }
-            }
+        confirm_sent(send.stopped().await)?;
+        if req.wants_receipt {
+            let reason = conn.closed().await;
+            return confirm_sent(Err(StoppedError::ConnectionLost(reason)));
         }
+        Ok(())
     };
     let result = while_connected(&conn, &mut transfer.cancel, send_file).await;
     transfer.finish(&result);
     result
+}
+
+const DELIVERED_CODE: u32 = 0x4444;
+
+fn confirm_sent(result: Result<Option<VarInt>, StoppedError>) -> anyhow::Result<()> {
+    match result {
+        Ok(None) => Ok(()),
+        Ok(Some(code)) if code == CANCEL_CODE.into() => Err(Cancelled.into()),
+        Ok(Some(code)) => anyhow::bail!("receiver stopped the stream ({code})"),
+        Err(StoppedError::ConnectionLost(ConnectionError::ApplicationClosed(close)))
+            if close.error_code == DELIVERED_CODE.into() =>
+        {
+            Ok(())
+        }
+        Err(StoppedError::ConnectionLost(ConnectionError::ApplicationClosed(close)))
+            if close.error_code == CANCEL_CODE.into() =>
+        {
+            Err(Cancelled.into())
+        }
+        Err(e) => Err(anyhow::anyhow!("delivery unconfirmed: {e}")),
+    }
+}
+
+struct PartialLease<'a> {
+    paths: &'a DashSet<PathBuf>,
+    path: &'a Path,
+}
+
+impl<'a> PartialLease<'a> {
+    fn acquire(paths: &'a DashSet<PathBuf>, path: &'a Path) -> Option<Self> {
+        paths.insert(path.to_owned()).then(|| Self { paths, path })
+    }
+}
+
+impl Drop for PartialLease<'_> {
+    fn drop(&mut self) {
+        self.paths.remove(self.path);
+    }
 }
 
 fn part_path_for(dest_path: &Path) -> PathBuf {
@@ -848,34 +958,60 @@ mod tests {
             Utc::now() + chrono::Duration::minutes(5),
         );
 
-        let info_a = node_a.node_info();
         let dest_file = dir_b.path().join("received.bin");
-        let progress = node_b
-            .download_file(
-                "item-42".to_string(),
-                info_a.node_id,
-                info_a.relay_url,
-                info_a.direct_addrs,
-                token,
-                dest_file.clone(),
-            )
-            .await
-            .unwrap();
-
-        assert!(progress.finished);
-        assert_eq!(progress.total_bytes, payload.len() as u64);
-        #[cfg(any(target_os = "windows", target_os = "macos"))]
-        assert!(
-            node_b
-                .drain_events()
-                .iter()
-                .any(|event| { !event.finished && event.path_kind == P2pPathKind::Direct })
-        );
-        let received = tokio::fs::read(&dest_file).await.unwrap();
-        assert_eq!(received, payload);
+        let legacy = dest_file.with_extension("dropdrawer.part");
+        for matches in [false, true] {
+            let prefix = if matches {
+                &payload[..65536]
+            } else {
+                b"another file"
+            };
+            tokio::fs::write(&legacy, prefix).await.unwrap();
+            let info_a = node_a.node_info();
+            let progress = node_b
+                .download_file(
+                    "item-42".into(),
+                    info_a.node_id,
+                    info_a.relay_url,
+                    info_a.direct_addrs,
+                    token.clone(),
+                    dest_file.clone(),
+                )
+                .await
+                .unwrap();
+            assert!(progress.finished);
+            assert_eq!(progress.total_bytes, payload.len() as u64);
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            assert!(
+                node_b
+                    .drain_events()
+                    .iter()
+                    .any(|e| !e.finished && e.path_kind == P2pPathKind::Direct)
+            );
+            assert_eq!(tokio::fs::read(&dest_file).await.unwrap(), payload);
+            if matches {
+                assert!(!legacy.exists());
+            } else {
+                assert_eq!(tokio::fs::read(&legacy).await.unwrap(), prefix);
+            }
+        }
 
         node_a.shutdown().await;
         node_b.shutdown().await;
+    }
+
+    #[test]
+    fn require_delivery_confirmation() {
+        assert!(confirm_sent(Ok(None)).is_ok());
+        assert!(
+            confirm_sent(Ok(Some(CANCEL_CODE.into())))
+                .unwrap_err()
+                .is::<Cancelled>()
+        );
+        assert!(confirm_sent(Ok(Some(7u32.into()))).is_err());
+        assert!(
+            confirm_sent(Err(StoppedError::ConnectionLost(ConnectionError::TimedOut))).is_err()
+        );
     }
 
     #[test]
@@ -900,9 +1036,15 @@ mod tests {
             transfers.report(&t.progress);
         }
 
+        for i in 0..1100 {
+            transfers.begin(format!("done-{i}"), None).finish(&Ok(()));
+        }
         let drained = transfers.drain();
+        assert_eq!(drained.iter().filter(|e| e.finished).count(), 1101);
         assert!(
-            drained.iter().any(|e| e.transfer_id == done_id && e.finished),
+            drained
+                .iter()
+                .any(|e| e.transfer_id == done_id && e.finished),
             "terminal event must not be evicted by live progress updates"
         );
     }

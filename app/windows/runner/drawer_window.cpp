@@ -110,6 +110,23 @@ bool IsOleDragActive() {
          std::wcscmp(class_name, L"CLIPBRDWNDCLASS") == 0;
 }
 
+// Outside our drop target OLE does not expose IDataObject. Only advertise
+// early for shell file views. Other sources are checked on actual drag-over.
+bool IsShellFileDrag() {
+  if (!IsOleDragActive()) return false;
+  GUITHREADINFO info{};
+  info.cbSize = sizeof(info);
+  if (!GetGUIThreadInfo(0, &info)) return false;
+  // Explorer and the Desktop host their item list inside a SHELLDLL_DefView.
+  // Address bars, tab strips and browser documents are outside that subtree.
+  for (HWND hwnd = info.hwndFocus; hwnd; hwnd = GetAncestor(hwnd, GA_PARENT)) {
+    wchar_t name[32]{};
+    if (GetClassNameW(hwnd, name, ARRAYSIZE(name)) &&
+        std::wcscmp(name, L"SHELLDLL_DefView") == 0) return true;
+  }
+  return false;
+}
+
 bool IsModifier(UINT key) {
   return key == VK_CONTROL || key == VK_SHIFT || key == VK_MENU ||
          key == VK_LWIN || key == VK_RWIN;
@@ -413,7 +430,7 @@ void DrawerWindow::OnTimer() {
   const bool mouse_down =
       GetAsyncKeyState(VK_LBUTTON) < 0 || GetAsyncKeyState(VK_RBUTTON) < 0;
   if (mode_ == Mode::kCollapsed) {
-    if (mouse_down && IsOleDragActive()) {
+    if (mouse_down && IsShellFileDrag()) {
       guide_from_ole_drag_ = true;
       SetMode(Mode::kDragGuide);
     }
@@ -643,7 +660,8 @@ std::optional<LRESULT> DrawerWindow::HandleMessage(UINT message, WPARAM wparam,
         FinishRecording(false, false);
       }
       if (LOWORD(wparam) == WA_INACTIVE && edge_ &&
-          mode_ == Mode::kExpanded && !pinned_ && !opened_by_drag_ && !modal_open_) {
+          mode_ == Mode::kExpanded && !pinned_ && !opened_by_drag_ && !modal_open_ &&
+          !IsOleDragActive()) {
         POINT cursor{};
         RECT bounds{};
         if (GetCursorPos(&cursor) && GetWindowRect(window_, &bounds) &&
@@ -654,7 +672,7 @@ std::optional<LRESULT> DrawerWindow::HandleMessage(UINT message, WPARAM wparam,
       }
       break;
     case kOutsideClickMessage:
-      if (!pinned_ && !modal_open_ && GetForegroundWindow() != window_) {
+      if (!pinned_ && !modal_open_ && !IsOleDragActive() && GetForegroundWindow() != window_) {
         SetMode(Mode::kCollapsed);
       }
       return 0;

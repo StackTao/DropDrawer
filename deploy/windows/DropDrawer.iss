@@ -4,7 +4,6 @@
 AppId={{E250749F-4BC6-4861-B9C9-A8EF61FE76F9}
 AppName=DropDrawer
 AppVersion={#AppVersion}
-AppMutex=Local\DropDrawer
 CloseApplications=yes
 RestartApplications=no
 DefaultDirName={localappdata}\Programs\DropDrawer
@@ -34,8 +33,40 @@ Name: "{autodesktop}\DropDrawer"; Filename: "{app}\{#AppExe}"; WorkingDir: "{app
 Filename: "{app}\{#AppExe}"; Description: "Launch DropDrawer"; Flags: nowait postinstall skipifsilent
 
 [Code]
-procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+function FindDrawerWindow(ClassName, WindowName: String): HWND;
+  external 'FindWindowW@user32.dll stdcall';
+
+function CloseRunningDrawer: String;
+var
+  Wnd: HWND;
+  Attempt: Integer;
 begin
+  Result := '';
+  for Attempt := 1 to 100 do
+  begin
+    if not CheckForMutexes('Local\DropDrawer') then Exit;
+    Wnd := FindDrawerWindow('FLUTTER_RUNNER_WIN32_WINDOW', 'DropDrawer');
+    { Same quit message as the tray menu, including previously installed versions. }
+    if Wnd <> 0 then PostMessage(Wnd, $8002, 0, 0);
+    Sleep(100);
+  end;
+  Result := 'Please quit DropDrawer from its tray menu and retry.';
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  Result := CloseRunningDrawer;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  CloseError: String;
+begin
+  if CurUninstallStep = usUninstall then
+  begin
+    CloseError := CloseRunningDrawer;
+    if CloseError <> '' then RaiseException(CloseError);
+  end;
   if CurUninstallStep = usPostUninstall then
   begin
     RegDeleteValue(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Run', 'DropDrawer');
