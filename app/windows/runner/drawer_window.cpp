@@ -616,6 +616,9 @@ std::optional<LRESULT> DrawerWindow::HandleMessage(UINT message, WPARAM wparam,
     case WM_DISPLAYCHANGE:
       if (edge_) PlaceDrawer();
       break;
+    case kActivateDrawerMessage:
+      SetMode(Mode::kExpanded, true);
+      return 0;
     case kQuitMessage:
       DestroyWindow(window_);
       return 0;

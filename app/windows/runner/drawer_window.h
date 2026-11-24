@@ -8,6 +8,9 @@
 #include <optional>
 #include <string>
 
+inline constexpr UINT kActivateDrawerMessage = WM_APP + 4;
+inline constexpr wchar_t kDropDrawerTitle[] = L"DropDrawer";
+
 class DrawerWindow {
  public:
   DrawerWindow(HWND window, flutter::BinaryMessenger* messenger, bool background);

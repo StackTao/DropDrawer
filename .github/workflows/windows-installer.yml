@@ -89,6 +89,15 @@ jobs:
             } until ($app.HasExited -or $app.MainWindowHandle -ne 0 -or (Get-Date) -ge $deadline)
             if ($app.HasExited) { throw "DropDrawer exited with code $($app.ExitCode)." }
             if ($app.MainWindowHandle -eq 0) { throw 'DropDrawer did not open a window.' }
+
+            $second = Start-Process -FilePath $appExe -WorkingDirectory $env:RUNNER_TEMP -PassThru
+            if (!$second.WaitForExit(10000)) {
+              Stop-Process -Id $second.Id
+              throw 'A second DropDrawer instance kept running.'
+            }
+            if ($second.ExitCode -ne 0 -or $app.HasExited) {
+              throw 'Reopening DropDrawer failed.'
+            }
           } finally {
             if (!$app.HasExited) { Stop-Process -Id $app.Id }
           }

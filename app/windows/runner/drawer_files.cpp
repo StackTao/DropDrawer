@@ -186,6 +186,18 @@ bool CopyFiles(HWND window, const EncodableList& paths) {
     GlobalFree(data);
     return false;
   }
+  const UINT format = RegisterClipboardFormatW(L"Preferred DropEffect");
+  if (format) {
+    HGLOBAL effect = GlobalAlloc(GMEM_MOVEABLE, sizeof(DWORD));
+    if (effect) {
+      auto* value = static_cast<DWORD*>(GlobalLock(effect));
+      if (value) {
+        *value = DROPEFFECT_COPY;
+        GlobalUnlock(effect);
+      }
+      if (!value || !SetClipboardData(format, effect)) GlobalFree(effect);
+    }
+  }
   return true;
 }
 

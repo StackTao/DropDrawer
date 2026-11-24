@@ -17,14 +17,32 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
     CreateAndAttachConsole();
   }
 
+  HANDLE instance_guard = CreateMutexW(nullptr, FALSE, L"Local\\DropDrawer");
+  if (!instance_guard) return EXIT_FAILURE;
+  if (GetLastError() == ERROR_ALREADY_EXISTS) {
+    HWND existing = FindWindowW(L"FLUTTER_RUNNER_WIN32_WINDOW", kDropDrawerTitle);
+    if (existing) {
+      DWORD owner = 0;
+      GetWindowThreadProcessId(existing, &owner);
+      if (owner) AllowSetForegroundWindow(owner);
+      PostMessageW(existing, kActivateDrawerMessage, 0, 0);
+    }
+    CloseHandle(instance_guard);
+    return EXIT_SUCCESS;
+  }
+
   // Initialize COM, so that it is available for use in the library and/or
   // plugins.
   const HRESULT ole = ::OleInitialize(nullptr);
-  if (FAILED(ole)) return EXIT_FAILURE;
+  if (FAILED(ole)) {
+    CloseHandle(instance_guard);
+    return EXIT_FAILURE;
+  }
 
   const std::filesystem::path exe(GetExecutablePath());
   if (exe.empty()) {
     ::OleUninitialize();
+    CloseHandle(instance_guard);
     return EXIT_FAILURE;
   }
   flutter::DartProject project((exe.parent_path() / L"data").wstring());
@@ -40,8 +58,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   FlutterWindow window(project, background);
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(1280, 720);
-  if (!window.Create(L"DropDrawer", origin, size)) {
+  if (!window.Create(kDropDrawerTitle, origin, size)) {
     ::OleUninitialize();
+    CloseHandle(instance_guard);
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);
@@ -54,5 +73,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   }
 
   ::OleUninitialize();
+  CloseHandle(instance_guard);
   return EXIT_SUCCESS;
 }
