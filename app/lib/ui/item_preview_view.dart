@@ -348,7 +348,7 @@ class ItemPreviewView extends StatelessWidget {
         ] else
           _primaryButton(
             icon: CupertinoIcons.arrow_down_circle,
-            label: c.prefersPeerDownload(item) ? 'P2P 优先下载' : '云端下载',
+            label: item.canP2p ? 'P2P 优先下载' : '云端下载',
             onTap: () => c.downloadItem(item),
           ),
         if (isMine && !item.cloudReady && localPath != null)
