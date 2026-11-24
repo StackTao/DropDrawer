@@ -54,6 +54,8 @@ class DropDrawerController extends ChangeNotifier {
   /// Local file paths owned or already downloaded by this device (enables instant drag-out).
   final Map<String, String> localFilePaths = {};
   final Map<String, TransferProgress> activeTransfers = {};
+  final Map<String, TransferProgress> outgoingTransfers = {};
+  final Map<String, String> _p2pDownloadIds = {};
   final Map<String, TransferCancelToken> _activeCancelTokens = {};
   String? statusBanner;
 
@@ -159,6 +161,15 @@ class DropDrawerController extends ChangeNotifier {
     _p2pPollTimer?.cancel();
     await _wsSub?.cancel();
     await _ws?.sink.close();
+    for (final token in _activeCancelTokens.values.toList()) {
+      token.cancel();
+    }
+    for (final id in _p2pDownloadIds.keys) {
+      _activeCancelTokens.remove(id);
+    }
+    _p2pDownloadIds.clear();
+    outgoingTransfers.clear();
+    activeTransfers.clear();
     p2p.shutdown();
 
     token = null;
@@ -252,12 +263,11 @@ class DropDrawerController extends ChangeNotifier {
       final finished = ev['finished'] as bool? ?? false;
       final err = ev['error'] as String?;
 
-      if (savedPath != null) {
-        localFilePaths[itemId] = savedPath;
-        unawaited(_persistLocalFilePaths());
-      }
-
-      activeTransfers[itemId] = TransferProgress(
+      final transferId = ev['transfer_id'] as String;
+      final sendingTo = ev['sending_to'] as String?;
+      final cancelled = ev['cancelled'] == true;
+      final progress = TransferProgress(
+        sendingTo: sendingTo,
         itemId: itemId,
         transferred: (ev['bytes_transferred'] as num?)?.toInt() ?? 0,
         total: (ev['total_bytes'] as num?)?.toInt() ?? 0,
@@ -268,9 +278,37 @@ class DropDrawerController extends ChangeNotifier {
         error: err,
       );
 
+      if (sendingTo != null) {
+        if (finished) {
+          outgoingTransfers.remove(transferId);
+          if (cancelled) statusBanner = '已取消发送';
+          if (err != null) statusBanner = 'P2P 发送失败：$err';
+        } else {
+          outgoingTransfers[transferId] = progress;
+        }
+        continue;
+      }
+      if (_p2pDownloadIds[itemId] != transferId) continue;
+      final token = _activeCancelTokens[itemId];
+      if (finished) {
+        _p2pDownloadIds.remove(itemId);
+        _activeCancelTokens.remove(itemId);
+      }
+      if (cancelled || (finished && err != null && token?.isCancelled == true)) {
+        activeTransfers.remove(itemId);
+        statusBanner = '已取消下载';
+        continue;
+      }
+      activeTransfers[itemId] = progress;
+      if (savedPath != null) {
+        localFilePaths[itemId] = savedPath;
+        unawaited(_persistLocalFilePaths());
+      }
       if (finished && err != null) {
-        statusBanner = 'P2P failed ($err), trying cloud fallback...';
-        _fallbackCloudDownload(itemId);
+        final item = items.where((i) => i.id == itemId).firstOrNull;
+        if (item != null && item.cloudReady) {
+          unawaited(downloadItem(item, cloudOnly: true));
+        }
       } else if (finished && savedPath != null) {
         final transport = switch (channel) {
           'p2p_direct' => 'P2P Direct',
@@ -534,12 +572,12 @@ class DropDrawerController extends ChangeNotifier {
     notifyListeners();
   }
 
+  String recipientName(String nodeId) =>
+      devices.where((d) => d.irohNodeId == nodeId).firstOrNull?.name ??
+      nodeId.substring(0, 8);
+
   void cancelTransfer(String itemId) {
-    final tok = _activeCancelTokens.remove(itemId);
-    tok?.cancel();
-    activeTransfers.remove(itemId);
-    statusBanner = '已取消传输';
-    notifyListeners();
+    _activeCancelTokens[itemId]?.cancel();
   }
 
   Future<void> retryTransfer(DrawerItem item) async {
@@ -566,6 +604,7 @@ class DropDrawerController extends ChangeNotifier {
     final file = File(filePath);
     if (!await file.exists()) return;
     final total = await file.length();
+    if (_activeCancelTokens.containsKey(itemId)) return;
     final cancelToken = TransferCancelToken();
     _activeCancelTokens[itemId] = cancelToken;
 
@@ -635,18 +674,49 @@ class DropDrawerController extends ChangeNotifier {
   }
 
   /// Downloads an item using P2P-first strategy, automatically falling back to cloud storage.
-  Future<void> downloadItem(DrawerItem item) async {
-    if (_api == null || deviceId == null) return;
-    final downloadsDir = await _resolveDownloadDir();
-    final destPath = p.join(downloadsDir, _downloadFileName(item.name));
-
+  Future<void> downloadItem(DrawerItem item, {bool cloudOnly = false}) async {
+    if (_api == null || deviceId == null ||
+        _activeCancelTokens.containsKey(item.id)) {
+      return;
+    }
+    final cancel = TransferCancelToken();
+    _activeCancelTokens[item.id] = cancel;
+    activeTransfers[item.id] = TransferProgress(
+      itemId: item.id,
+      transferred: 0,
+      total: item.size,
+      speedBps: 0,
+      channel: 'preparing',
+      finished: false,
+    );
+    cancel.attach(() {
+      _activeCancelTokens.remove(item.id);
+      activeTransfers.remove(item.id);
+      setBanner('已取消下载');
+    });
+    notifyListeners();
     try {
+      final downloadsDir = await _resolveDownloadDir();
+      if (cancel.isCancelled) return;
+      final destPath = p.join(downloadsDir, _downloadFileName(item.name));
       final plan = await _api!.getDownloadPlan(
         item.id,
         requesterDeviceId: deviceId!,
       );
+      if (cancel.isCancelled) return;
 
-      if (plan.p2p != null && p2pReady && plan.p2p!.deviceId != deviceId) {
+      if (!cloudOnly && plan.p2p != null && p2pReady &&
+          plan.p2p!.deviceId != deviceId) {
+        final id = p2p.downloadFile(
+          itemId: item.id,
+          remoteNodeId: plan.p2p!.irohNodeId,
+          remoteRelayUrl: plan.p2p!.irohRelayUrl,
+          remoteDirectAddrs: plan.p2p!.directAddrs,
+          transferToken: plan.p2p!.transferToken,
+          destPath: destPath,
+        );
+        _p2pDownloadIds[item.id] = id;
+        cancel.attach(() => p2p.cancelTransfer(id));
         activeTransfers[item.id] = TransferProgress(
           itemId: item.id,
           transferred: 0,
@@ -657,51 +727,26 @@ class DropDrawerController extends ChangeNotifier {
         );
         notifyListeners();
 
-        p2p.downloadFile(
-          itemId: item.id,
-          remoteNodeId: plan.p2p!.irohNodeId,
-          remoteRelayUrl: plan.p2p!.irohRelayUrl,
-          remoteDirectAddrs: plan.p2p!.directAddrs,
-          transferToken: plan.p2p!.transferToken,
-          destPath: destPath,
-        );
         return;
       }
 
       if (plan.cloud != null) {
-        await _downloadViaCloud(item.id, item.size, plan.cloud!, destPath);
+        await _downloadViaCloud(item.id, item.size, plan.cloud!, destPath, cancel);
         return;
       }
 
-      statusBanner = 'Source device is offline and file is not cached to cloud';
-      notifyListeners();
+      throw StateError('来源设备离线，文件尚未存到云端');
     } catch (e) {
-      statusBanner = 'Download failed: $e';
+      if (_activeCancelTokens[item.id] != cancel) return;
+      activeTransfers.remove(item.id);
+      statusBanner = cancel.isCancelled ? '已取消下载' : '下载失败：$e';
       notifyListeners();
-    }
-  }
-
-  Future<void> _fallbackCloudDownload(String itemId) async {
-    if (_api == null || deviceId == null) return;
-    final idx = items.indexWhere((e) => e.id == itemId);
-    if (idx < 0) return;
-    final item = items[idx];
-    if (!item.cloudReady) return;
-    try {
-      final plan = await _api!.getDownloadPlan(
-        itemId,
-        requesterDeviceId: deviceId!,
-      );
-      if (plan.cloud != null) {
-        final dir = await _resolveDownloadDir();
-        await _downloadViaCloud(
-          item.id,
-          item.size,
-          plan.cloud!,
-          p.join(dir, _downloadFileName(item.name)),
-        );
+    } finally {
+      if (!_p2pDownloadIds.containsKey(item.id) &&
+          _activeCancelTokens[item.id] == cancel) {
+        _activeCancelTokens.remove(item.id);
       }
-    } catch (_) {}
+    }
   }
 
   Future<void> _downloadViaCloud(
@@ -709,9 +754,8 @@ class DropDrawerController extends ChangeNotifier {
     int expectedSize,
     CloudDownloadInfo cloud,
     String destPath,
+    TransferCancelToken cancelToken,
   ) async {
-    final cancelToken = TransferCancelToken();
-    _activeCancelTokens[itemId] = cancelToken;
     final sw = Stopwatch()..start();
     var lastNotifyMs = 0;
 
@@ -774,8 +818,6 @@ class DropDrawerController extends ChangeNotifier {
         error: e.toString(),
       );
       statusBanner = '云端下载失败: $e';
-    } finally {
-      _activeCancelTokens.remove(itemId);
     }
     notifyListeners();
   }

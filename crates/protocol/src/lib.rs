@@ -438,6 +438,11 @@ pub enum WsClientCommand {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct P2pTransferProgress {
+    /// Remote recipient for outgoing transfers; absent on downloads.
+    #[serde(default)]
+    pub sending_to: Option<String>,
+    #[serde(default)]
+    pub cancelled: bool,
     pub transfer_id: String,
     pub item_id: String,
     pub bytes_transferred: u64,

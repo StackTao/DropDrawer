@@ -1761,6 +1761,7 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                 children: [
                   Text(
                     switch (progress.channel) {
+                      'preparing' => '正在准备下载',
                       'upload' => '正在上传到云盘',
                       'p2p_connecting' => '正在建立 P2P 连接',
                       'p2p_direct' => 'P2P 端到端直连',
@@ -1783,25 +1784,39 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                           color: MacPalette.textSecondary,
                         ),
                       ),
-                      if (progress.channel == 'upload' ||
-                          progress.channel == 'cloud') ...[
-                        const SizedBox(width: 6),
-                        GestureDetector(
-                          onTap: () => c.cancelTransfer(item.id),
-                          child: const Text(
-                            '取消',
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: MacPalette.red,
-                            ),
-                          ),
+                      const SizedBox(width: 6),
+                      CupertinoButton(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        minimumSize: const Size(0, 24),
+                        onPressed: () => c.cancelTransfer(item.id),
+                        child: Text(
+                          progress.channel == 'upload' ? '取消上传' : '取消下载',
+                          style: const TextStyle(fontSize: 10, color: MacPalette.red),
                         ),
-                      ],
+                      ),
                     ],
                   ),
                 ],
               ),
             ],
+            for (final entry in c.outgoingTransfers.entries.where((e) => e.value.itemId == item.id))
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '正在发送给 ${c.recipientName(entry.value.sendingTo!)} · ${(entry.value.fraction * 100).floor()}%',
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 10, color: MacPalette.textSecondary),
+                    ),
+                  ),
+                  CupertinoButton(
+                    minimumSize: const Size(0, 24),
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    onPressed: () => c.p2p.cancelTransfer(entry.key),
+                    child: const Text('取消发送', style: TextStyle(fontSize: 10, color: MacPalette.red)),
+                  ),
+                ],
+              ),
             if (hasTransferError) ...[
               const SizedBox(height: 6),
               Row(

@@ -64,6 +64,7 @@ class P2pFfiBridge {
   _StrInOutDart? _authorizeToken;
   _StrInOutDart? _unregisterFile;
   _StrInOutDart? _downloadFile;
+  _StrInOutDart? _cancelTransfer;
   _VoidToStrDart? _pollEvents;
   _VoidToStrDart? _shutdown;
   _FreeStrDart? _freeString;
@@ -126,6 +127,7 @@ class P2pFfiBridge {
     _authorizeToken = lib.lookupFunction<_StrInOutNative, _StrInOutDart>('dropdrawer_p2p_authorize_token');
     _unregisterFile = lib.lookupFunction<_StrInOutNative, _StrInOutDart>('dropdrawer_p2p_unregister_file');
     _downloadFile = lib.lookupFunction<_StrInOutNative, _StrInOutDart>('dropdrawer_p2p_download_file');
+    _cancelTransfer = lib.lookupFunction<_StrInOutNative, _StrInOutDart>('dropdrawer_p2p_cancel_transfer');
     _pollEvents = lib.lookupFunction<_VoidToStrNative, _VoidToStrDart>('dropdrawer_p2p_poll_events');
     _shutdown = lib.lookupFunction<_VoidToStrNative, _VoidToStrDart>('dropdrawer_p2p_shutdown');
     _freeString = lib.lookupFunction<_FreeStrNative, _FreeStrDart>('dropdrawer_p2p_free_string');
@@ -195,7 +197,7 @@ class P2pFfiBridge {
     }
   }
 
-  void downloadFile({
+  String downloadFile({
     required String itemId,
     required String remoteNodeId,
     String? remoteRelayUrl,
@@ -203,7 +205,7 @@ class P2pFfiBridge {
     required String transferToken,
     required String destPath,
   }) {
-    _callJson(_downloadFile!, {
+    final result = _callJson(_downloadFile!, {
       'item_id': itemId,
       'remote_node_id': remoteNodeId,
       'remote_relay_url': remoteRelayUrl,
@@ -211,6 +213,16 @@ class P2pFfiBridge {
       'transfer_token': transferToken,
       'dest_path': destPath,
     });
+    return result['data'] as String;
+  }
+
+  void cancelTransfer(String transferId) {
+    final id = transferId.toNativeUtf8();
+    try {
+      _decodeAndFree(_cancelTransfer!(id));
+    } finally {
+      malloc.free(id);
+    }
   }
 
   List<Map<String, dynamic>> pollEvents() {

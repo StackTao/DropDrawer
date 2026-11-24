@@ -1,19 +1,21 @@
 pub mod ffi;
+mod transfers;
+
+use transfers::{Cancelled, Transfer, Transfers, while_connected};
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 mod relay_probe;
 
-use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use iroh::{
-    endpoint::{Connection, RelayMode},
     Endpoint, EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr,
+    endpoint::{Connection, RelayMode},
 };
 use protocol::{P2pPathKind, P2pTransferProgress};
 use serde::{Deserialize, Serialize};
@@ -78,13 +80,25 @@ struct PullResponseHeader {
     blake3_hash: String,
 }
 
+#[derive(Deserialize)]
+struct DownloadFileReq {
+    item_id: String,
+    remote_node_id: String,
+    #[serde(default)]
+    remote_relay_url: Option<String>,
+    #[serde(default)]
+    remote_direct_addrs: Vec<String>,
+    transfer_token: String,
+    dest_path: PathBuf,
+}
+
 pub struct P2pNode {
     endpoint: Endpoint,
     shared_files: Arc<DashMap<String, SharedFileEntry>>,
     /// Map of `token -> AuthorizedToken`. If empty & `require_auth_token` is false, allows test pulls.
     authorized_tokens: Arc<DashMap<String, AuthorizedToken>>,
     require_auth_token: bool,
-    events: Arc<Mutex<VecDeque<P2pTransferProgress>>>,
+    transfers: Arc<Transfers>,
     accept_task: tokio::task::JoinHandle<()>,
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     relay_probe: Arc<relay_probe::RelayProbe>,
@@ -123,7 +137,8 @@ impl P2pNode {
 
         let shared_files = Arc::new(DashMap::new());
         let authorized_tokens = Arc::new(DashMap::new());
-        let events = Arc::new(Mutex::new(VecDeque::new()));
+        let transfers = Arc::new(Transfers::default());
+        let incoming_transfers = transfers.clone();
 
         let ep_clone = endpoint.clone();
         let files_clone = shared_files.clone();
@@ -135,6 +150,7 @@ impl P2pNode {
         let accept_task = tokio::spawn(async move {
             while let Some(incoming) = ep_clone.accept().await {
                 let files = files_clone.clone();
+                let transfers = incoming_transfers.clone();
                 let tokens = tokens_clone.clone();
                 #[cfg(any(target_os = "windows", target_os = "macos"))]
                 let relay_probe = incoming_relay_probe.clone();
@@ -144,6 +160,7 @@ impl P2pNode {
                             if let Err(err) = handle_incoming_connection(
                                 conn,
                                 files,
+                                transfers,
                                 tokens,
                                 require_auth_token,
                                 #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -167,7 +184,7 @@ impl P2pNode {
             shared_files,
             authorized_tokens,
             require_auth_token,
-            events,
+            transfers,
             accept_task,
             #[cfg(any(target_os = "windows", target_os = "macos"))]
             relay_probe,
@@ -216,25 +233,17 @@ impl P2pNode {
 
     /// Authorizes an incoming one-time/short-lived pull token pushed by the control server.
     pub fn authorize_token(&self, item_id: String, token: String, expires_at: DateTime<Utc>) {
-        self.authorized_tokens
-            .insert(token, AuthorizedToken { item_id, expires_at });
-    }
-
-    pub fn push_event(&self, event: P2pTransferProgress) {
-        if let Ok(mut q) = self.events.lock() {
-            q.push_back(event);
-            while q.len() > 256 {
-                q.pop_front();
-            }
-        }
+        self.authorized_tokens.insert(
+            token,
+            AuthorizedToken {
+                item_id,
+                expires_at,
+            },
+        );
     }
 
     pub fn drain_events(&self) -> Vec<P2pTransferProgress> {
-        if let Ok(mut q) = self.events.lock() {
-            q.drain(..).collect()
-        } else {
-            Vec::new()
-        }
+        self.transfers.drain()
     }
 
     /// Pulls a file from a remote peer directly via QUIC (with automatic NAT hole-punching & relay fallback).
@@ -248,157 +257,199 @@ impl P2pNode {
         transfer_token: String,
         dest_path: PathBuf,
     ) -> anyhow::Result<P2pTransferProgress> {
-        let transfer_id = Uuid::new_v4().to_string();
-        let endpoint_id: EndpointId = remote_node_id.parse()?;
+        let transfer = self.transfers.begin(item_id.clone(), None);
+        self.run_download(
+            transfer,
+            DownloadFileReq {
+                item_id,
+                remote_node_id,
+                remote_relay_url,
+                remote_direct_addrs,
+                transfer_token,
+                dest_path,
+            },
+        )
+        .await
+    }
 
+    async fn run_download(
+        &self,
+        mut transfer: Transfer,
+        req: DownloadFileReq,
+    ) -> anyhow::Result<P2pTransferProgress> {
+        let result = self.receive_file(&mut transfer, req).await;
+        transfer.finish(&result);
+        result.map(|()| transfer.progress.clone())
+    }
+
+    async fn receive_file(
+        &self,
+        transfer: &mut Transfer,
+        req: DownloadFileReq,
+    ) -> anyhow::Result<()> {
+        let endpoint_id: EndpointId = req.remote_node_id.parse()?;
+        let dest_path = req.dest_path;
         let mut transport_addrs = Vec::new();
-        if let Some(r) = remote_relay_url.filter(|s| !s.is_empty()) {
+        if let Some(r) = req.remote_relay_url.filter(|s| !s.is_empty()) {
             if let Ok(relay_url) = r.parse::<RelayUrl>() {
                 transport_addrs.push(TransportAddr::Relay(relay_url));
             }
         }
-        for s in &remote_direct_addrs {
+        for s in &req.remote_direct_addrs {
             if let Ok(sock) = s.parse::<SocketAddr>() {
                 transport_addrs.push(TransportAddr::Ip(sock));
             }
         }
 
         let remote_addr = EndpointAddr::from_parts(endpoint_id, transport_addrs);
-        let conn = self.endpoint.connect(remote_addr, DROPDRAWER_ALPN).await?;
+        let conn = tokio::select! {
+            biased;
+            _ = &mut transfer.cancel => return Err(Cancelled.into()),
+            conn = self.endpoint.connect(remote_addr, DROPDRAWER_ALPN) => conn?,
+        };
 
-        let path_kind = detect_path_kind(&conn);
+        let progress = &mut transfer.progress;
+        progress.path_kind = detect_path_kind(&conn);
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         self.relay_probe.schedule(&conn);
-        let (mut send, mut recv) = conn.open_bi().await?;
-
-        // Check partial file for resumable transfer
-        if let Some(parent) = dest_path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
         let part_path = dest_path.with_extension("dropdrawer.part");
-        let existing_offset = if part_path.exists() {
-            tokio::fs::metadata(&part_path)
-                .await
-                .map(|m| m.len())
-                .unwrap_or(0)
-        } else {
-            0
-        };
+        let mut partial_file = None;
+        let receive = async {
+            let (mut send, mut recv) = conn.open_bi().await?;
 
-        let req_header = PullRequestHeader {
-            item_id: item_id.clone(),
-            token: transfer_token,
-            offset: existing_offset,
-        };
-        write_frame(&mut send, &serde_json::to_vec(&req_header)?).await?;
-        send.finish()?;
-
-        let resp_bytes = read_frame(&mut recv).await?;
-        let resp_header: PullResponseHeader = serde_json::from_slice(&resp_bytes)?;
-        if !resp_header.ok {
-            anyhow::bail!(
-                "remote peer rejected P2P pull: {}",
-                resp_header.error.unwrap_or_else(|| "unknown error".into())
-            );
-        }
-
-        let total_bytes = resp_header.size;
-        let mut offset = if existing_offset <= total_bytes {
-            existing_offset
-        } else {
-            0
-        };
-
-        let mut file = if offset > 0 {
-            let mut f = tokio::fs::OpenOptions::new()
-                .write(true)
-                .open(&part_path)
-                .await?;
-            f.seek(std::io::SeekFrom::Start(offset)).await?;
-            f
-        } else {
-            tokio::fs::File::create(&part_path).await?
-        };
-
-        let mut buf = vec![0u8; CHUNK_SIZE];
-        let mut last_report = Instant::now();
-        let mut bytes_since_report = 0u64;
-        let report_interval = Duration::from_millis(200);
-        let mut progress = P2pTransferProgress {
-            transfer_id,
-            item_id,
-            bytes_transferred: offset,
-            total_bytes,
-            speed_bps: 0,
-            path_kind,
-            finished: false,
-            saved_path: None,
-            error: None,
-        };
-
-        #[cfg(any(target_os = "windows", target_os = "macos"))]
-        {
-            progress.path_kind = detect_path_kind(&conn);
-            self.push_event(progress.clone());
-        }
-        #[cfg(any(target_os = "windows", target_os = "macos"))]
-        let mut path_poll = tokio::time::interval_at(
-            tokio::time::Instant::now() + report_interval,
-            report_interval,
-        );
-
-        loop {
-            #[cfg(any(target_os = "windows", target_os = "macos"))]
-            let read = tokio::select! {
-                biased;
-                // A route can change while the receive stream is waiting for data.
-                _ = path_poll.tick() => {
-                    let path = detect_path_kind(&conn);
-                    if path != progress.path_kind {
-                        progress.path_kind = path;
-                        progress.bytes_transferred = offset;
-                        self.push_event(progress.clone());
-                    }
-                    continue;
-                }
-                // QUIC's read future is cancel-safe.
-                read = recv.read(&mut buf) => read,
+            // Check partial file for resumable transfer
+            if let Some(parent) = dest_path.parent() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+            let existing_offset = if part_path.exists() {
+                tokio::fs::metadata(&part_path)
+                    .await
+                    .map(|m| m.len())
+                    .unwrap_or(0)
+            } else {
+                0
             };
-            #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-            let read = recv.read(&mut buf).await;
 
-            match read? {
-                Some(n) if n > 0 => {
-                    file.write_all(&buf[..n]).await?;
-                    offset += n as u64;
-                    bytes_since_report += n as u64;
+            let req_header = PullRequestHeader {
+                item_id: progress.item_id.clone(),
+                token: req.transfer_token,
+                offset: existing_offset,
+            };
+            write_frame(&mut send, &serde_json::to_vec(&req_header)?).await?;
+            send.finish()?;
 
-                    let elapsed = last_report.elapsed();
-                    if elapsed >= report_interval {
-                        progress.bytes_transferred = offset;
-                        progress.speed_bps =
-                            (bytes_since_report as f64 / elapsed.as_secs_f64().max(0.001)) as u64;
-                        self.push_event(progress.clone());
-                        last_report = Instant::now();
-                        bytes_since_report = 0;
+            let resp_bytes = read_frame(&mut recv).await?;
+            let resp_header: PullResponseHeader = serde_json::from_slice(&resp_bytes)?;
+            if !resp_header.ok {
+                anyhow::bail!(
+                    "remote peer rejected P2P pull: {}",
+                    resp_header.error.unwrap_or_else(|| "unknown error".into())
+                );
+            }
+
+            let total_bytes = resp_header.size;
+            let mut offset = if existing_offset <= total_bytes {
+                existing_offset
+            } else {
+                0
+            };
+
+            let file = partial_file.insert(if offset > 0 {
+                let mut f = tokio::fs::OpenOptions::new()
+                    .write(true)
+                    .open(&part_path)
+                    .await?;
+                f.seek(std::io::SeekFrom::Start(offset)).await?;
+                f
+            } else {
+                tokio::fs::File::create(&part_path).await?
+            });
+
+            let mut buf = vec![0u8; CHUNK_SIZE];
+            let mut last_report = Instant::now();
+            let mut bytes_since_report = 0u64;
+            let report_interval = Duration::from_millis(200);
+            progress.bytes_transferred = offset;
+            progress.total_bytes = total_bytes;
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            {
+                progress.path_kind = detect_path_kind(&conn);
+                self.transfers.report(progress);
+            }
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            let mut path_poll = tokio::time::interval_at(
+                tokio::time::Instant::now() + report_interval,
+                report_interval,
+            );
+
+            loop {
+                #[cfg(any(target_os = "windows", target_os = "macos"))]
+                let read = tokio::select! {
+                    biased;
+                    // A route can change while the receive stream is waiting for data.
+                    _ = path_poll.tick() => {
+                        let path = detect_path_kind(&conn);
+                        if path != progress.path_kind {
+                            progress.path_kind = path;
+                            progress.bytes_transferred = offset;
+                            self.transfers.report(progress);
+                        }
+                        continue;
                     }
-                }
-                _ => break,
-            }
-        }
+                    // QUIC's read future is cancel-safe.
+                    read = recv.read(&mut buf) => read,
+                };
+                #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+                let read = recv.read(&mut buf).await;
 
-        #[cfg(any(target_os = "windows", target_os = "macos"))]
-        {
-            let path = detect_path_kind(&conn);
-            if path != P2pPathKind::Unknown {
-                progress.path_kind = path;
+                match read? {
+                    Some(n) if n > 0 => {
+                        file.write_all(&buf[..n]).await?;
+                        offset += n as u64;
+                        bytes_since_report += n as u64;
+
+                        let elapsed = last_report.elapsed();
+                        if elapsed >= report_interval {
+                            progress.bytes_transferred = offset;
+                            progress.speed_bps = (bytes_since_report as f64
+                                / elapsed.as_secs_f64().max(0.001))
+                                as u64;
+                            self.transfers.report(progress);
+                            last_report = Instant::now();
+                            bytes_since_report = 0;
+                        }
+                    }
+                    _ => break,
+                }
+            }
+
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            {
+                let path = detect_path_kind(&conn);
+                if path != P2pPathKind::Unknown {
+                    progress.path_kind = path;
+                }
+            }
+            Ok(resp_header)
+        };
+        let received = while_connected(&conn, &mut transfer.cancel, receive).await;
+        // A Tokio file can still have a pending write when its read loop is cancelled.
+        // Finish that write before reporting completion and allowing a retry.
+        if let Some(mut file) = partial_file {
+            let flush = file.flush().await;
+            if received.is_ok() {
+                flush?;
             }
         }
-        file.flush().await?;
-        drop(file);
+        let resp_header = received?;
+        let total_bytes = resp_header.size;
 
         // Verify BLAKE3 integrity on the completed file before renaming.
         let (actual_size, actual_hash) = compute_file_blake3(&part_path).await?;
+        if transfer.cancel.try_recv().is_ok() {
+            conn.close(transfers::CANCEL_CODE.into(), b"transfer cancelled");
+            return Err(Cancelled.into());
+        }
         if actual_size != total_bytes || actual_hash != resp_header.blake3_hash {
             let _ = tokio::fs::remove_file(&part_path).await;
             anyhow::bail!(
@@ -413,10 +464,8 @@ impl P2pNode {
         tokio::fs::rename(&part_path, &dest_path).await?;
         progress.bytes_transferred = total_bytes;
         progress.speed_bps = 0;
-        progress.finished = true;
         progress.saved_path = Some(dest_path.to_string_lossy().to_string());
-        self.push_event(progress.clone());
-        Ok(progress)
+        Ok(())
     }
 
     pub async fn shutdown(&self) {
@@ -432,9 +481,12 @@ impl P2pNode {
 async fn handle_incoming_connection(
     conn: Connection,
     shared_files: Arc<DashMap<String, SharedFileEntry>>,
+    transfers: Arc<Transfers>,
     authorized_tokens: Arc<DashMap<String, AuthorizedToken>>,
     require_auth_token: bool,
-    #[cfg(any(target_os = "windows", target_os = "macos"))] relay_probe: &Arc<relay_probe::RelayProbe>,
+    #[cfg(any(target_os = "windows", target_os = "macos"))] relay_probe: &Arc<
+        relay_probe::RelayProbe,
+    >,
 ) -> anyhow::Result<()> {
     let (mut send, mut recv) = conn.accept_bi().await?;
     let req_bytes = read_frame(&mut recv).await?;
@@ -491,28 +543,45 @@ async fn handle_incoming_connection(
         size: entry.size,
         blake3_hash: entry.blake3_hash.clone(),
     };
-    write_frame(&mut send, &serde_json::to_vec(&resp)?).await?;
+    let mut transfer = transfers.begin(req.item_id, Some(conn.remote_id().to_string()));
+    let progress = &mut transfer.progress;
+    progress.total_bytes = entry.size;
+    progress.path_kind = detect_path_kind(&conn);
+    progress.bytes_transferred = req.offset.min(entry.size);
+    transfers.report(progress);
+    let send_file = async {
+        write_frame(&mut send, &serde_json::to_vec(&resp)?).await?;
 
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
-    relay_probe.schedule(&conn);
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        relay_probe.schedule(&conn);
 
-    let start_offset = req.offset.min(entry.size);
-    if start_offset > 0 {
-        file.seek(std::io::SeekFrom::Start(start_offset)).await?;
-    }
-
-    let mut buf = vec![0u8; CHUNK_SIZE];
-    loop {
-        let n = file.read(&mut buf).await?;
-        if n == 0 {
-            break;
+        let start_offset = req.offset.min(entry.size);
+        if start_offset > 0 {
+            file.seek(std::io::SeekFrom::Start(start_offset)).await?;
         }
-        send.write_all(&buf[..n]).await?;
-    }
-    send.finish()?;
-    // Wait briefly for peer to read the FIN cleanly.
-    let _ = send.stopped().await;
-    Ok(())
+
+        let mut buf = vec![0u8; CHUNK_SIZE];
+        let mut last_report = Instant::now();
+        loop {
+            let n = file.read(&mut buf).await?;
+            if n == 0 {
+                break;
+            }
+            send.write_all(&buf[..n]).await?;
+            progress.bytes_transferred += n as u64;
+            if last_report.elapsed() >= Duration::from_millis(200) {
+                transfers.report(progress);
+                last_report = Instant::now();
+            }
+        }
+        send.finish()?;
+        // Wait briefly for peer to read the FIN cleanly.
+        send.stopped().await?;
+        Ok(())
+    };
+    let result = while_connected(&conn, &mut transfer.cancel, send_file).await;
+    transfer.finish(&result);
+    result
 }
 
 fn detect_path_kind(conn: &Connection) -> P2pPathKind {
@@ -587,6 +656,123 @@ async fn load_or_create_secret_key(path: &Path) -> anyhow::Result<SecretKey> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn either_peer_can_cancel_a_pull_and_retry() {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            let dir = TempDir::new().unwrap();
+            let start = |name: &str| {
+                P2pNode::start(
+                    P2pConfig {
+                        data_dir: dir.path().join(name).display().to_string(),
+                        custom_relay_url: None,
+                        disable_relay: true,
+                    },
+                    true,
+                )
+            };
+            let sender = start("sender").await.unwrap();
+            let receiver = start("receiver").await.unwrap();
+            let src = dir.path().join("source.bin");
+            let dest = dir.path().join("received.bin");
+            let part = dest.with_extension("dropdrawer.part");
+            std::fs::File::create(&src)
+                .unwrap()
+                .set_len(32 * 1024 * 1024)
+                .unwrap();
+            let source = sender.register_file("item".into(), &src).await.unwrap();
+            sender.authorize_token(
+                "item".into(),
+                "token".into(),
+                Utc::now() + chrono::Duration::minutes(1),
+            );
+            let pull = |transfer| {
+                let info = sender.node_info();
+                let dest = dest.clone();
+                let receiver = receiver.clone();
+                tokio::spawn(async move {
+                    receiver
+                        .run_download(
+                            transfer,
+                            DownloadFileReq {
+                                item_id: "item".into(),
+                                remote_node_id: info.node_id,
+                                remote_relay_url: info.relay_url,
+                                remote_direct_addrs: info.direct_addrs,
+                                transfer_token: "token".into(),
+                                dest_path: dest,
+                            },
+                        )
+                        .await
+                })
+            };
+
+            // Cancellation is registered synchronously, even before connect runs.
+            let first = receiver.transfers.begin("item".into(), None);
+            receiver.transfers.cancel(&first.progress.transfer_id);
+            assert!(pull(first).await.unwrap().unwrap_err().is::<Cancelled>());
+            assert!(!part.exists());
+
+            for cancel_at_sender in [true, false] {
+                let previous = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+                let handle = receiver.transfers.begin("item".into(), None);
+                let download_id = handle.progress.transfer_id.clone();
+                let download = pull(handle);
+                let upload_id = loop {
+                    if let Some(event) = sender.drain_events().into_iter().find(|e| !e.finished) {
+                        assert_eq!(event.sending_to, Some(receiver.node_info().node_id));
+                        break event.transfer_id;
+                    }
+                    tokio::task::yield_now().await;
+                };
+                while !std::fs::metadata(&part).is_ok_and(|m| m.len() > previous) {
+                    tokio::task::yield_now().await;
+                }
+                if cancel_at_sender {
+                    sender.transfers.cancel(&upload_id);
+                } else {
+                    receiver.transfers.cancel(&download_id);
+                }
+                assert!(download.await.unwrap().unwrap_err().is::<Cancelled>());
+                assert!(
+                    receiver
+                        .drain_events()
+                        .iter()
+                        .any(|e| e.transfer_id == download_id
+                            && e.finished
+                            && e.cancelled
+                            && e.error.is_none())
+                );
+                loop {
+                    if let Some(end) = sender
+                        .drain_events()
+                        .into_iter()
+                        .find(|e| e.finished && e.transfer_id == upload_id)
+                    {
+                        assert!(end.cancelled && end.error.is_none(), "{end:?}");
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+                assert!(!dest.exists());
+                assert!(std::fs::metadata(&part).unwrap().len() < source.size);
+            }
+
+            let complete = pull(receiver.transfers.begin("item".into(), None))
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(complete.finished && !complete.cancelled);
+            assert_eq!(
+                compute_file_blake3(&dest).await.unwrap(),
+                (source.size, source.blake3_hash)
+            );
+            sender.shutdown().await;
+            receiver.shutdown().await;
+        })
+        .await
+        .expect("cancelled transfers must terminate on both peers");
+    }
 
     #[tokio::test]
     async fn test_p2p_end_to_end_transfer_with_blake3_verification() {

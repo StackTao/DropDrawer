@@ -1,15 +1,12 @@
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use chrono::{DateTime, Utc};
-use protocol::{P2pPathKind, P2pTransferProgress};
 use serde::{Deserialize, Serialize};
 use tokio::runtime::Runtime;
-use uuid::Uuid;
 
-use crate::{P2pConfig, P2pNode};
+use crate::{DownloadFileReq, P2pConfig, P2pNode};
 
 static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 static NODE: OnceLock<Mutex<Option<Arc<P2pNode>>>> = OnceLock::new();
@@ -81,7 +78,9 @@ pub unsafe extern "C" fn dropdrawer_p2p_start(config_json: *const c_char) -> *mu
             .block_on(P2pNode::start(cfg, true))
             .map_err(|e| e.to_string())?;
         let info = node.node_info();
-        *node_slot().lock().map_err(|_| "mutex poisoned".to_string())? = Some(node);
+        *node_slot()
+            .lock()
+            .map_err(|_| "mutex poisoned".to_string())? = Some(node);
         Ok(info)
     })();
     to_c_json(res)
@@ -142,53 +141,28 @@ pub unsafe extern "C" fn dropdrawer_p2p_unregister_file(item_id: *const c_char) 
     to_c_json(res)
 }
 
-#[derive(Deserialize)]
-struct DownloadFileReq {
-    item_id: String,
-    remote_node_id: String,
-    #[serde(default)]
-    remote_relay_url: Option<String>,
-    #[serde(default)]
-    remote_direct_addrs: Vec<String>,
-    transfer_token: String,
-    dest_path: String,
-}
-
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dropdrawer_p2p_download_file(req_json: *const c_char) -> *mut c_char {
     let res = (|| -> Result<_, String> {
         let node = current_node()?;
         let raw = unsafe { parse_c_str(req_json)? };
         let req: DownloadFileReq = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
-        let handle_id = Uuid::new_v4().to_string();
-        let item_id = req.item_id.clone();
-
+        let transfer = node.transfers.begin(req.item_id.clone(), None);
+        let id = transfer.progress.transfer_id.clone();
         runtime().spawn(async move {
-            if let Err(err) = node
-                .download_file(
-                    req.item_id.clone(),
-                    req.remote_node_id,
-                    req.remote_relay_url,
-                    req.remote_direct_addrs,
-                    req.transfer_token,
-                    PathBuf::from(req.dest_path),
-                )
-                .await
-            {
-                node.push_event(P2pTransferProgress {
-                    transfer_id: handle_id,
-                    item_id,
-                    bytes_transferred: 0,
-                    total_bytes: 0,
-                    speed_bps: 0,
-                    path_kind: P2pPathKind::Unknown,
-                    finished: true,
-                    saved_path: None,
-                    error: Some(err.to_string()),
-                });
-            }
+            let _ = node.run_download(transfer, req).await;
         });
+        Ok(id)
+    })();
+    to_c_json(res)
+}
 
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dropdrawer_p2p_cancel_transfer(transfer_id: *const c_char) -> *mut c_char {
+    let res = (|| -> Result<_, String> {
+        let node = current_node()?;
+        let id = unsafe { parse_c_str(transfer_id)? };
+        node.transfers.cancel(&id);
         Ok(true)
     })();
     to_c_json(res)

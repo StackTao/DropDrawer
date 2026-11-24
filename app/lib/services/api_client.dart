@@ -305,6 +305,7 @@ class ApiClient {
     final client = _createHttpClient();
     cancelToken?.attach(() => client.close(force: true));
     IOSink? sink;
+    Directory? staging;
     try {
       if (cancelToken?.isCancelled ?? false) {
         throw TransferCancelledException();
@@ -320,7 +321,9 @@ class ApiClient {
       final total = resp.contentLength > 0 ? resp.contentLength : 0;
       final outFile = File(destPath);
       await outFile.parent.create(recursive: true);
-      sink = outFile.openWrite();
+      staging = await outFile.parent.createTemp('.dropdrawer-');
+      final partial = File('${staging.path}/download.part');
+      sink = partial.openWrite();
       var received = 0;
       await for (final chunk in resp) {
         if (cancelToken?.isCancelled ?? false) {
@@ -333,21 +336,20 @@ class ApiClient {
       await sink.flush();
       await sink.close();
       sink = null;
+      if (cancelToken?.isCancelled ?? false) throw TransferCancelledException();
+      await partial.rename(destPath);
       return destPath;
     } catch (e) {
       try {
         await sink?.close();
       } catch (_) {}
       if (cancelToken?.isCancelled ?? false) {
-        try {
-          final partial = File(destPath);
-          if (await partial.exists()) await partial.delete();
-        } catch (_) {}
         throw TransferCancelledException();
       }
       rethrow;
     } finally {
       client.close();
+      await staging?.delete(recursive: true);
     }
   }
 

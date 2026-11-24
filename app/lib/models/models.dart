@@ -278,6 +278,7 @@ class TransferProgress {
   final String channel; // 'p2p_connecting' | 'p2p_direct' | 'p2p_relay' | 'cloud' | 'upload'
   final bool finished;
   final String? savedPath;
+  final String? sendingTo;
   final String? error;
 
   TransferProgress({
@@ -288,6 +289,7 @@ class TransferProgress {
     required this.channel,
     required this.finished,
     this.savedPath,
+    this.sendingTo,
     this.error,
   });
 
