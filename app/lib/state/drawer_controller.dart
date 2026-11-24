@@ -738,6 +738,7 @@ class DropDrawerController extends ChangeNotifier {
           remoteDirectAddrs: plan.p2p!.directAddrs,
           transferToken: plan.p2p!.transferToken,
           destPath: destPath,
+          skipLegacyResume: _legacyNameIsShared(item, destPath),
         );
         _p2pDownloadIds[item.id] = id;
         cancel.attach(() {
@@ -1230,6 +1231,14 @@ class DropDrawerController extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('local_file_paths', jsonEncode(localFilePaths));
     } catch (_) {}
+  }
+
+  bool _legacyNameIsShared(DrawerItem item, String destPath) {
+    final legacy = p.setExtension(destPath, '.dropdrawer.part');
+    final stem = p.basenameWithoutExtension(destPath).toLowerCase();
+    return localFilePaths.values.any((path) => p.equals(path, legacy)) ||
+        items.any((other) => other.id != item.id && other.kind == 'file' &&
+            p.basenameWithoutExtension(_downloadFileName(other.name)).toLowerCase() == stem);
   }
 
   String _downloadFileName(String name) {

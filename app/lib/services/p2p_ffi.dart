@@ -204,6 +204,7 @@ class P2pFfiBridge {
     required List<String> remoteDirectAddrs,
     required String transferToken,
     required String destPath,
+    bool skipLegacyResume = false,
   }) {
     final result = _callJson(_downloadFile!, {
       'item_id': itemId,
@@ -212,6 +213,7 @@ class P2pFfiBridge {
       'remote_direct_addrs': remoteDirectAddrs,
       'transfer_token': transferToken,
       'dest_path': destPath,
+      'skip_legacy_resume': skipLegacyResume,
     });
     return result['data'] as String;
   }

@@ -105,6 +105,8 @@ struct DownloadFileReq {
     remote_direct_addrs: Vec<String>,
     transfer_token: String,
     dest_path: PathBuf,
+    #[serde(default)]
+    skip_legacy_resume: bool,
 }
 
 pub struct P2pNode {
@@ -278,6 +280,7 @@ impl P2pNode {
                 remote_direct_addrs,
                 transfer_token,
                 dest_path,
+                skip_legacy_resume: false,
             },
         )
         .await
@@ -341,7 +344,11 @@ impl P2pNode {
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
                 Err(e) => return Err(e.into()),
             };
-            let legacy_lease = if existing_offset == 0 && legacy != part_path {
+            let legacy_lease = if !req.skip_legacy_resume
+                && existing_offset == 0
+                && legacy != part_path
+                && legacy.is_file()
+            {
                 PartialLease::acquire(&self.partial_paths, &legacy)
             } else {
                 None
@@ -356,6 +363,8 @@ impl P2pNode {
             } else {
                 None
             };
+            // Release the old name before connecting if no candidate survived inspection.
+            let legacy_lease = legacy_lease.filter(|_| legacy_prefix.is_some());
             let req_header = PullRequestHeader {
                 item_id: progress.item_id.clone(),
                 token: req.transfer_token,
@@ -839,6 +848,7 @@ mod tests {
                                 remote_direct_addrs: info.direct_addrs,
                                 transfer_token: "token".into(),
                                 dest_path: dest,
+                                skip_legacy_resume: false,
                             },
                         )
                         .await

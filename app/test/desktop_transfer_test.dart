@@ -22,6 +22,7 @@ class LocalHttp extends HttpOverrides {}
 class Bridge extends P2pFfiBridge {
   final events = <Map<String, dynamic>>[];
   int sequence = 0;
+  bool skippedLegacyResume = false;
   @override
   bool loadLibrary() => true;
   @override
@@ -47,7 +48,12 @@ class Bridge extends P2pFfiBridge {
     required List<String> remoteDirectAddrs,
     required String transferToken,
     required String destPath,
-  }) => '${++sequence}';
+    bool skipLegacyResume = false,
+  }) {
+    skippedLegacyResume = skipLegacyResume;
+    return '${++sequence}';
+  }
+
   @override
   void cancelTransfer(String id) {}
   @override
@@ -190,7 +196,15 @@ void main() {
             'name': 'test.bin',
             'cloud_ready': true,
           });
-          ctrl.items = [item];
+          ctrl.items = [
+            item,
+            DrawerItem.fromJson({
+              'id': 'other',
+              'user_id': 'u',
+              'owner_device_id': 'src',
+              'name': 'test.jpg',
+            }),
+          ];
           Future<void> until(bool Function() predicate) async {
             for (var i = 0; i < 100; i++) {
               if (predicate()) return;
@@ -200,6 +214,7 @@ void main() {
           }
 
           await ctrl.downloadItem(item);
+          expect(ctrl.p2p.skippedLegacyResume, true);
           final dest = File('${dir.path}/test.bin');
           await dest.writeAsString('finished');
           ctrl.p2p.events.add({

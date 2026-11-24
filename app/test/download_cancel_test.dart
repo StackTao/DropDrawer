@@ -103,8 +103,8 @@ void main() {
             if (!await file.exists() || await file.length() == 0) continue;
             final path = file.path.toNativeUtf16();
             try {
-              // OPEN_EXISTING, sharing reads and writes but not deletes.
-              handle = open(path, 0, 3, nullptr, 3, 0, 0);
+              // Request GENERIC_READ: metadata-only handles do not enforce this share mode.
+              handle = open(path, 0x80000000, 3, nullptr, 3, 0, 0);
             } finally {
               calloc.free(path);
             }
