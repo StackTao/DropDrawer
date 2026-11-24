@@ -33,13 +33,10 @@ class AppDelegate: FlutterAppDelegate, NSMenuDelegate {
     item.autosaveName = "DropDrawerStatusItem"
     item.isVisible = true
     if let button = item.button {
-      let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
-      let img = NSImage(
-        systemSymbolName: "tray.and.arrow.down.fill",
-        accessibilityDescription: "DropDrawer"
-      )?.withSymbolConfiguration(config)
-      img?.isTemplate = true
-      button.image = img
+      let icon = NSImage(named: "StatusIcon")
+      icon?.isTemplate = true
+      icon?.accessibilityDescription = "DropDrawer"
+      button.image = icon
       button.toolTip = "DropDrawer"
     }
 

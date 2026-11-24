@@ -1,4 +1,3 @@
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../state/drawer_controller.dart';
@@ -72,22 +71,11 @@ class _LoginScreenState extends State<LoginScreen> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Center(
-                    child: Container(
-                      width: 52,
-                      height: 52,
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.08),
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(
-                          color: Colors.white.withValues(alpha: 0.16),
-                          width: 0.8,
-                        ),
-                      ),
-                      child: const Icon(
-                        CupertinoIcons.tray_arrow_down_fill,
-                        size: 24,
-                        color: MacPalette.textPrimary,
-                      ),
+                    child: Image.asset(
+                      'assets/dropdrawer-icon.png',
+                      width: 60,
+                      height: 60,
+                      excludeFromSemantics: true,
                     ),
                   ),
                   const SizedBox(height: 16),
