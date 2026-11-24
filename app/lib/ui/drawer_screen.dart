@@ -364,10 +364,10 @@ class _DrawerScreenState extends State<DrawerScreen> {
       cursor: SystemMouseCursors.click,
       child: GestureDetector(
         onTap: () => c.windowService.expandDrawer(),
-        onVerticalDragUpdate: c.windowService.isWindows
+        onPanUpdate: c.windowService.isWindows
             ? (_) => unawaited(c.windowService.moveDrawerHandle())
             : null,
-        onVerticalDragEnd: c.windowService.isWindows
+        onPanEnd: c.windowService.isWindows
             ? (_) => unawaited(c.windowService.moveDrawerHandle(save: true))
             : null,
         child: AnimatedContainer(
@@ -490,9 +490,9 @@ class _DrawerScreenState extends State<DrawerScreen> {
   Widget _buildToolbar(BuildContext context, DropDrawerController c) {
     final isEdge = c.windowService.edgeMode;
     return Padding(
-      padding: isEdge
-          ? const EdgeInsets.fromLTRB(14, 10, 10, 9)
-          : const EdgeInsets.fromLTRB(78, 1, 10, 3),
+      padding: c.windowService.needsMacTrafficLightPadding
+          ? const EdgeInsets.fromLTRB(78, 1, 10, 3)
+          : const EdgeInsets.fromLTRB(14, 10, 10, 9),
       child: SizedBox(
         height: 26,
         child: Row(
@@ -1341,9 +1341,9 @@ class _DrawerScreenState extends State<DrawerScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: c.windowService.edgeMode
-              ? const EdgeInsets.fromLTRB(10, 10, 12, 9)
-              : const EdgeInsets.fromLTRB(78, 1, 10, 3),
+          padding: c.windowService.needsMacTrafficLightPadding
+              ? const EdgeInsets.fromLTRB(78, 1, 10, 3)
+              : const EdgeInsets.fromLTRB(10, 10, 12, 9),
           child: SizedBox(
             height: 26,
             child: Row(
@@ -1812,7 +1812,7 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                   CupertinoButton(
                     minimumSize: const Size(0, 24),
                     padding: const EdgeInsets.symmetric(horizontal: 4),
-                    onPressed: () => c.p2p.cancelTransfer(entry.key),
+                    onPressed: () => c.cancelOutgoingTransfer(entry.key),
                     child: const Text('取消发送', style: TextStyle(fontSize: 10, color: MacPalette.red)),
                   ),
                 ],

@@ -1,5 +1,5 @@
-use super::{DROPDRAWER_ALPN, P2pPathKind, detect_path_kind};
-use iroh::{Endpoint, endpoint::Connection};
+use super::{DROPDRAWER_ALPN, P2pPathKind, detect_path_kind, transfers::PROBE_CODE};
+use iroh::{Endpoint, EndpointAddr, endpoint::Connection};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
@@ -24,7 +24,11 @@ impl RelayProbe {
         }
     }
 
-    pub(super) fn schedule(self: &Arc<Self>, conn: &Connection) {
+    pub(super) fn schedule(
+        self: &Arc<Self>,
+        conn: &Connection,
+        remote_addr: Option<EndpointAddr>,
+    ) {
         if detect_path_kind(conn) == P2pPathKind::Direct {
             return;
         }
@@ -36,9 +40,9 @@ impl RelayProbe {
                 _ = conn.closed() => return,
                 _ = tokio::time::sleep(RELAY_PROBE_DELAY) => {}
             }
-            let remote_id = match conn.upgrade() {
+            let target_addr = match conn.upgrade() {
                 Some(primary) if detect_path_kind(&primary) == P2pPathKind::Relay => {
-                    primary.remote_id()
+                    remote_addr.unwrap_or_else(|| EndpointAddr::from(primary.remote_id()))
                 }
                 _ => return,
             };
@@ -55,11 +59,13 @@ impl RelayProbe {
             // Adding a connection prompts iroh to retry hole punching. It shares
             // discovered paths across connections to a peer, so the original
             // stream can migrate without a second file request.
+            let mut auxiliary_conn: Option<Connection> = None;
             let retry = async {
-                let connect = probe.endpoint.connect(remote_id, DROPDRAWER_ALPN);
-                if let Ok(Ok(_auxiliary)) =
+                let connect = probe.endpoint.connect(target_addr, DROPDRAWER_ALPN);
+                if let Ok(Ok(auxiliary)) =
                     tokio::time::timeout(RELAY_PROBE_CONNECT_TIMEOUT, connect).await
                 {
+                    auxiliary_conn = Some(auxiliary);
                     tokio::time::sleep(RELAY_PROBE_PATH_GRACE).await;
                 }
             };
@@ -75,6 +81,9 @@ impl RelayProbe {
                 _ = conn.closed() => {}
                 _ = wait_for_direct => {}
                 _ = retry => {}
+            }
+            if let Some(auxiliary) = auxiliary_conn {
+                auxiliary.close(PROBE_CODE.into(), b"relay probe done");
             }
         });
     }

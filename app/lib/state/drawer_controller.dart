@@ -574,10 +574,19 @@ class DropDrawerController extends ChangeNotifier {
 
   String recipientName(String nodeId) =>
       devices.where((d) => d.irohNodeId == nodeId).firstOrNull?.name ??
-      nodeId.substring(0, 8);
+      (nodeId.length > 8 ? nodeId.substring(0, 8) : nodeId);
 
   void cancelTransfer(String itemId) {
     _activeCancelTokens[itemId]?.cancel();
+  }
+
+  void cancelOutgoingTransfer(String transferId) {
+    try {
+      p2p.cancelTransfer(transferId);
+    } catch (_) {}
+    outgoingTransfers.remove(transferId);
+    statusBanner = '已取消发送';
+    notifyListeners();
   }
 
   Future<void> retryTransfer(DrawerItem item) async {
@@ -716,7 +725,14 @@ class DropDrawerController extends ChangeNotifier {
           destPath: destPath,
         );
         _p2pDownloadIds[item.id] = id;
-        cancel.attach(() => p2p.cancelTransfer(id));
+        cancel.attach(() {
+          if (_p2pDownloadIds[item.id] == id) {
+            _p2pDownloadIds.remove(item.id);
+          }
+          try {
+            p2p.cancelTransfer(id);
+          } catch (_) {}
+        });
         activeTransfers[item.id] = TransferProgress(
           itemId: item.id,
           transferred: 0,
@@ -775,6 +791,9 @@ class DropDrawerController extends ChangeNotifier {
         destPath: destPath,
         cancelToken: cancelToken,
         onProgress: (rec, tot) {
+          if (cancelToken.isCancelled || _activeCancelTokens[itemId] != cancelToken) {
+            return;
+          }
           final elapsedMs = sw.elapsedMilliseconds;
           final effTot = tot > 0 ? tot : expectedSize;
           if (elapsedMs - lastNotifyMs < 120 && rec < effTot) return;
@@ -792,6 +811,7 @@ class DropDrawerController extends ChangeNotifier {
         },
       );
 
+      if (cancelToken.isCancelled) return;
       localFilePaths[itemId] = saved;
       unawaited(_persistLocalFilePaths());
       activeTransfers[itemId] = TransferProgress(
@@ -805,9 +825,12 @@ class DropDrawerController extends ChangeNotifier {
       );
       statusBanner = '已从「${cloud.backendName}」下载完成';
     } on TransferCancelledException {
-      activeTransfers.remove(itemId);
-      statusBanner = '已取消下载';
+      if (_activeCancelTokens[itemId] == cancelToken) {
+        activeTransfers.remove(itemId);
+        statusBanner = '已取消下载';
+      }
     } catch (e) {
+      if (cancelToken.isCancelled) return;
       activeTransfers[itemId] = TransferProgress(
         itemId: itemId,
         transferred: 0,
@@ -1127,7 +1150,45 @@ class DropDrawerController extends ChangeNotifier {
     }
 
     if (Platform.isWindows) {
-      final res = await Process.run('tar.exe', [
+      final systemRoot = Platform.environment['SystemRoot'] ?? r'C:\Windows';
+      final powershell = p.join(
+        systemRoot,
+        'System32',
+        'WindowsPowerShell',
+        'v1.0',
+        'powershell.exe',
+      );
+      if (File(powershell).existsSync()) {
+        final res = await Process.run(
+          powershell,
+          const [
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            r'Add-Type -AssemblyName System.IO.Compression.FileSystem; '
+                r'[System.IO.Compression.ZipFile]::CreateFromDirectory('
+                r'$env:DROPDRAWER_ZIP_SRC, $env:DROPDRAWER_ZIP_DST, '
+                r'[System.IO.Compression.CompressionLevel]::Optimal, '
+                r'$true, [System.Text.Encoding]::UTF8)',
+          ],
+          environment: {
+            'DROPDRAWER_ZIP_SRC': folderPath,
+            'DROPDRAWER_ZIP_DST': outZip,
+          },
+        );
+        if (res.exitCode == 0 && await File(outZip).exists()) {
+          return outZip;
+        }
+        final partial = File(outZip);
+        if (await partial.exists()) await partial.delete();
+      }
+
+      // Fallback to Windows built-in bsdtar (explicit System32 path avoids Git Bash GNU tar).
+      final systemTar = p.join(systemRoot, 'System32', 'tar.exe');
+      if (!File(systemTar).existsSync()) {
+        throw StateError('Windows archive utility not found');
+      }
+      final res = await Process.run(systemTar, [
         '-a', '-c', '-f', outZip, '-C', p.dirname(folderPath), '--', folderName,
       ]);
       if (res.exitCode != 0) {

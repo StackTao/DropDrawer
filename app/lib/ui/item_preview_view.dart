@@ -48,9 +48,9 @@ class ItemPreviewView extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: c.windowService.edgeMode
-              ? const EdgeInsets.fromLTRB(10, 10, 12, 9)
-              : const EdgeInsets.fromLTRB(78, 1, 10, 3),
+          padding: c.windowService.needsMacTrafficLightPadding
+              ? const EdgeInsets.fromLTRB(78, 1, 10, 3)
+              : const EdgeInsets.fromLTRB(10, 10, 12, 9),
           child: SizedBox(
             height: 26,
             child: Row(
@@ -109,6 +109,7 @@ class ItemPreviewView extends StatelessWidget {
                 _buildFileHero(),
               const SizedBox(height: 12),
               _buildMetaCard(hasLocalFile ? localPath : null),
+              _buildTransferStatus(c),
               const SizedBox(height: 12),
               _buildActionsRow(c, hasLocalFile ? localPath : null, isMine),
             ],
@@ -292,6 +293,110 @@ class ItemPreviewView extends StatelessWidget {
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTransferStatus(DropDrawerController c) {
+    final progress = c.activeTransfers[item.id];
+    final isTransferring = progress != null && !progress.finished;
+    final outgoing = c.outgoingTransfers.entries
+        .where((e) => e.value.itemId == item.id)
+        .toList();
+    if (!isTransferring && outgoing.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      margin: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.22),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: MacPalette.hairline, width: 0.7),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (isTransferring) ...[
+            ClipRRect(
+              borderRadius: BorderRadius.circular(2),
+              child: LinearProgressIndicator(
+                value: progress.fraction > 0 ? progress.fraction : null,
+                minHeight: 3,
+                backgroundColor: Colors.white.withValues(alpha: 0.1),
+                valueColor: const AlwaysStoppedAnimation<Color>(
+                  MacPalette.textPrimary,
+                ),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  switch (progress.channel) {
+                    'preparing' => '正在准备下载',
+                    'upload' => '正在上传到云盘',
+                    'p2p_connecting' => '正在建立 P2P 连接',
+                    'p2p_direct' => 'P2P 端到端直连',
+                    'p2p_relay' => 'P2P 加密中继',
+                    _ => '云端高速下载',
+                  },
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: MacPalette.textSecondary,
+                  ),
+                ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      '${(progress.fraction * 100).toStringAsFixed(0)}%'
+                      '${progress.speedBps > 0 ? ' · ${formatBytes(progress.speedBps)}/s' : ''}',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: MacPalette.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    CupertinoButton(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      minimumSize: const Size(0, 24),
+                      onPressed: () => c.cancelTransfer(item.id),
+                      child: Text(
+                        progress.channel == 'upload' ? '取消上传' : '取消下载',
+                        style: const TextStyle(fontSize: 11, color: MacPalette.red),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ],
+          for (final entry in outgoing)
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '正在发送给 ${c.recipientName(entry.value.sendingTo!)} · ${(entry.value.fraction * 100).floor()}%',
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: MacPalette.textSecondary,
+                    ),
+                  ),
+                ),
+                CupertinoButton(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  minimumSize: const Size(0, 24),
+                  onPressed: () => c.cancelOutgoingTransfer(entry.key),
+                  child: const Text(
+                    '取消发送',
+                    style: TextStyle(fontSize: 11, color: MacPalette.red),
+                  ),
+                ),
+              ],
+            ),
         ],
       ),
     );

@@ -1,11 +1,12 @@
 pub mod ffi;
 mod transfers;
 
-use transfers::{Cancelled, Transfer, Transfers, while_connected};
+use transfers::{CANCEL_CODE, Cancelled, PROBE_CODE, Transfer, Transfers, while_connected};
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 mod relay_probe;
 
+use std::ffi::OsString;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -15,7 +16,7 @@ use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use iroh::{
     Endpoint, EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr,
-    endpoint::{Connection, RelayMode},
+    endpoint::{Connection, ConnectionError, RelayMode},
 };
 use protocol::{P2pPathKind, P2pTransferProgress};
 use serde::{Deserialize, Serialize};
@@ -145,15 +146,11 @@ impl P2pNode {
         let tokens_clone = authorized_tokens.clone();
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         let relay_probe = Arc::new(relay_probe::RelayProbe::new(endpoint.clone()));
-        #[cfg(any(target_os = "windows", target_os = "macos"))]
-        let incoming_relay_probe = relay_probe.clone();
         let accept_task = tokio::spawn(async move {
             while let Some(incoming) = ep_clone.accept().await {
                 let files = files_clone.clone();
                 let transfers = incoming_transfers.clone();
                 let tokens = tokens_clone.clone();
-                #[cfg(any(target_os = "windows", target_os = "macos"))]
-                let relay_probe = incoming_relay_probe.clone();
                 tokio::spawn(async move {
                     match incoming.await {
                         Ok(conn) => {
@@ -163,8 +160,6 @@ impl P2pNode {
                                 transfers,
                                 tokens,
                                 require_auth_token,
-                                #[cfg(any(target_os = "windows", target_os = "macos"))]
-                                &relay_probe,
                             )
                             .await
                             {
@@ -305,14 +300,14 @@ impl P2pNode {
         let conn = tokio::select! {
             biased;
             _ = &mut transfer.cancel => return Err(Cancelled.into()),
-            conn = self.endpoint.connect(remote_addr, DROPDRAWER_ALPN) => conn?,
+            conn = self.endpoint.connect(remote_addr.clone(), DROPDRAWER_ALPN) => conn?,
         };
 
         let progress = &mut transfer.progress;
         progress.path_kind = detect_path_kind(&conn);
         #[cfg(any(target_os = "windows", target_os = "macos"))]
-        self.relay_probe.schedule(&conn);
-        let part_path = dest_path.with_extension("dropdrawer.part");
+        self.relay_probe.schedule(&conn, Some(remote_addr));
+        let part_path = part_path_for(&dest_path);
         let mut partial_file = None;
         let receive = async {
             let (mut send, mut recv) = conn.open_bi().await?;
@@ -484,11 +479,16 @@ async fn handle_incoming_connection(
     transfers: Arc<Transfers>,
     authorized_tokens: Arc<DashMap<String, AuthorizedToken>>,
     require_auth_token: bool,
-    #[cfg(any(target_os = "windows", target_os = "macos"))] relay_probe: &Arc<
-        relay_probe::RelayProbe,
-    >,
 ) -> anyhow::Result<()> {
-    let (mut send, mut recv) = conn.accept_bi().await?;
+    let (mut send, mut recv) = match conn.accept_bi().await {
+        Ok(streams) => streams,
+        Err(ConnectionError::ApplicationClosed(reason))
+            if reason.error_code == PROBE_CODE.into() =>
+        {
+            return Ok(());
+        }
+        Err(err) => return Err(err.into()),
+    };
     let req_bytes = read_frame(&mut recv).await?;
     let req: PullRequestHeader = serde_json::from_slice(&req_bytes)?;
 
@@ -552,9 +552,6 @@ async fn handle_incoming_connection(
     let send_file = async {
         write_frame(&mut send, &serde_json::to_vec(&resp)?).await?;
 
-        #[cfg(any(target_os = "windows", target_os = "macos"))]
-        relay_probe.schedule(&conn);
-
         let start_offset = req.offset.min(entry.size);
         if start_offset > 0 {
             file.seek(std::io::SeekFrom::Start(start_offset)).await?;
@@ -562,6 +559,7 @@ async fn handle_incoming_connection(
 
         let mut buf = vec![0u8; CHUNK_SIZE];
         let mut last_report = Instant::now();
+        let mut bytes_since_report = 0u64;
         loop {
             let n = file.read(&mut buf).await?;
             if n == 0 {
@@ -569,19 +567,49 @@ async fn handle_incoming_connection(
             }
             send.write_all(&buf[..n]).await?;
             progress.bytes_transferred += n as u64;
-            if last_report.elapsed() >= Duration::from_millis(200) {
+            bytes_since_report += n as u64;
+            let elapsed = last_report.elapsed();
+            if elapsed >= Duration::from_millis(200) {
+                progress.speed_bps =
+                    (bytes_since_report as f64 / elapsed.as_secs_f64().max(0.001)) as u64;
+                let path = detect_path_kind(&conn);
+                if path != P2pPathKind::Unknown {
+                    progress.path_kind = path;
+                }
                 transfers.report(progress);
                 last_report = Instant::now();
+                bytes_since_report = 0;
             }
         }
         send.finish()?;
-        // Wait briefly for peer to read the FIN cleanly.
-        send.stopped().await?;
-        Ok(())
+        // Wait briefly for peer to acknowledge the FIN. Once all bytes and FIN
+        // are sent, the peer may close the connection immediately after reading
+        // EOF without raising an error, so only treat an explicit cancel code
+        // as cancellation and ignore benign post-EOF close errors.
+        match send.stopped().await {
+            Ok(_) => Ok(()),
+            Err(_) => {
+                if matches!(
+                    conn.close_reason(),
+                    Some(ConnectionError::ApplicationClosed(reason))
+                        if reason.error_code == CANCEL_CODE.into()
+                ) {
+                    Err(Cancelled.into())
+                } else {
+                    Ok(())
+                }
+            }
+        }
     };
     let result = while_connected(&conn, &mut transfer.cancel, send_file).await;
     transfer.finish(&result);
     result
+}
+
+fn part_path_for(dest_path: &Path) -> PathBuf {
+    let mut os = OsString::from(dest_path.as_os_str());
+    os.push(".dropdrawer.part");
+    PathBuf::from(os)
 }
 
 fn detect_path_kind(conn: &Connection) -> P2pPathKind {
@@ -675,7 +703,7 @@ mod tests {
             let receiver = start("receiver").await.unwrap();
             let src = dir.path().join("source.bin");
             let dest = dir.path().join("received.bin");
-            let part = dest.with_extension("dropdrawer.part");
+            let part = part_path_for(&dest);
             std::fs::File::create(&src)
                 .unwrap()
                 .set_len(32 * 1024 * 1024)
@@ -848,5 +876,34 @@ mod tests {
 
         node_a.shutdown().await;
         node_b.shutdown().await;
+    }
+
+    #[test]
+    fn part_path_distinguishes_same_stem_different_extensions() {
+        let dir = Path::new("/tmp/dropdrawer");
+        let a = part_path_for(&dir.join("photo.png"));
+        let b = part_path_for(&dir.join("photo.jpg"));
+        assert_ne!(a, b);
+        assert_eq!(a, dir.join("photo.png.dropdrawer.part"));
+        assert_eq!(b, dir.join("photo.jpg.dropdrawer.part"));
+    }
+
+    #[test]
+    fn transfers_preserve_terminal_events_under_queue_pressure() {
+        let transfers = Arc::new(Transfers::default());
+        let mut t0 = transfers.begin("done-item".into(), None);
+        t0.finish(&Ok(()));
+        let done_id = t0.progress.transfer_id.clone();
+
+        for i in 0..300 {
+            let t = transfers.begin(format!("live-{i}"), None);
+            transfers.report(&t.progress);
+        }
+
+        let drained = transfers.drain();
+        assert!(
+            drained.iter().any(|e| e.transfer_id == done_id && e.finished),
+            "terminal event must not be evicted by live progress updates"
+        );
     }
 }

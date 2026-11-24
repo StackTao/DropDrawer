@@ -152,12 +152,13 @@ bool CopyFiles(HWND window, const EncodableList& paths) {
   size_t characters = 1;
   for (const auto& value : paths) {
     const auto* path = std::get_if<std::string>(&value);
-    if (!path) return false;
+    if (!path) continue;
     std::wstring file = Wide(*path);
+    if (file.empty()) continue;
     const DWORD attributes = GetFileAttributesW(file.c_str());
     if (attributes == INVALID_FILE_ATTRIBUTES ||
         (attributes & FILE_ATTRIBUTE_DIRECTORY)) {
-      return false;
+      continue;
     }
     characters += file.size() + 1;
     files.push_back(std::move(file));

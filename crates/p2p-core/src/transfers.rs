@@ -10,10 +10,16 @@ use uuid::Uuid;
 // Each pull opens a dedicated QUIC connection. This application close code
 // distinguishes an intentional stop from a failure eligible for cloud fallback.
 pub(super) const CANCEL_CODE: u32 = 0x4443;
+// Auxiliary hole-punching connections close with this code so the acceptor
+// can ignore them quietly instead of logging a spurious stream error.
+pub(super) const PROBE_CODE: u32 = 0x4450;
 
 #[derive(Debug, thiserror::Error)]
 #[error("transfer cancelled")]
 pub(super) struct Cancelled;
+
+const MAX_BUFFERED_EVENTS: usize = 256;
+const MAX_TERMINAL_EVENTS: usize = 1024;
 
 #[derive(Default)]
 pub(super) struct Transfers {
@@ -52,19 +58,29 @@ impl Transfers {
     }
 
     pub fn report(&self, progress: &P2pTransferProgress) {
-        let mut events = self.events.lock().unwrap();
+        let mut events = self.events.lock().unwrap_or_else(|e| e.into_inner());
         // Keep the latest live update per transfer while preserving terminal events.
         if !progress.finished {
-            events.retain(|e| e.transfer_id != progress.transfer_id);
+            events.retain(|e| e.finished || e.transfer_id != progress.transfer_id);
         }
         events.push_back(progress.clone());
-        if events.len() > 256 {
-            events.pop_front();
+        while events.len() > MAX_BUFFERED_EVENTS {
+            if let Some(idx) = events.iter().position(|e| !e.finished) {
+                events.remove(idx);
+            } else if events.len() > MAX_TERMINAL_EVENTS {
+                events.pop_front();
+            } else {
+                break;
+            }
         }
     }
 
     pub fn drain(&self) -> Vec<P2pTransferProgress> {
-        self.events.lock().unwrap().drain(..).collect()
+        self.events
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .drain(..)
+            .collect()
     }
 }
 

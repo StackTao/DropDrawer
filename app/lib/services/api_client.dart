@@ -14,21 +14,30 @@ class TransferCancelledException implements Exception {
 
 class TransferCancelToken {
   bool _cancelled = false;
-  void Function()? _onCancel;
+  final List<void Function()> _listeners = [];
 
   bool get isCancelled => _cancelled;
 
   void attach(void Function() onCancel) {
-    _onCancel = onCancel;
     if (_cancelled) {
-      onCancel();
+      try {
+        onCancel();
+      } catch (_) {}
+      return;
     }
+    _listeners.add(onCancel);
   }
 
   void cancel() {
     if (_cancelled) return;
     _cancelled = true;
-    _onCancel?.call();
+    final callbacks = List<void Function()>.of(_listeners);
+    _listeners.clear();
+    for (final fn in callbacks) {
+      try {
+        fn();
+      } catch (_) {}
+    }
   }
 }
 
@@ -337,7 +346,16 @@ class ApiClient {
       await sink.close();
       sink = null;
       if (cancelToken?.isCancelled ?? false) throw TransferCancelledException();
-      await partial.rename(destPath);
+      if (Platform.isWindows && await outFile.exists()) {
+        try {
+          await partial.rename(destPath);
+        } on FileSystemException {
+          await outFile.delete();
+          await partial.rename(destPath);
+        }
+      } else {
+        await partial.rename(destPath);
+      }
       return destPath;
     } catch (e) {
       try {
@@ -349,7 +367,11 @@ class ApiClient {
       rethrow;
     } finally {
       client.close();
-      await staging?.delete(recursive: true);
+      try {
+        if (staging != null && await staging.exists()) {
+          await staging.delete(recursive: true);
+        }
+      } catch (_) {}
     }
   }
 

@@ -254,23 +254,28 @@ void DrawerWindow::SetEdgeMode(bool enabled) {
     if (IsZoomed(window_) || IsIconic(window_)) ShowWindow(window_, SW_RESTORE);
     GetWindowRect(window_, &regular_bounds_);
   }
+  const bool start_collapsed = background_ && enabled;
+  if (enabled) background_ = false;
   edge_ = enabled;
   pinned_ = false;
   guide_from_ole_drag_ = false;
   opened_by_drag_ = false;
-  mode_ = background_ && edge_ ? Mode::kCollapsed : Mode::kExpanded;
+  mode_ = start_collapsed ? Mode::kCollapsed : Mode::kExpanded;
   if (edge_) {
     const LONG_PTR visible = GetWindowLongPtrW(window_, GWL_STYLE) & WS_VISIBLE;
     SetWindowLongPtrW(window_, GWL_STYLE, WS_POPUP | WS_CLIPCHILDREN | visible);
     PlaceDrawer();
     SetTimer(window_, kDrawerTimer, 80, nullptr);
-    if (background_) ShowWindow(window_, SW_SHOWNOACTIVATE);
+    if (start_collapsed) ShowWindow(window_, SW_SHOWNOACTIVATE);
   } else {
     KillTimer(window_, kDrawerTimer);
     SetWindowRgn(window_, nullptr, TRUE);
     const LONG_PTR visible = GetWindowLongPtrW(window_, GWL_STYLE) & WS_VISIBLE;
     SetWindowLongPtrW(window_, GWL_STYLE, (regular_style_ & ~WS_VISIBLE) | visible);
-    SetWindowLongPtrW(window_, GWL_EXSTYLE, regular_ex_style_);
+    LONG_PTR ex_style =
+        regular_ex_style_ & ~(WS_EX_APPWINDOW | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
+    ex_style |= show_taskbar_ || !tray_added_ ? WS_EX_APPWINDOW : WS_EX_TOOLWINDOW;
+    SetWindowLongPtrW(window_, GWL_EXSTYLE, ex_style);
     SetWindowPos(window_, HWND_NOTOPMOST, regular_bounds_.left, regular_bounds_.top,
                  regular_bounds_.right - regular_bounds_.left,
                  regular_bounds_.bottom - regular_bounds_.top,
@@ -328,8 +333,11 @@ void DrawerWindow::PlaceDrawer() {
   SetWindowLongPtrW(window_, GWL_EXSTYLE, style);
   SetWindowPos(window_, HWND_TOPMOST, left, top, width, height,
                SWP_NOACTIVATE | SWP_FRAMECHANGED);
-  const int radius = MulDiv(mode_ == Mode::kCollapsed ? 10 : 24, dpi, 96);
-  HRGN region = CreateRoundRectRgn(0, 0, width + 1, height + 1, radius, radius);
+  // CreateRoundRectRgn takes ellipse width/height (2 * corner radius).
+  const int diameter = MulDiv(
+      mode_ == Mode::kExpanded ? 32 : mode_ == Mode::kDragGuide ? 26 : 12,
+      dpi, 96);
+  HRGN region = CreateRoundRectRgn(0, 0, width + 1, height + 1, diameter, diameter);
   if (region && !SetWindowRgn(window_, region, TRUE)) DeleteObject(region);
 }
 
@@ -337,12 +345,37 @@ void DrawerWindow::MoveHandle(bool save) {
   if (!edge_ || mode_ != Mode::kCollapsed) return;
   POINT cursor{};
   if (!GetCursorPos(&cursor)) return;
-  const RECT area = WorkArea(MonitorFromWindow(window_, MONITOR_DEFAULTTONEAREST));
-  if (area.bottom <= area.top) return;
+  const HMONITOR monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
+  const RECT area = WorkArea(monitor);
+  if (area.bottom <= area.top || area.right <= area.left) return;
   const int ratio = MulDiv(cursor.y - area.top, 1000, area.bottom - area.top);
   anchor_ = static_cast<DWORD>(std::clamp(ratio, 0, 1000));
+
+  const LONG span = area.right - area.left;
+  bool dock_changed = false;
+  if (!dock_left_ && cursor.x < area.left + span / 4) {
+    dock_left_ = true;
+    dock_changed = true;
+  } else if (dock_left_ && cursor.x > area.right - span / 4) {
+    dock_left_ = false;
+    dock_changed = true;
+  }
+
+  // Move to the cursor's monitor if dragged across displays.
+  if (MonitorFromWindow(window_, MONITOR_DEFAULTTONEAREST) != monitor) {
+    SetWindowPos(window_, HWND_TOPMOST,
+                 dock_left_ ? area.left : area.right - 14, area.top, 0, 0,
+                 SWP_NOSIZE | SWP_NOACTIVATE);
+  }
   PlaceDrawer();
-  if (save) SavePreference(L"DrawerAnchor", anchor_);
+  if (dock_changed) {
+    SavePreference(L"DockLeft", dock_left_);
+    NotifyState();
+  }
+  if (save) {
+    SavePreference(L"DrawerAnchor", anchor_);
+    SavePreference(L"DockLeft", dock_left_);
+  }
 }
 
 void DrawerWindow::Activate() {
@@ -408,18 +441,28 @@ void DrawerWindow::OnTimer() {
     opened_by_drag_ = false;
     if (!pinned_ && !PtInRect(&bounds, cursor)) SetMode(Mode::kCollapsed);
   } else if (mode_ == Mode::kExpanded && !pinned_ && mouse_down &&
-             !PtInRect(&bounds, cursor) && GetForegroundWindow() != window_) {
+             !IsOleDragActive() && !PtInRect(&bounds, cursor) &&
+             GetForegroundWindow() != window_) {
     SetMode(Mode::kCollapsed);
   }
 }
 
 void DrawerWindow::UpdateTaskbar() {
-  if (!edge_) return;
   const bool visible = IsWindowVisible(window_) != FALSE;
   if (visible) ShowWindow(window_, SW_HIDE);
-  PlaceDrawer();
+  if (edge_) {
+    PlaceDrawer();
+  } else {
+    LONG_PTR ex_style =
+        regular_ex_style_ & ~(WS_EX_APPWINDOW | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
+    ex_style |= show_taskbar_ || !tray_added_ ? WS_EX_APPWINDOW : WS_EX_TOOLWINDOW;
+    SetWindowLongPtrW(window_, GWL_EXSTYLE, ex_style);
+    SetWindowPos(window_, nullptr, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
+                     SWP_FRAMECHANGED);
+  }
   if (visible) ShowWindow(window_, SW_SHOWNOACTIVATE);
-  if (visible && mode_ == Mode::kExpanded) Activate();
+  if (visible && (!edge_ || mode_ == Mode::kExpanded)) Activate();
 }
 
 bool DrawerWindow::AddTrayIcon() {
@@ -587,7 +630,18 @@ std::optional<LRESULT> DrawerWindow::HandleMessage(UINT message, WPARAM wparam,
         return 0;
       }
       break;
+    case WM_QUERYENDSESSION:
+      // Allow OS shutdown and installer Restart Manager to close cleanly.
+      return TRUE;
+    case WM_ENDSESSION:
+      if (wparam != FALSE) {
+        DestroyWindow(window_);
+      }
+      return 0;
     case WM_ACTIVATE:
+      if (LOWORD(wparam) == WA_INACTIVE && recording_) {
+        FinishRecording(false, false);
+      }
       if (LOWORD(wparam) == WA_INACTIVE && edge_ &&
           mode_ == Mode::kExpanded && !pinned_ && !opened_by_drag_ && !modal_open_) {
         POINT cursor{};
@@ -604,6 +658,12 @@ std::optional<LRESULT> DrawerWindow::HandleMessage(UINT message, WPARAM wparam,
         SetMode(Mode::kCollapsed);
       }
       return 0;
+    case WM_DPICHANGED:
+      if (edge_) {
+        PlaceDrawer();
+        return 0;
+      }
+      break;
     case WM_DISPLAYCHANGE:
       if (edge_) PlaceDrawer();
       break;

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -26,6 +27,7 @@ class DrawerWindowService {
   void Function()? onStateChanged;
   void Function()? onPasteShortcut;
   bool _dragGuidePending = false;
+  bool _handleMovePending = false;
 
   DrawerWindowService() {
     if (supportsEdgeDrawer) {
@@ -55,6 +57,7 @@ class DrawerWindowService {
 
   bool get isWindows => Platform.isWindows;
   bool get supportsEdgeDrawer => Platform.isMacOS || isWindows;
+  bool get needsMacTrafficLightPadding => Platform.isMacOS && !edgeMode;
   String get pasteShortcutLabel => isWindows ? 'Ctrl+V' : '⌘V';
 
   Future<void> showDragGuide() async {
@@ -68,7 +71,14 @@ class DrawerWindowService {
   }
 
   Future<void> moveDrawerHandle({bool save = false}) async {
-    await _channel.invokeMethod('moveDrawerHandle', {'save': save});
+    if (!isWindows) return;
+    if (!save && _handleMovePending) return;
+    _handleMovePending = true;
+    try {
+      await _channel.invokeMethod('moveDrawerHandle', {'save': save});
+    } finally {
+      _handleMovePending = false;
+    }
   }
 
   Future<void> setEdgeDrawerMode(bool enabled) async {
@@ -140,8 +150,10 @@ class DrawerWindowService {
       Map<String, String>? arguments;
       if (isWindows) {
         final dir = await getApplicationSupportDirectory();
+        final clipDir = Directory(p.join(dir.path, 'clipboard'));
+        unawaited(_pruneOldClipboardFiles(clipDir));
         final name = 'Screenshot-${DateTime.now().microsecondsSinceEpoch}.png';
-        arguments = {'imagePath': p.join(dir.path, 'clipboard', name)};
+        arguments = {'imagePath': p.join(clipDir.path, name)};
       }
       final raw = await _channel.invokeMethod<Map<dynamic, dynamic>>(
         'readClipboard',
@@ -193,23 +205,27 @@ class DrawerWindowService {
     try {
       if (isWindows) {
         final buffer = await ui.ImmutableBuffer.fromFilePath(path);
-        final codec = await ui.instantiateImageCodecWithSize(
-          buffer,
-          getTargetSize: (width, height) => ui.TargetImageSize(
-            width: width >= height && width > 256 ? 256 : null,
-            height: height > width && height > 256 ? 256 : null,
-          ),
-        );
         try {
-          final frame = await codec.getNextFrame();
+          final codec = await ui.instantiateImageCodecWithSize(
+            buffer,
+            getTargetSize: (width, height) => ui.TargetImageSize(
+              width: width >= height && width > 256 ? 256 : null,
+              height: height > width && height > 256 ? 256 : null,
+            ),
+          );
           try {
-            final data = await frame.image.toByteData(format: ui.ImageByteFormat.png);
-            return data == null ? null : base64Encode(data.buffer.asUint8List());
+            final frame = await codec.getNextFrame();
+            try {
+              final data = await frame.image.toByteData(format: ui.ImageByteFormat.png);
+              return data == null ? null : base64Encode(data.buffer.asUint8List());
+            } finally {
+              frame.image.dispose();
+            }
           } finally {
-            frame.image.dispose();
+            codec.dispose();
           }
         } finally {
-          codec.dispose();
+          buffer.dispose();
         }
       }
       return await _channel.invokeMethod<String>('generateThumbnail', {'path': path});
@@ -254,12 +270,31 @@ class DrawerWindowService {
     required double anchorBottomY,
     required String username,
   }) async {
-    if (!supportsEdgeDrawer) return null;
+    if (!Platform.isMacOS) return null;
     return _channel.invokeMethod<String>('showMoreMenu', {
       'x': anchorRightX,
       'y': anchorBottomY,
       'username': username,
     });
+  }
+
+  Future<void> _pruneOldClipboardFiles(Directory clipDir) async {
+    try {
+      if (!await clipDir.exists()) return;
+      final cutoff = DateTime.now().subtract(const Duration(hours: 24));
+      final files = <File>[];
+      await for (final entity in clipDir.list()) {
+        if (entity is File) files.add(entity);
+      }
+      files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+      for (var i = 0; i < files.length; i++) {
+        if (i >= 20 || files[i].lastModifiedSync().isBefore(cutoff)) {
+          try {
+            await files[i].delete();
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
   }
 
   Future<bool> requestAccessibilityPermission() async {

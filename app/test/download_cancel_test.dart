@@ -37,4 +37,16 @@ void main() {
       await dir.delete(recursive: true);
     }
   });
+
+  test('TransferCancelToken invokes every attached listener without overwriting', () {
+    final token = TransferCancelToken();
+    final events = <String>[];
+    token.attach(() => events.add('ui_cleanup'));
+    token.attach(() => events.add('transport_abort'));
+    token.cancel();
+    token.cancel(); // idempotent
+    token.attach(() => events.add('late_listener'));
+
+    expect(events, ['ui_cleanup', 'transport_abort', 'late_listener']);
+  });
 }

@@ -120,9 +120,9 @@ class _PreferencesViewState extends State<PreferencesView> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: c.windowService.edgeMode
-              ? const EdgeInsets.fromLTRB(10, 10, 12, 9)
-              : const EdgeInsets.fromLTRB(78, 1, 10, 3),
+          padding: c.windowService.needsMacTrafficLightPadding
+              ? const EdgeInsets.fromLTRB(78, 1, 10, 3)
+              : const EdgeInsets.fromLTRB(10, 10, 12, 9),
           child: SizedBox(
             height: 26,
             child: Row(
