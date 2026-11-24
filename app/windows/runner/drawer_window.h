@@ -51,11 +51,13 @@ class DrawerWindow {
   LONG_PTR regular_ex_style_;
   HWND previous_window_ = nullptr;
   ULONGLONG drag_guide_timeout_ = 0;
+  ULONGLONG drag_guide_open_at_ = 0;
   UINT taskbar_created_;
   Mode mode_ = Mode::kExpanded;
   bool background_;
   bool edge_ = false;
   bool pinned_ = false;
+  bool opened_by_drag_ = false;
   bool modal_open_ = false;
   bool main_drawer_active_ = false;
   bool dock_left_ = false;

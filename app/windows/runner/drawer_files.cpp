@@ -118,22 +118,17 @@ EncodableMap ReadClipboard(HWND window, const std::string& image_path) {
   if (!clipboard.opened()) return Kind("empty");
   if (const auto files = static_cast<HDROP>(GetClipboardData(CF_HDROP))) {
     EncodableList paths;
-    bool has_directory = false;
     const UINT count = DragQueryFileW(files, 0xFFFFFFFF, nullptr, 0);
     for (UINT index = 0; index < count; ++index) {
       const UINT length = DragQueryFileW(files, index, nullptr, 0);
       std::wstring path(length + 1, L'\0');
       if (!DragQueryFileW(files, index, path.data(), length + 1)) continue;
       const DWORD attributes = GetFileAttributesW(path.c_str());
-      if (attributes == INVALID_FILE_ATTRIBUTES) continue;
-      if (attributes & FILE_ATTRIBUTE_DIRECTORY) {
-        has_directory = true;
-      } else {
+      if (attributes != INVALID_FILE_ATTRIBUTES) {
         paths.emplace_back(Utf8FromUtf16(path.c_str()));
       }
     }
     if (!paths.empty()) return Paths("files", std::move(paths));
-    if (has_directory) return Kind("unsupported_dir");
   }
 
   const auto image = Wide(image_path);

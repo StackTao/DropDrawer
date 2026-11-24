@@ -279,7 +279,11 @@ void DrawerWindow::SetMode(Mode mode, bool activate) {
   if (mode_ != mode) {
     mode_ = mode;
     drag_guide_timeout_ = 0;
-    if (mode != Mode::kExpanded) pinned_ = false;
+    if (mode != Mode::kExpanded) {
+      pinned_ = false;
+      opened_by_drag_ = false;
+    }
+    if (mode == Mode::kDragGuide) drag_guide_open_at_ = GetTickCount64() + 180;
     PlaceDrawer();
     NotifyState();
   }
@@ -368,13 +372,22 @@ void DrawerWindow::OnTimer() {
       GetAsyncKeyState(VK_LBUTTON) < 0 || GetAsyncKeyState(VK_RBUTTON) < 0;
   if (mode_ == Mode::kDragGuide) {
     InflateRect(&bounds, 24, 24);
+    const ULONGLONG now = GetTickCount64();
     if (mouse_down && PtInRect(&bounds, cursor)) {
       drag_guide_timeout_ = 0;
+      if (now >= drag_guide_open_at_) {
+        opened_by_drag_ = true;
+        SetMode(Mode::kExpanded);
+      }
     } else if (!drag_guide_timeout_) {
-      drag_guide_timeout_ = GetTickCount64() + 450;
-    } else if (GetTickCount64() >= drag_guide_timeout_) {
+      drag_guide_timeout_ = now + 450;
+    } else if (now >= drag_guide_timeout_) {
       SetMode(Mode::kCollapsed);
     }
+  } else if (opened_by_drag_) {
+    if (mouse_down) return;
+    opened_by_drag_ = false;
+    if (!pinned_ && !PtInRect(&bounds, cursor)) SetMode(Mode::kCollapsed);
   } else if (mode_ == Mode::kExpanded && !pinned_ && mouse_down &&
              !PtInRect(&bounds, cursor) && GetForegroundWindow() != window_) {
     SetMode(Mode::kCollapsed);
@@ -503,13 +516,11 @@ std::string DrawerWindow::ShortcutLabel() const {
     return label + static_cast<char>(shortcut_key_);
   }
   const UINT scan = MapVirtualKeyW(shortcut_key_, MAPVK_VK_TO_VSC_EX);
-  char name[64]{};
+  wchar_t name[64]{};
   const LONG key_info = static_cast<LONG>(((scan & 0xFF) << 16) |
                                          ((scan & 0xFF00) ? (1 << 24) : 0));
-  if (GetKeyNameTextA(key_info, name, ARRAYSIZE(name)) &&
-      std::all_of(std::begin(name), std::end(name),
-                  [](unsigned char c) { return c < 0x80; })) {
-    return label + name;
+  if (GetKeyNameTextW(key_info, name, static_cast<int>(ARRAYSIZE(name)))) {
+    return label + Utf8FromUtf16(name);
   }
   return label + std::to_string(shortcut_key_);
 }
@@ -587,7 +598,7 @@ std::optional<LRESULT> DrawerWindow::HandleMessage(UINT message, WPARAM wparam,
       break;
     case WM_ACTIVATE:
       if (LOWORD(wparam) == WA_INACTIVE && edge_ &&
-          mode_ == Mode::kExpanded && !pinned_ && !modal_open_) {
+          mode_ == Mode::kExpanded && !pinned_ && !opened_by_drag_ && !modal_open_) {
         POINT cursor{};
         RECT bounds{};
         if (GetCursorPos(&cursor) && GetWindowRect(window_, &bounds) &&
