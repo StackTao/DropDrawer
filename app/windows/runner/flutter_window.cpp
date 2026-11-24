@@ -4,8 +4,9 @@
 
 #include "flutter/generated_plugin_registrant.h"
 
-FlutterWindow::FlutterWindow(const flutter::DartProject& project)
-    : project_(project) {}
+FlutterWindow::FlutterWindow(const flutter::DartProject& project,
+                             bool background)
+    : project_(project), background_(background) {}
 
 FlutterWindow::~FlutterWindow() {}
 
@@ -27,8 +28,11 @@ bool FlutterWindow::OnCreate() {
   RegisterPlugins(flutter_controller_->engine());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
-  flutter_controller_->engine()->SetNextFrameCallback([&]() {
-    this->Show();
+  drawer_window_ = std::make_unique<DrawerWindow>(
+      GetHandle(), flutter_controller_->engine()->messenger(), background_);
+
+  flutter_controller_->engine()->SetNextFrameCallback([this]() {
+    if (!background_) Show();
   });
 
   // Flutter can complete the first frame before the "show window" callback is
@@ -40,6 +44,7 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  drawer_window_.reset();
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
@@ -47,10 +52,19 @@ void FlutterWindow::OnDestroy() {
   Win32Window::OnDestroy();
 }
 
+bool FlutterWindow::HandleKeyboardMessage(const MSG& message) {
+  return drawer_window_ && drawer_window_->HandleKeyboard(message);
+}
+
 LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
+  if (drawer_window_) {
+    const auto result = drawer_window_->HandleMessage(message, wparam, lparam);
+    if (result) return *result;
+  }
+
   // Give Flutter, including plugins, an opportunity to handle window messages.
   if (flutter_controller_) {
     std::optional<LRESULT> result =
@@ -63,7 +77,7 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
 
   switch (message) {
     case WM_FONTCHANGE:
-      flutter_controller_->engine()->ReloadSystemFonts();
+      if (flutter_controller_) flutter_controller_->engine()->ReloadSystemFonts();
       break;
   }
 

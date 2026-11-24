@@ -1,0 +1,101 @@
+name: Windows installer
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-x64:
+    runs-on: windows-2025
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: "2"
+      FLUTTER_VERSION: "3.44.0"
+      FLUTTER_SHA256: 88da00194893bf9543fc47c0bf31e6de978d49ffdb9c2f6e30c46dde0116c768
+      FLUTTER_RELEASE_DIR: app/build/windows/x64/runner/Release
+      INSTALLER_PATH: dist/DropDrawer-Windows-x64-Setup.exe
+
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Flutter
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $archive = Join-Path $env:RUNNER_TEMP 'flutter-windows.zip'
+          $url = "https://storage.googleapis.com/flutter_infra_release/releases/stable/windows/flutter_windows_$($env:FLUTTER_VERSION)-stable.zip"
+          curl.exe --fail --location --retry 3 --silent --show-error --output $archive $url
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne $env:FLUTTER_SHA256) {
+            throw 'Flutter archive checksum does not match.'
+          }
+          tar.exe -xf $archive -C $env:RUNNER_TEMP
+          Remove-Item $archive
+          Join-Path $env:RUNNER_TEMP 'flutter\bin' | Out-File $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Build Flutter app
+        working-directory: app
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          flutter pub get --enforce-lockfile
+          flutter build windows --release --no-pub
+
+      - name: Build native P2P library
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          rustup toolchain install stable-x86_64-pc-windows-msvc --profile minimal --no-self-update
+          cargo +stable-x86_64-pc-windows-msvc build --locked --release -p p2p-core --target x86_64-pc-windows-msvc
+          Copy-Item 'target/x86_64-pc-windows-msvc/release/dropdrawer_p2p.dll' $env:FLUTTER_RELEASE_DIR
+
+      - name: Package with Inno Setup
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $crt = Get-ChildItem (Join-Path $vs 'VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT') -Directory |
+            Sort-Object { [version]$_.Parent.Parent.Name } -Descending |
+            Select-Object -First 1
+          if (!$crt) { throw 'Visual C++ x64 redistributable files were not found.' }
+          Copy-Item (Join-Path $crt.FullName '*.dll') $env:FLUTTER_RELEASE_DIR
+
+          $version = (Select-String '^version:\s*([^+\s]+)' app/pubspec.yaml).Matches[0].Groups[1].Value
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          & $iscc "/DAppVersion=$version" 'deploy/windows/DropDrawer.iss'
+
+      - name: Verify install, native DLL, and launch
+        run: |
+          $installDir = Join-Path $env:RUNNER_TEMP 'DropDrawer Test'
+          $installer = Start-Process -FilePath $env:INSTALLER_PATH -Wait -PassThru -ArgumentList @(
+            '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', ('/DIR="' + $installDir + '"')
+          )
+          if ($installer.ExitCode -ne 0) { throw "Installer failed with exit code $($installer.ExitCode)." }
+
+          $dll = [System.Runtime.InteropServices.NativeLibrary]::Load((Join-Path $installDir 'dropdrawer_p2p.dll'))
+          try {
+            [void][System.Runtime.InteropServices.NativeLibrary]::GetExport($dll, 'dropdrawer_p2p_start')
+          } finally {
+            [System.Runtime.InteropServices.NativeLibrary]::Free($dll)
+          }
+
+          $appExe = Join-Path $installDir 'dropdrawer_app.exe'
+          $app = Start-Process -FilePath $appExe -WorkingDirectory $env:RUNNER_TEMP -PassThru
+          try {
+            $deadline = (Get-Date).AddSeconds(30)
+            do {
+              Start-Sleep -Milliseconds 500
+              $app.Refresh()
+            } until ($app.HasExited -or $app.MainWindowHandle -ne 0 -or (Get-Date) -ge $deadline)
+            if ($app.HasExited) { throw "DropDrawer exited with code $($app.ExitCode)." }
+            if ($app.MainWindowHandle -eq 0) { throw 'DropDrawer did not open a window.' }
+          } finally {
+            if (!$app.HasExited) { Stop-Process -Id $app.Id }
+          }
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: DropDrawer-Windows-x64
+          path: dist/DropDrawer-Windows-x64-Setup.exe
+          if-no-files-found: error
+          retention-days: 30

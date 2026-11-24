@@ -356,12 +356,18 @@ class _DrawerScreenState extends State<DrawerScreen> {
       width: 0.7,
     );
 
-    return MouseRegion(
+    final handle = MouseRegion(
       onEnter: (_) => setState(() => _handleHovered = true),
       onExit: (_) => setState(() => _handleHovered = false),
       cursor: SystemMouseCursors.click,
       child: GestureDetector(
         onTap: () => c.windowService.expandDrawer(),
+        onVerticalDragUpdate: c.windowService.isWindows
+            ? (_) => unawaited(c.windowService.moveDrawerHandle())
+            : null,
+        onVerticalDragEnd: c.windowService.isWindows
+            ? (_) => unawaited(c.windowService.moveDrawerHandle(save: true))
+            : null,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 140),
           decoration: BoxDecoration(
@@ -386,6 +392,17 @@ class _DrawerScreenState extends State<DrawerScreen> {
           ),
         ),
       ),
+    );
+    if (!c.windowService.isWindows) return handle;
+    return DropRegion(
+      formats: const [Formats.fileUri, Formats.plainText],
+      hitTestBehavior: HitTestBehavior.opaque,
+      onDropOver: (_) {
+        unawaited(c.windowService.showDragGuide());
+        return DropOperation.copy;
+      },
+      onPerformDrop: (event) => _handleDropSession(c, event, expandAfterDrop: true),
+      child: handle,
     );
   }
 
@@ -678,7 +695,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            _isDragHovering ? '松开以放进抽屉' : '拖入、选取或 ⌘V 粘贴',
+                            _isDragHovering ? '松开以放进抽屉' : '拖入、选取或 ${c.windowService.pasteShortcutLabel} 粘贴',
                             style: const TextStyle(
                               fontSize: 12.5,
                               fontWeight: FontWeight.w500,
@@ -704,7 +721,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
                     ),
                     MacIconButton(
                       icon: CupertinoIcons.doc_on_clipboard,
-                      tooltip: '智能粘贴文件 / 截图 / 文本 (⌘V)',
+                      tooltip: '智能粘贴文件 / 截图 / 文本 (${c.windowService.pasteShortcutLabel})',
                       size: 14.5,
                       onPressed: _pasteFromClipboard,
                     ),
@@ -1041,7 +1058,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
                   .copyFilesToClipboard(localSelectedPaths);
               c.setBanner(
                 ok
-                    ? '已复制 ${localSelectedPaths.length} 个文件，可直接 ⌘V 粘贴'
+                    ? '已复制 ${localSelectedPaths.length} 个文件，可直接 ${c.windowService.pasteShortcutLabel} 粘贴'
                     : '复制文件失败',
               );
             },
@@ -1589,17 +1606,21 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                     if (localPath != null && c.windowService.supportsEdgeDrawer) ...[
                       MacIconButton(
                         icon: CupertinoIcons.doc_on_doc,
-                        tooltip: '复制文件 (可直接 ⌘V 粘贴到微信/访达)',
+                        tooltip: c.windowService.isWindows
+                            ? '复制文件 (可直接 Ctrl+V 粘贴到资源管理器)'
+                            : '复制文件 (可直接 ⌘V 粘贴到微信/访达)',
                         size: 14,
                         onPressed: () async {
                           final ok = await c.windowService
                               .copyFileToClipboard(localPath);
-                          c.setBanner(ok ? '已复制文件，可直接 ⌘V 粘贴' : '复制文件失败');
+                          c.setBanner(ok ? '已复制文件，可直接 ${c.windowService.pasteShortcutLabel} 粘贴' : '复制文件失败');
                         },
                       ),
                       MacIconButton(
                         icon: CupertinoIcons.folder,
-                        tooltip: '在访达中显示 (也可直接按住卡片拖出)',
+                        tooltip: c.windowService.isWindows
+                            ? '在资源管理器中显示 (也可直接按住卡片拖出)'
+                            : '在访达中显示 (也可直接按住卡片拖出)',
                         size: 14.5,
                         onPressed: () => c.windowService.revealInFinder(localPath),
                       ),

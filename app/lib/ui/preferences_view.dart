@@ -47,7 +47,9 @@ class _PreferencesViewState extends State<PreferencesView> {
     }
     setState(() {
       _recordingHotkey = true;
-      _hotkeyHint = '请直接按下组合键（需含 ⌘ / ⌥ / ⌃ 或 F1-F12，Esc 取消）';
+      _hotkeyHint = widget.controller.windowService.isWindows
+          ? '请按下含 Ctrl、Alt 或 Win 的组合键，也可使用 F1–F24。按 Esc 取消。'
+          : '请直接按下组合键（需含 ⌘ / ⌥ / ⌃ 或 F1-F12，Esc 取消）';
     });
     final res = await widget.controller.windowService.recordHotkeyNative();
     if (!mounted) return;
@@ -111,6 +113,7 @@ class _PreferencesViewState extends State<PreferencesView> {
   @override
   Widget build(BuildContext context) {
     final c = widget.controller;
+    final isWindows = c.windowService.isWindows;
     final thresholdMb = c.autoCloudThresholdBytes ~/ (1024 * 1024);
 
     return Column(
@@ -329,7 +332,7 @@ class _PreferencesViewState extends State<PreferencesView> {
               ),
               if (c.windowService.supportsEdgeDrawer) ...[
                 const SizedBox(height: 16),
-                const _SectionLabel('窗口与 macOS 集成'),
+                _SectionLabel(isWindows ? '窗口与 Windows 集成' : '窗口与 macOS 集成'),
                 const SizedBox(height: 6),
                 _GroupBox(
                   children: [
@@ -481,42 +484,24 @@ class _PreferencesViewState extends State<PreferencesView> {
                               spacing: 6,
                               runSpacing: 6,
                               children: [
-                                _hotkeyPresetChip(
-                                  label: '⌥⇧D',
-                                  active: c.windowService.hotkeyLabel == '⌥⇧D',
-                                  onTap: () => _applyHotkeyPreset(
-                                    '⌥⇧D',
-                                    2, // kVK_ANSI_D
-                                    ['option', 'shift'],
+                                for (final (label, key, modifiers) in isWindows
+                                    ? const [
+                                        ('Alt+Shift+D', 0x44, ['option', 'shift']),
+                                        ('Ctrl+Alt+D', 0x44, ['control', 'option']),
+                                        ('Ctrl+Shift+D', 0x44, ['control', 'shift']),
+                                        ('Ctrl+Shift+X', 0x58, ['control', 'shift']),
+                                      ]
+                                    : const [
+                                        ('⌥⇧D', 2, ['option', 'shift']),
+                                        ('⌃⌥D', 2, ['control', 'option']),
+                                        ('⌃⇧D', 2, ['control', 'shift']),
+                                        ('⌘⇧X', 7, ['command', 'shift']),
+                                      ])
+                                  _hotkeyPresetChip(
+                                    label: label,
+                                    active: c.windowService.hotkeyLabel == label,
+                                    onTap: () => _applyHotkeyPreset(label, key, modifiers),
                                   ),
-                                ),
-                                _hotkeyPresetChip(
-                                  label: '⌃⌥D',
-                                  active: c.windowService.hotkeyLabel == '⌃⌥D',
-                                  onTap: () => _applyHotkeyPreset(
-                                    '⌃⌥D',
-                                    2, // kVK_ANSI_D
-                                    ['control', 'option'],
-                                  ),
-                                ),
-                                _hotkeyPresetChip(
-                                  label: '⌃⇧D',
-                                  active: c.windowService.hotkeyLabel == '⌃⇧D',
-                                  onTap: () => _applyHotkeyPreset(
-                                    '⌃⇧D',
-                                    2, // kVK_ANSI_D
-                                    ['control', 'shift'],
-                                  ),
-                                ),
-                                _hotkeyPresetChip(
-                                  label: '⌘⇧X',
-                                  active: c.windowService.hotkeyLabel == '⌘⇧X',
-                                  onTap: () => _applyHotkeyPreset(
-                                    '⌘⇧X',
-                                    7, // kVK_ANSI_X
-                                    ['command', 'shift'],
-                                  ),
-                                ),
                               ],
                             ),
                             const SizedBox(height: 10),
@@ -556,7 +541,9 @@ class _PreferencesViewState extends State<PreferencesView> {
                                           c.windowService
                                                   .hasGlobalHotkeyPermission
                                               ? '全局监听已就绪 · 任意应用按 ${c.windowService.hotkeyLabel} 即可呼出'
-                                              : '需要开启 macOS「辅助功能」权限才能在其他应用下响应全局快捷键',
+                                              : isWindows
+                                                  ? '全局快捷键可能已被占用，请换一个组合键'
+                                                  : '需要开启 macOS「辅助功能」权限才能在其他应用下响应全局快捷键',
                                           style: const TextStyle(
                                             fontSize: 10.5,
                                             color: MacPalette.textPrimary,
@@ -565,8 +552,8 @@ class _PreferencesViewState extends State<PreferencesView> {
                                       ),
                                     ],
                                   ),
-                                  if (!c.windowService
-                                      .hasGlobalHotkeyPermission) ...[
+                                  if (!isWindows &&
+                                      !c.windowService.hasGlobalHotkeyPermission) ...[
                                     const SizedBox(height: 7),
                                     Row(
                                       children: [
@@ -647,15 +634,19 @@ class _PreferencesViewState extends State<PreferencesView> {
                       ),
                     const Divider(height: 0.5, thickness: 0.5, indent: 12),
                     _SwitchRow(
-                      title: '在程序坞 (Dock) 显示图标',
-                      subtitle: '关闭时仅常驻顶部菜单栏，开启后同时在 Dock 显示',
+                      title: isWindows ? '在任务栏显示抽屉' : '在程序坞 (Dock) 显示图标',
+                      subtitle: isWindows
+                          ? '关闭时可通过系统托盘打开抽屉'
+                          : '关闭时仅常驻顶部菜单栏，开启后同时在 Dock 显示',
                       value: c.windowService.showDockIcon,
                       onChanged: (v) => c.windowService.setShowDockIcon(v),
                     ),
                     const Divider(height: 0.5, thickness: 0.5, indent: 12),
                     _SwitchRow(
                       title: '开机自动启动',
-                      subtitle: '登录 macOS 时自动静默驻留状态栏与屏幕边缘',
+                      subtitle: isWindows
+                          ? '登录 Windows 时自动驻留系统托盘'
+                          : '登录 macOS 时自动静默驻留状态栏与屏幕边缘',
                       value: c.windowService.launchAtLogin,
                       onChanged: (v) async {
                         final ok = await c.windowService.setLaunchAtLogin(v);

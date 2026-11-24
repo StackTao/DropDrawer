@@ -628,7 +628,7 @@ class DropDrawerController extends ChangeNotifier {
   Future<void> downloadItem(DrawerItem item) async {
     if (_api == null || deviceId == null) return;
     final downloadsDir = await _resolveDownloadDir();
-    final destPath = p.join(downloadsDir, item.name);
+    final destPath = p.join(downloadsDir, _downloadFileName(item.name));
 
     try {
       final plan = await _api!.getDownloadPlan(
@@ -688,7 +688,7 @@ class DropDrawerController extends ChangeNotifier {
           item.id,
           item.size,
           plan.cloud!,
-          p.join(dir, item.name),
+          p.join(dir, _downloadFileName(item.name)),
         );
       }
     } catch (_) {}
@@ -1074,7 +1074,19 @@ class DropDrawerController extends ChangeNotifier {
       return outZip;
     }
 
-    // Fallback for Linux/Windows using standard zip CLI if available.
+    if (Platform.isWindows) {
+      final res = await Process.run('tar.exe', [
+        '-a', '-c', '-f', outZip, '-C', p.dirname(folderPath), '--', folderName,
+      ]);
+      if (res.exitCode != 0) {
+        final partial = File(outZip);
+        if (await partial.exists()) await partial.delete();
+        throw StateError('tar failed: ${res.stderr}');
+      }
+      return outZip;
+    }
+
+    // Fallback for other platforms using standard zip CLI if available.
     final parentDir = p.dirname(folderPath);
     final res = await Process.run(
       'zip',
@@ -1092,6 +1104,20 @@ class DropDrawerController extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('local_file_paths', jsonEncode(localFilePaths));
     } catch (_) {}
+  }
+
+  String _downloadFileName(String name) {
+    if (!Platform.isWindows) return name;
+    var safe = name
+        .replaceAll(RegExp(r'[<>:"/\\|?*\x00-\x1f]'), '_')
+        .replaceFirst(RegExp(r'[. ]+$'), '');
+    if (safe.isEmpty) return 'download';
+    final stem = safe.split('.').first.trimRight().toUpperCase();
+    if (RegExp(r'^(CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])$')
+        .hasMatch(stem)) {
+      safe = '_$safe';
+    }
+    return safe;
   }
 
   Future<String> _resolveDownloadDir() async {

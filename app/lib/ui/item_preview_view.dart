@@ -337,12 +337,12 @@ class ItemPreviewView extends StatelessWidget {
             label: '复制文件',
             onTap: () async {
               final ok = await c.windowService.copyFileToClipboard(localPath);
-              c.setBanner(ok ? '已复制文件，可直接 ⌘V 粘贴' : '复制文件失败');
+              c.setBanner(ok ? '已复制文件，可直接 ${c.windowService.pasteShortcutLabel} 粘贴' : '复制文件失败');
             },
           ),
           _secondaryButton(
             icon: CupertinoIcons.folder,
-            label: '访达中显示',
+            label: c.windowService.isWindows ? '在资源管理器中显示' : '访达中显示',
             onTap: () => c.windowService.revealInFinder(localPath),
           ),
         ] else

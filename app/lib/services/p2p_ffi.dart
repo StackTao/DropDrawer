@@ -106,6 +106,7 @@ class P2pFfiBridge {
     }
     if (Platform.isWindows) {
       return [
+        p.join(p.dirname(Platform.resolvedExecutable), 'dropdrawer_p2p.dll'),
         'dropdrawer_p2p.dll',
         p.normalize(p.join(Directory.current.path, '..', 'target', 'release', 'dropdrawer_p2p.dll')),
         p.normalize(p.join(Directory.current.path, '..', 'target', 'debug', 'dropdrawer_p2p.dll')),

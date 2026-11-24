@@ -21,6 +21,13 @@ void CreateAndAttachConsole() {
   }
 }
 
+std::wstring GetExecutablePath() {
+  wchar_t path[32768]{};
+  const DWORD length = GetModuleFileNameW(nullptr, path, ARRAYSIZE(path));
+  if (!length || length >= ARRAYSIZE(path)) return {};
+  return std::wstring(path, length);
+}
+
 std::vector<std::string> GetCommandLineArguments() {
   // Convert the UTF-16 command line arguments to UTF-8 for the Engine to use.
   int argc;

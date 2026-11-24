@@ -6,13 +6,15 @@
 
 #include <memory>
 
+#include "drawer_window.h"
 #include "win32_window.h"
 
-// A window that does nothing but host a Flutter view.
+// Hosts the Flutter view and integrates the Windows drawer.
 class FlutterWindow : public Win32Window {
  public:
   // Creates a new FlutterWindow hosting a Flutter view running |project|.
-  explicit FlutterWindow(const flutter::DartProject& project);
+  FlutterWindow(const flutter::DartProject& project, bool background);
+  bool HandleKeyboardMessage(const MSG& message);
   virtual ~FlutterWindow();
 
  protected:
@@ -25,9 +27,11 @@ class FlutterWindow : public Win32Window {
  private:
   // The project to run.
   flutter::DartProject project_;
+  bool background_;
 
   // The Flutter instance hosted by this window.
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
+  std::unique_ptr<DrawerWindow> drawer_window_;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_
