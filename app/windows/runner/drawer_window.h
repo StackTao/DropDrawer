@@ -2,6 +2,7 @@
 #define RUNNER_DRAWER_WINDOW_H_
 
 #include <windows.h>
+#include <flutter/encodable_value.h>
 #include <flutter/method_channel.h>
 
 #include <memory>

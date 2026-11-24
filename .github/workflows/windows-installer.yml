@@ -39,6 +39,7 @@ jobs:
         working-directory: app
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
+          $env:PUB_CACHE = Join-Path $env:RUNNER_TEMP 'pub-cache'
           flutter pub get --enforce-lockfile
           flutter build windows --release --no-pub
 
