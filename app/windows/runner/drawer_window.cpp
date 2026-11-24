@@ -5,7 +5,7 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <iterator>
+#include <cwchar>
 
 #include "drawer_files.h"
 #include "resource.h"
@@ -96,6 +96,18 @@ UINT PresetModifiers(const List& names) {
     if (*name == "command") modifiers |= MOD_WIN;
   }
   return modifiers;
+}
+
+bool IsOleDragActive() {
+  GUITHREADINFO info{};
+  info.cbSize = sizeof(info);
+  if (!GetGUIThreadInfo(0, &info) || !info.hwndCapture) return false;
+
+  // OLE owns mouse capture through its hidden clipboard window while dragging.
+  wchar_t class_name[32]{};
+  return GetClassNameW(info.hwndCapture, class_name,
+                       static_cast<int>(ARRAYSIZE(class_name))) &&
+         std::wcscmp(class_name, L"CLIPBRDWNDCLASS") == 0;
 }
 
 bool IsModifier(UINT key) {
@@ -190,12 +202,6 @@ void DrawerWindow::HandleCall(const flutter::MethodCall<Value>& call,
     NotifyState();
   } else if (method == "quitApp") {
     PostMessageW(window_, kQuitMessage, 0, 0);
-  } else if (method == "showMoreMenu") {
-    const std::string selected = ShowMoreMenu(
-        Arg<double>(args, "x"), Arg<double>(args, "y"),
-        Arg<std::string>(args, "username"));
-    if (selected.empty()) return result->Success();
-    return result->Success(Value(selected));
   } else if (method == "setHotkeyEnabled") {
     shortcut_enabled_ = Arg<bool>(args, "enabled");
     SavePreference(L"ShortcutEnabled", shortcut_enabled_);
@@ -250,12 +256,14 @@ void DrawerWindow::SetEdgeMode(bool enabled) {
   }
   edge_ = enabled;
   pinned_ = false;
+  guide_from_ole_drag_ = false;
+  opened_by_drag_ = false;
   mode_ = background_ && edge_ ? Mode::kCollapsed : Mode::kExpanded;
   if (edge_) {
     const LONG_PTR visible = GetWindowLongPtrW(window_, GWL_STYLE) & WS_VISIBLE;
     SetWindowLongPtrW(window_, GWL_STYLE, WS_POPUP | WS_CLIPCHILDREN | visible);
     PlaceDrawer();
-    SetTimer(window_, kDrawerTimer, 125, nullptr);
+    SetTimer(window_, kDrawerTimer, 80, nullptr);
     if (background_) ShowWindow(window_, SW_SHOWNOACTIVATE);
   } else {
     KillTimer(window_, kDrawerTimer);
@@ -279,6 +287,7 @@ void DrawerWindow::SetMode(Mode mode, bool activate) {
   if (mode_ != mode) {
     mode_ = mode;
     drag_guide_timeout_ = 0;
+    if (mode != Mode::kDragGuide) guide_from_ole_drag_ = false;
     if (mode != Mode::kExpanded) {
       pinned_ = false;
       opened_by_drag_ = false;
@@ -370,12 +379,22 @@ void DrawerWindow::OnTimer() {
 
   const bool mouse_down =
       GetAsyncKeyState(VK_LBUTTON) < 0 || GetAsyncKeyState(VK_RBUTTON) < 0;
+  if (mode_ == Mode::kCollapsed) {
+    if (mouse_down && IsOleDragActive()) {
+      guide_from_ole_drag_ = true;
+      SetMode(Mode::kDragGuide);
+    }
+    return;
+  }
   if (mode_ == Mode::kDragGuide) {
     InflateRect(&bounds, 24, 24);
+    const bool near_guide = PtInRect(&bounds, cursor) != FALSE;
+    const bool dragging =
+        mouse_down && (guide_from_ole_drag_ ? IsOleDragActive() : near_guide);
     const ULONGLONG now = GetTickCount64();
-    if (mouse_down && PtInRect(&bounds, cursor)) {
+    if (dragging) {
       drag_guide_timeout_ = 0;
-      if (now >= drag_guide_open_at_) {
+      if (near_guide && now >= drag_guide_open_at_) {
         opened_by_drag_ = true;
         SetMode(Mode::kExpanded);
       }
@@ -443,34 +462,6 @@ void DrawerWindow::ShowTrayMenu() {
     case 4: PostMessageW(window_, kQuitMessage, 0, 0); break;
   }
   modal_open_ = was_modal;
-}
-
-std::string DrawerWindow::ShowMoreMenu(double x, double y, const std::string& username) {
-  HMENU menu = CreatePopupMenu();
-  if (!menu) return {};
-  AppendMenuW(menu, MF_STRING, 1, dock_left_ ? L"停靠右侧" : L"停靠左侧");
-  AppendMenuW(menu, MF_STRING, 2, L"设备管理");
-  AppendMenuW(menu, MF_STRING, 3, L"分享链接");
-  AppendMenuW(menu, MF_STRING, 4, L"偏好设置");
-  AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-  AppendMenuW(menu, MF_STRING, 5, username.empty() ? L"退出登录" : L"退出当前账号");
-  AppendMenuW(menu, MF_STRING, 6, L"退出应用");
-
-  const auto dpi = static_cast<int>(GetDpiForWindow(window_));
-  POINT anchor{MulDiv(static_cast<int>(x), dpi, 96),
-               MulDiv(static_cast<int>(y), dpi, 96)};
-  ClientToScreen(window_, &anchor);
-  const bool was_modal = modal_open_;
-  modal_open_ = true;
-  const BOOL selected = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTALIGN,
-                                       anchor.x, anchor.y, 0, window_, nullptr);
-  DestroyMenu(menu);
-  modal_open_ = was_modal;
-  const char* const actions[] = {"", "toggle_dock_side", "devices", "shares",
-                                 "preferences", "logout", "quit"};
-  return selected > 0 && selected < static_cast<int>(std::size(actions))
-             ? actions[selected]
-             : "";
 }
 
 bool DrawerWindow::RegisterShortcut() {

@@ -42,6 +42,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
   final FocusNode _shortcutFocusNode = FocusNode();
   final TextEditingController _searchCtrl = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
+  AppLifecycleListener? _windowsMenuLifecycle;
 
   @override
   void initState() {
@@ -54,6 +55,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
   @override
   void dispose() {
     _searchFocusNode.removeListener(_syncMainDrawerShortcutState);
+    _closeWindowsMoreMenu(widget.controller);
     widget.controller.windowService.onPasteShortcut = null;
     widget.controller.windowService.setMainDrawerActive(false);
     _shortcutFocusNode.dispose();
@@ -581,7 +583,9 @@ class _DrawerScreenState extends State<DrawerScreen> {
               onPressed: () => _switchPage(_DrawerPage.storage),
             ),
             const SizedBox(width: 2),
-            if (c.windowService.supportsEdgeDrawer)
+            if (c.windowService.isWindows)
+              _buildWindowsMoreMenu(c)
+            else if (c.windowService.supportsEdgeDrawer)
               KeyedSubtree(
                 key: _moreMenuBtnKey,
                 child: MacIconButton(
@@ -646,6 +650,101 @@ class _DrawerScreenState extends State<DrawerScreen> {
         ),
       ),
     );
+  }
+
+  Widget _buildWindowsMoreMenu(DropDrawerController c) {
+    final dockLeft = c.windowService.dockSide == 'left';
+
+    PopupMenuItem<String> entry(
+      String action,
+      String title,
+      IconData icon, {
+      bool destructive = false,
+    }) {
+      return PopupMenuItem(
+        value: action,
+        height: 32,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: Row(
+          children: [
+            Icon(icon, size: 14, color: MacPalette.textSecondary),
+            const SizedBox(width: 8),
+            Text(
+              title,
+              style: TextStyle(
+                color: destructive ? MacPalette.red : MacPalette.textPrimary,
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return PopupMenuButton<String>(
+      tooltip: '更多',
+      icon: const Icon(CupertinoIcons.ellipsis),
+      iconSize: 16,
+      iconColor: MacPalette.textPrimary,
+      style: IconButton.styleFrom(
+        backgroundColor: MacPalette.cardBg,
+        minimumSize: const Size.square(26),
+        maximumSize: const Size.square(26),
+        padding: EdgeInsets.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+      ),
+      position: PopupMenuPosition.under,
+      offset: const Offset(0, 6),
+      color: MacPalette.elevatedBg,
+      surfaceTintColor: Colors.transparent,
+      elevation: 10,
+      menuPadding: const EdgeInsets.symmetric(vertical: 4),
+      constraints: const BoxConstraints.tightFor(width: 168),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+        side: const BorderSide(color: MacPalette.strongHairline, width: 0.8),
+      ),
+      clipBehavior: Clip.antiAlias,
+      onOpened: () {
+        final navigator = Navigator.of(context);
+        _windowsMenuLifecycle = AppLifecycleListener(
+          onInactive: () => unawaited(navigator.maybePop()),
+        );
+        unawaited(c.windowService.setModalOpen(true));
+      },
+      onCanceled: () => _closeWindowsMoreMenu(c),
+      onSelected: (action) {
+        _closeWindowsMoreMenu(c);
+        _handleMoreMenuAction(c, action);
+      },
+      itemBuilder: (_) => [
+        entry('shares', '外链管理', CupertinoIcons.link),
+        entry('devices', '设备状态', CupertinoIcons.device_laptop),
+        entry('preferences', '偏好设置', CupertinoIcons.gear_alt),
+        entry(
+          'toggle_dock_side',
+          dockLeft ? '停靠右侧' : '停靠左侧',
+          dockLeft ? CupertinoIcons.sidebar_right : CupertinoIcons.sidebar_left,
+        ),
+        const PopupMenuDivider(
+          height: 8,
+          indent: 12,
+          endIndent: 12,
+          color: MacPalette.hairline,
+        ),
+        entry('logout', '退出登录', CupertinoIcons.square_arrow_right),
+        entry('quit', '退出应用', CupertinoIcons.power, destructive: true),
+      ],
+    );
+  }
+
+  void _closeWindowsMoreMenu(DropDrawerController c) {
+    final listener = _windowsMenuLifecycle;
+    if (listener == null) return;
+    listener.dispose();
+    _windowsMenuLifecycle = null;
+    unawaited(c.windowService.setModalOpen(false));
   }
 
   Widget _buildDropHeader(DropDrawerController c) {

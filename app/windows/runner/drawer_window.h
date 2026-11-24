@@ -41,7 +41,6 @@ class DrawerWindow {
   void UpdateTaskbar();
   bool AddTrayIcon();
   void ShowTrayMenu();
-  std::string ShowMoreMenu(double x, double y, const std::string& username);
   bool RegisterShortcut();
   bool SetShortcut(UINT key, UINT modifiers);
   std::string ShortcutLabel() const;
@@ -61,6 +60,7 @@ class DrawerWindow {
   bool background_;
   bool edge_ = false;
   bool pinned_ = false;
+  bool guide_from_ole_drag_ = false;
   bool opened_by_drag_ = false;
   bool modal_open_ = false;
   bool main_drawer_active_ = false;
