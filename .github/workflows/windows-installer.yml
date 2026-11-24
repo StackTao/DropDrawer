@@ -50,6 +50,11 @@ jobs:
           cargo +stable-x86_64-pc-windows-msvc build --locked --release -p p2p-core --target x86_64-pc-windows-msvc
           Copy-Item 'target/x86_64-pc-windows-msvc/release/dropdrawer_p2p.dll' $env:FLUTTER_RELEASE_DIR
 
+      - name: Test native Windows P2P transfer
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          cargo +stable-x86_64-pc-windows-msvc test --locked --release -p p2p-core --target x86_64-pc-windows-msvc
+
       - name: Package with Inno Setup
         run: |
           $PSNativeCommandUseErrorActionPreference = $true

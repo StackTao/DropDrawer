@@ -275,7 +275,7 @@ class TransferProgress {
   final int transferred;
   final int total;
   final int speedBps;
-  final String channel; // 'p2p_direct' | 'p2p_relay' | 'cloud' | 'upload'
+  final String channel; // 'p2p_connecting' | 'p2p_direct' | 'p2p_relay' | 'cloud' | 'upload'
   final bool finished;
   final String? savedPath;
   final String? error;

@@ -1,5 +1,8 @@
 pub mod ffi;
 
+#[cfg(target_os = "windows")]
+mod windows;
+
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -83,6 +86,8 @@ pub struct P2pNode {
     require_auth_token: bool,
     events: Arc<Mutex<VecDeque<P2pTransferProgress>>>,
     accept_task: tokio::task::JoinHandle<()>,
+    #[cfg(target_os = "windows")]
+    relay_probe: Arc<windows::RelayProbe>,
 }
 
 impl P2pNode {
@@ -123,16 +128,28 @@ impl P2pNode {
         let ep_clone = endpoint.clone();
         let files_clone = shared_files.clone();
         let tokens_clone = authorized_tokens.clone();
+        #[cfg(target_os = "windows")]
+        let relay_probe = Arc::new(windows::RelayProbe::new(endpoint.clone()));
+        #[cfg(target_os = "windows")]
+        let incoming_relay_probe = relay_probe.clone();
         let accept_task = tokio::spawn(async move {
             while let Some(incoming) = ep_clone.accept().await {
                 let files = files_clone.clone();
                 let tokens = tokens_clone.clone();
+                #[cfg(target_os = "windows")]
+                let relay_probe = incoming_relay_probe.clone();
                 tokio::spawn(async move {
                     match incoming.await {
                         Ok(conn) => {
-                            if let Err(err) =
-                                handle_incoming_connection(conn, files, tokens, require_auth_token)
-                                    .await
+                            if let Err(err) = handle_incoming_connection(
+                                conn,
+                                files,
+                                tokens,
+                                require_auth_token,
+                                #[cfg(target_os = "windows")]
+                                &relay_probe,
+                            )
+                            .await
                             {
                                 tracing::warn!("incoming P2P connection error: {err}");
                             }
@@ -152,6 +169,8 @@ impl P2pNode {
             require_auth_token,
             events,
             accept_task,
+            #[cfg(target_os = "windows")]
+            relay_probe,
         }))
     }
 
@@ -248,6 +267,8 @@ impl P2pNode {
         let conn = self.endpoint.connect(remote_addr, DROPDRAWER_ALPN).await?;
 
         let path_kind = detect_path_kind(&conn);
+        #[cfg(target_os = "windows")]
+        self.relay_probe.schedule(&conn);
         let (mut send, mut recv) = conn.open_bi().await?;
 
         // Check partial file for resumable transfer
@@ -302,29 +323,62 @@ impl P2pNode {
         let mut buf = vec![0u8; CHUNK_SIZE];
         let mut last_report = Instant::now();
         let mut bytes_since_report = 0u64;
+        let report_interval = Duration::from_millis(200);
+        let mut progress = P2pTransferProgress {
+            transfer_id,
+            item_id,
+            bytes_transferred: offset,
+            total_bytes,
+            speed_bps: 0,
+            path_kind,
+            finished: false,
+            saved_path: None,
+            error: None,
+        };
+
+        #[cfg(target_os = "windows")]
+        {
+            progress.path_kind = detect_path_kind(&conn);
+            self.push_event(progress.clone());
+        }
+        #[cfg(target_os = "windows")]
+        let mut path_poll = tokio::time::interval_at(
+            tokio::time::Instant::now() + report_interval,
+            report_interval,
+        );
 
         loop {
-            match recv.read(&mut buf).await? {
+            #[cfg(target_os = "windows")]
+            let read = tokio::select! {
+                biased;
+                // A route can change while the receive stream is waiting for data.
+                _ = path_poll.tick() => {
+                    let path = detect_path_kind(&conn);
+                    if path != progress.path_kind {
+                        progress.path_kind = path;
+                        progress.bytes_transferred = offset;
+                        self.push_event(progress.clone());
+                    }
+                    continue;
+                }
+                // QUIC's read future is cancel-safe.
+                read = recv.read(&mut buf) => read,
+            };
+            #[cfg(not(target_os = "windows"))]
+            let read = recv.read(&mut buf).await;
+
+            match read? {
                 Some(n) if n > 0 => {
                     file.write_all(&buf[..n]).await?;
                     offset += n as u64;
                     bytes_since_report += n as u64;
 
                     let elapsed = last_report.elapsed();
-                    if elapsed >= Duration::from_millis(200) {
-                        let speed_bps =
+                    if elapsed >= report_interval {
+                        progress.bytes_transferred = offset;
+                        progress.speed_bps =
                             (bytes_since_report as f64 / elapsed.as_secs_f64().max(0.001)) as u64;
-                        self.push_event(P2pTransferProgress {
-                            transfer_id: transfer_id.clone(),
-                            item_id: item_id.clone(),
-                            bytes_transferred: offset,
-                            total_bytes,
-                            speed_bps,
-                            path_kind,
-                            finished: false,
-                            saved_path: None,
-                            error: None,
-                        });
+                        self.push_event(progress.clone());
                         last_report = Instant::now();
                         bytes_since_report = 0;
                     }
@@ -333,6 +387,13 @@ impl P2pNode {
             }
         }
 
+        #[cfg(target_os = "windows")]
+        {
+            let path = detect_path_kind(&conn);
+            if path != P2pPathKind::Unknown {
+                progress.path_kind = path;
+            }
+        }
         file.flush().await?;
         drop(file);
 
@@ -350,19 +411,12 @@ impl P2pNode {
         }
 
         tokio::fs::rename(&part_path, &dest_path).await?;
-        let final_event = P2pTransferProgress {
-            transfer_id,
-            item_id,
-            bytes_transferred: total_bytes,
-            total_bytes,
-            speed_bps: 0,
-            path_kind,
-            finished: true,
-            saved_path: Some(dest_path.to_string_lossy().to_string()),
-            error: None,
-        };
-        self.push_event(final_event.clone());
-        Ok(final_event)
+        progress.bytes_transferred = total_bytes;
+        progress.speed_bps = 0;
+        progress.finished = true;
+        progress.saved_path = Some(dest_path.to_string_lossy().to_string());
+        self.push_event(progress.clone());
+        Ok(progress)
     }
 
     pub async fn shutdown(&self) {
@@ -380,6 +434,7 @@ async fn handle_incoming_connection(
     shared_files: Arc<DashMap<String, SharedFileEntry>>,
     authorized_tokens: Arc<DashMap<String, AuthorizedToken>>,
     require_auth_token: bool,
+    #[cfg(target_os = "windows")] relay_probe: &Arc<windows::RelayProbe>,
 ) -> anyhow::Result<()> {
     let (mut send, mut recv) = conn.accept_bi().await?;
     let req_bytes = read_frame(&mut recv).await?;
@@ -437,6 +492,9 @@ async fn handle_incoming_connection(
         blake3_hash: entry.blake3_hash.clone(),
     };
     write_frame(&mut send, &serde_json::to_vec(&resp)?).await?;
+
+    #[cfg(target_os = "windows")]
+    relay_probe.schedule(&conn);
 
     let start_offset = req.offset.min(entry.size);
     if start_offset > 0 {
@@ -592,6 +650,13 @@ mod tests {
 
         assert!(progress.finished);
         assert_eq!(progress.total_bytes, payload.len() as u64);
+        #[cfg(target_os = "windows")]
+        assert!(
+            node_b
+                .drain_events()
+                .iter()
+                .any(|event| { !event.finished && event.path_kind == P2pPathKind::Direct })
+        );
         let received = tokio::fs::read(&dest_file).await.unwrap();
         assert_eq!(received, payload);
 

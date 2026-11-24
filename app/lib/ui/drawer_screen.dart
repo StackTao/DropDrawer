@@ -1760,13 +1760,13 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
-                    progress.channel == 'upload'
-                        ? '正在上传到云盘'
-                        : (progress.channel == 'p2p_direct'
-                            ? 'P2P 端到端直连'
-                            : (progress.channel == 'p2p_relay'
-                                ? 'P2P 加密中继'
-                                : '云端高速下载')),
+                    switch (progress.channel) {
+                      'upload' => '正在上传到云盘',
+                      'p2p_connecting' => '正在建立 P2P 连接',
+                      'p2p_direct' => 'P2P 端到端直连',
+                      'p2p_relay' => 'P2P 加密中继',
+                      _ => '云端高速下载',
+                    },
                     style: const TextStyle(
                       fontSize: 10,
                       color: MacPalette.textTertiary,

@@ -241,8 +241,11 @@ class DropDrawerController extends ChangeNotifier {
     for (final ev in events) {
       final itemId = ev['item_id'] as String;
       final pathKind = ev['path_kind'] as String? ?? 'unknown';
-      final channel =
-          pathKind == 'direct' ? 'p2p_direct' : 'p2p_relay';
+      final channel = switch (pathKind) {
+        'direct' => 'p2p_direct',
+        'relay' => 'p2p_relay',
+        _ => Platform.isWindows ? 'p2p_connecting' : 'p2p_relay',
+      };
       final savedPath = ev['saved_path'] as String?;
       final finished = ev['finished'] as bool? ?? false;
       final err = ev['error'] as String?;
@@ -267,7 +270,12 @@ class DropDrawerController extends ChangeNotifier {
         statusBanner = 'P2P failed ($err), trying cloud fallback...';
         _fallbackCloudDownload(itemId);
       } else if (finished && savedPath != null) {
-        statusBanner = 'Downloaded via ${channel == 'p2p_direct' ? 'P2P Direct' : 'P2P Relay'}';
+        final transport = switch (channel) {
+          'p2p_direct' => 'P2P Direct',
+          'p2p_relay' => 'P2P Relay',
+          _ => 'P2P',
+        };
+        statusBanner = 'Downloaded via $transport';
       }
     }
     notifyListeners();
@@ -642,7 +650,7 @@ class DropDrawerController extends ChangeNotifier {
           transferred: 0,
           total: item.size,
           speedBps: 0,
-          channel: 'p2p_direct',
+          channel: Platform.isWindows ? 'p2p_connecting' : 'p2p_direct',
           finished: false,
         );
         notifyListeners();
