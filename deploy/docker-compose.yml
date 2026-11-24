@@ -1,0 +1,18 @@
+services:
+  dropdrawer-server:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: dropdrawer-server
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - DROPDRAWER_BIND=0.0.0.0:8080
+      - DROPDRAWER_DB_PATH=/data/dropdrawer.db
+      - DROPDRAWER_LOCAL_STORAGE=/data/blobs
+      - DROPDRAWER_JWT_SECRET=${DROPDRAWER_JWT_SECRET:-change-me-to-a-long-random-secret}
+      - DROPDRAWER_TTL_CLEANUP_SECS=300
+      - RUST_LOG=info
+    volumes:
+      - ./data/server:/data

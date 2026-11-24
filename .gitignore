@@ -1,0 +1,28 @@
+# Build outputs
+/target
+/dist/
+
+# Runtime data
+/data
+/deploy/data/
+*.db
+*.db-shm
+*.db-wal
+.env
+
+# Flutter / Dart
+app/.dart_tool/
+app/.packages
+app/build/
+app/.flutter-plugins
+app/.flutter-plugins-dependencies
+app/macos/Flutter/ephemeral/
+app/ios/Flutter/ephemeral/
+app/windows/flutter/ephemeral/
+app/linux/flutter/ephemeral/
+app/android/.gradle/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/

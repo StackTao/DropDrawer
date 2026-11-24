@@ -1,0 +1,24 @@
+name: dropdrawer
+
+services:
+  dropdrawer-server:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        CARGO_BUILD_JOBS: "2"
+    image: dropdrawer-server:latest
+    container_name: dropdrawer-server
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:18088:8080"
+    env_file:
+      - /srv/dropdrawer/shared/.env
+    environment:
+      - DROPDRAWER_BIND=0.0.0.0:8080
+      - DROPDRAWER_DB_PATH=/data/dropdrawer.db
+      - DROPDRAWER_LOCAL_STORAGE=/data/blobs
+      - DROPDRAWER_TTL_CLEANUP_SECS=300
+      - RUST_LOG=info
+    volumes:
+      - /srv/dropdrawer/shared/data:/data
