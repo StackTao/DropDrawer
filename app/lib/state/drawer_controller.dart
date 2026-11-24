@@ -624,19 +624,29 @@ class DropDrawerController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Downloads an item using P2P-first strategy, automatically falling back to cloud storage.
+  bool prefersPeerDownload(DrawerItem item) =>
+      item.canP2p && !(windowService.isWindows && item.cloudReady);
+
+  /// Windows prefers a cached copy when the server offers a cloud download.
   Future<void> downloadItem(DrawerItem item) async {
-    if (_api == null || deviceId == null) return;
+    final api = _api;
+    final requesterDeviceId = deviceId;
+    if (api == null || requesterDeviceId == null) return;
     final downloadsDir = await _resolveDownloadDir();
     final destPath = p.join(downloadsDir, _downloadFileName(item.name));
 
     try {
-      final plan = await _api!.getDownloadPlan(
+      final plan = await api.getDownloadPlan(
         item.id,
-        requesterDeviceId: deviceId!,
+        requesterDeviceId: requesterDeviceId,
+      );
+      final peer = plan.selectPeer(
+        requesterDeviceId: requesterDeviceId,
+        p2pReady: p2pReady,
+        preferCloud: windowService.isWindows,
       );
 
-      if (plan.p2p != null && p2pReady && plan.p2p!.deviceId != deviceId) {
+      if (peer != null) {
         activeTransfers[item.id] = TransferProgress(
           itemId: item.id,
           transferred: 0,
@@ -649,10 +659,10 @@ class DropDrawerController extends ChangeNotifier {
 
         p2p.downloadFile(
           itemId: item.id,
-          remoteNodeId: plan.p2p!.irohNodeId,
-          remoteRelayUrl: plan.p2p!.irohRelayUrl,
-          remoteDirectAddrs: plan.p2p!.directAddrs,
-          transferToken: plan.p2p!.transferToken,
+          remoteNodeId: peer.irohNodeId,
+          remoteRelayUrl: peer.irohRelayUrl,
+          remoteDirectAddrs: peer.directAddrs,
+          transferToken: peer.transferToken,
           destPath: destPath,
         );
         return;

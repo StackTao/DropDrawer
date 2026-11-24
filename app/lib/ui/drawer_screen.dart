@@ -1726,7 +1726,9 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                     ] else
                       MacIconButton(
                         icon: CupertinoIcons.arrow_down_circle,
-                        tooltip: item.canP2p ? 'P2P 优先下载' : '从云端下载',
+                        tooltip: c.prefersPeerDownload(item)
+                            ? 'P2P 优先下载'
+                            : '从云端下载',
                         color: MacPalette.textPrimary,
                         size: 16,
                         onPressed: () => c.downloadItem(item),
@@ -1766,7 +1768,9 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                             ? 'P2P 端到端直连'
                             : (progress.channel == 'p2p_relay'
                                 ? 'P2P 加密中继'
-                                : '云端高速下载')),
+                                : c.windowService.isWindows
+                                    ? '云端下载'
+                                    : '云端高速下载')),
                     style: const TextStyle(
                       fontSize: 10,
                       color: MacPalette.textTertiary,

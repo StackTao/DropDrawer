@@ -205,6 +205,16 @@ class DownloadPlan {
 
   DownloadPlan({required this.itemId, this.p2p, this.cloud});
 
+  P2pSourceInfo? selectPeer({
+    required String requesterDeviceId,
+    required bool p2pReady,
+    required bool preferCloud,
+  }) {
+    if (!p2pReady || (preferCloud && cloud != null)) return null;
+    final peer = p2p;
+    return peer?.deviceId == requesterDeviceId ? null : peer;
+  }
+
   factory DownloadPlan.fromJson(Map<String, dynamic> json) => DownloadPlan(
         itemId: json['item_id'] as String,
         p2p: json['p2p'] != null
