@@ -126,10 +126,11 @@ jobs:
             }
             HideToTray $app
             $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+            $registryPath = 'HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run'
             Set-ItemProperty $runKey -Name DropDrawer -Value ('"' + $appExe + '" --background')
             $uninstall = Start-Process (Join-Path $installDir 'unins000.exe') -Wait -PassThru -ArgumentList $silent
             if ($uninstall.ExitCode -ne 0 -or !$app.WaitForExit(5000) -or (Test-Path $appExe) -or
-                (Get-ItemPropertyValue $runKey DropDrawer -ErrorAction SilentlyContinue)) {
+                ($null -ne [Microsoft.Win32.Registry]::GetValue($registryPath, 'DropDrawer', $null))) {
               throw 'Running uninstall failed to remove the app, process or startup entry'
             }
           } finally {
