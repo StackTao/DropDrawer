@@ -1,0 +1,2083 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>DropDrawer — 文件拖进边缘，全端即刻取走</title>
+<meta name="description" content="贴边隐身的开源跨端文件抽屉。在线基于 iroh QUIC 端到端直连，离线自动回落到你自己的云盘，支持 macOS、Windows、Android 与 iOS。">
+<meta name="theme-color" content="#050507">
+<link rel="canonical" href="https://drop.stacktao.cn/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="DropDrawer · 跨端文件抽屉">
+<meta property="og:description" content="贴边隐身的跨端文件抽屉，支持 P2P 传输和自有云盘。">
+<meta property="og:url" content="https://drop.stacktao.cn/">
+<meta property="og:image" content="https://raw.githubusercontent.com/StackTao/DropDrawer/main/docs/images/macos-drawer.png">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600;700&display=swap">
+<style>
+:root {
+  --bg: #050507;
+  --bg-2: #0a0b0f;
+  --bg-3: #0f1117;
+  --line: rgba(255, 255, 255, 0.075);
+  --line-2: rgba(255, 255, 255, 0.14);
+  --text: #f7f8fa;
+  --text-2: #9ba1b0;
+  --text-3: #666c7d;
+  --cyan: #38bdf8;
+  --sky: #7dd3fc;
+  --indigo: #6366f1;
+  --green: #34d399;
+  --amber: #f59e0b;
+  --font-sans: "Inter", "PingFang SC", "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { scroll-behavior: smooth; background: var(--bg); overflow-x: clip; max-width: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 400 15px/1.6 var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: clip;
+  max-width: 100%;
+  text-rendering: optimizeLegibility;
+}
+
+a { color: inherit; text-decoration: none; }
+button { font: inherit; color: inherit; }
+img, svg { display: block; }
+h1, h2, h3, h4, p { margin: 0; }
+code { font-family: var(--font-mono); }
+[hidden] { display: none !important; }
+:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; border-radius: 8px; }
+
+.wrap {
+  width: 100%;
+  max-width: 1140px;
+  margin: 0 auto;
+  padding-inline: max(20px, env(safe-area-inset-left, 0px));
+}
+
+.reveal {
+  opacity: 1;
+  transform: none;
+  transition: opacity 0.72s cubic-bezier(0.16, 1, 0.3, 1), transform 0.72s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.js-ready .reveal:not(.in) { opacity: 0; transform: translateY(22px); }
+
+.t-grad {
+  background: linear-gradient(180deg, #ffffff 20%, rgba(255, 255, 255, 0.74) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.t-dim { color: #767d90; -webkit-text-fill-color: #767d90; }
+
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font: 500 11.5px/1 var(--font-mono);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: #7dd3fc;
+}
+.eyebrow i { width: 5px; height: 5px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 10px var(--cyan); }
+
+section { position: relative; padding-block: clamp(84px, 9.5vw, 136px); }
+.sec-divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.085) 22%, rgba(255, 255, 255, 0.085) 78%, transparent);
+}
+.sec-head {
+  max-width: 640px;
+  margin: 0 auto clamp(44px, 5vw, 62px);
+  text-align: center;
+  display: grid;
+  justify-items: center;
+  gap: 13px;
+}
+.sec-head h2 {
+  font-size: clamp(30px, 4vw, 48px);
+  font-weight: 600;
+  line-height: 1.13;
+  letter-spacing: -0.022em;
+  text-wrap: balance;
+}
+.sec-head p { font-size: 16px; line-height: 1.65; color: var(--text-2); }
+
+/* Tactile buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 22px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  border: 0;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: transform 0.16s cubic-bezier(0.2, 0.8, 0.2, 1), background 0.18s ease, box-shadow 0.18s ease;
+}
+.btn:active { transform: translateY(1px) scale(0.985); }
+.btn-primary {
+  color: #08090c;
+  background: linear-gradient(180deg, #ffffff 0%, #e7eaf1 100%);
+  box-shadow: inset 0 1px 0 #ffffff, 0 2px 6px rgba(0, 0, 0, 0.55), 0 14px 34px -10px rgba(255, 255, 255, 0.3);
+}
+.btn-primary:hover {
+  background: linear-gradient(180deg, #ffffff 0%, #f3f5f9 100%);
+  transform: translateY(-1px);
+  box-shadow: inset 0 1px 0 #ffffff, 0 4px 12px rgba(0, 0, 0, 0.6), 0 18px 42px -10px rgba(255, 255, 255, 0.42);
+}
+.btn-ghost {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.055);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), inset 0 0 0 1px rgba(255, 255, 255, 0.09);
+}
+.btn-ghost:hover { background: rgba(255, 255, 255, 0.095); transform: translateY(-1px); }
+.btn-sm { height: 34px; padding: 0 14px; font-size: 13px; border-radius: 8px; }
+
+/* =========================================================
+   FLOATING CAPSULE NAVBAR
+   ========================================================= */
+.nav-wrap {
+  position: fixed;
+  top: max(16px, env(safe-area-inset-top, 0px));
+  left: 0;
+  right: 0;
+  z-index: 60;
+  padding-inline: 16px;
+  pointer-events: none;
+}
+.nav {
+  pointer-events: auto;
+  max-width: 1060px;
+  height: 56px;
+  margin: 0 auto;
+  padding: 0 10px 0 16px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  background: rgba(11, 12, 16, 0.72);
+  backdrop-filter: blur(22px) saturate(180%);
+  -webkit-backdrop-filter: blur(22px) saturate(180%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.105), 0 0 0 1px rgba(255, 255, 255, 0.075), 0 20px 44px -18px rgba(0, 0, 0, 0.9);
+}
+.brand { display: inline-flex; align-items: center; gap: 9px; font-size: 14.5px; font-weight: 600; letter-spacing: -0.02em; }
+.brand svg { width: 24px; height: 24px; }
+.nav-links { display: flex; align-items: center; gap: 4px; margin: 0 auto; }
+.nav-links a { padding: 6px 12px; border-radius: 8px; font-size: 13.5px; font-weight: 500; color: rgba(255, 255, 255, 0.62); transition: color 0.16s, background 0.16s; }
+.nav-links a:hover { color: #fff; background: rgba(255, 255, 255, 0.055); }
+.nav-right { display: flex; align-items: center; gap: 10px; }
+.nav-gh { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 10px; border-radius: 8px; font-size: 13px; font-weight: 500; color: rgba(255, 255, 255, 0.68); transition: color 0.16s; }
+.nav-gh:hover { color: #fff; }
+@media (max-width: 780px) { .nav-links { display: none; } .nav-right { margin-left: auto; } .nav-gh span { display: none; } }
+
+/* =========================================================
+   SECTION 1: FULL-SCREEN HERO WITH ORIGINAL VERTICAL FLUTED GLASS SHADER
+   ========================================================= */
+.hero {
+  position: relative;
+  height: 100svh;
+  min-height: 640px;
+  max-height: 1040px;
+  padding: 96px 0 42px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  overflow: hidden;
+  isolation: isolate;
+}
+#hero-canvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: -2; display: block; }
+.hero::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: 180px;
+  z-index: -1;
+  pointer-events: none;
+  background: linear-gradient(180deg, transparent 0%, var(--bg) 100%);
+}
+.hero-spacer { height: 1px; }
+.hero-center {
+  position: relative;
+  z-index: 2;
+  text-align: center;
+  padding-inline: 20px;
+  display: grid;
+  justify-items: center;
+  gap: 18px;
+  max-width: 780px;
+  animation: hero-enter 0.85s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes hero-enter { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+.hero h1 {
+  font-size: clamp(40px, 6.2vw, 74px);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.025em;
+  color: #ffffff;
+  text-shadow: 0 8px 44px rgba(0, 0, 0, 0.7);
+  text-wrap: balance;
+}
+.hero-sub {
+  font-size: clamp(15.5px, 1.5vw, 18px);
+  line-height: 1.65;
+  color: rgba(255, 255, 255, 0.88);
+  max-width: 440px;
+  text-shadow: 0 2px 24px rgba(0, 0, 0, 0.9), 0 0 36px rgba(0, 0, 0, 0.75);
+}
+.hero-bottom {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  padding-inline: 20px;
+  text-align: center;
+  animation: hero-enter 0.95s cubic-bezier(0.16, 1, 0.3, 1) 0.1s both;
+}
+.hero-cta-main { height: 46px; padding: 0 24px; border-radius: 11px; font-size: 14.5px; }
+.hero-footnote { display: grid; gap: 6px; font: 400 12px/1.4 var(--font-mono); color: rgba(255, 255, 255, 0.5); }
+.hero-footnote-links { display: inline-flex; align-items: center; justify-content: center; gap: 12px; color: rgba(255, 255, 255, 0.65); }
+.hero-footnote-links a { transition: color 0.16s; }
+.hero-footnote-links a:hover { color: #ffffff; }
+.hero-footnote-links i { font-style: normal; opacity: 0.3; }
+
+/* =========================================================
+   SECTION 2: INTERACTIVE STUDIO STAGE
+   ========================================================= */
+.stage-sec { padding-top: clamp(44px, 5vw, 72px); padding-bottom: clamp(76px, 8vw, 118px); }
+.stage-shell { position: relative; max-width: 1060px; margin: 0 auto; }
+.stage-shell::before {
+  content: "";
+  position: absolute;
+  inset: -44px 3% 8%;
+  z-index: -1;
+  background: radial-gradient(54% 58% at 50% 18%, rgba(56, 189, 248, 0.32), rgba(99, 102, 241, 0.16) 46%, transparent 74%);
+  filter: blur(56px);
+}
+.stage-bezel {
+  position: relative;
+  padding: 9px;
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.035) 26%, rgba(255, 255, 255, 0.015) 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.32), 0 0 0 1px rgba(255, 255, 255, 0.09), 0 50px 120px -28px rgba(0, 0, 0, 0.96);
+}
+.stage-bezel::before {
+  content: "";
+  position: absolute;
+  left: 14%; right: 14%; top: -1px; height: 1.5px;
+  background: linear-gradient(90deg, transparent, rgba(186, 230, 253, 0.92) 50%, transparent);
+  pointer-events: none;
+}
+
+.desk { position: relative; aspect-ratio: 16 / 9.5; border-radius: 14px; overflow: hidden; user-select: none; -webkit-user-select: none; background: #080a12; }
+.desk-wallpaper { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.mac-bar { position: absolute; inset: 0 0 auto; height: 28px; padding: 0 14px; display: flex; align-items: center; gap: 14px; background: rgba(11, 13, 19, 0.54); backdrop-filter: blur(18px) saturate(160%); border-bottom: 1px solid rgba(255, 255, 255, 0.07); font-size: 11.5px; color: rgba(255, 255, 255, 0.78); z-index: 4; }
+.mac-bar strong { color: #fff; font-weight: 600; }
+.mac-bar-right { margin-left: auto; display: flex; align-items: center; gap: 11px; font-variant-numeric: tabular-nums; }
+
+.finder-win {
+  position: absolute; left: 17.5%; top: 48px; width: min(42.5%, 432px); border-radius: 13px;
+  background: rgba(24, 26, 33, 0.78); backdrop-filter: blur(28px) saturate(160%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 0 0 1px rgba(255, 255, 255, 0.09), 0 30px 70px -18px rgba(0, 0, 0, 0.9);
+  z-index: 3; overflow: hidden; display: grid; grid-template-columns: 104px minmax(0, 1fr);
+}
+.finder-side { padding: 11px 9px; background: rgba(16, 18, 24, 0.56); border-right: 1px solid rgba(255, 255, 255, 0.065); display: flex; flex-direction: column; gap: 10px; }
+.finder-lights { display: flex; align-items: center; gap: 6px; padding-left: 3px; }
+.tl { width: 9px; height: 9px; border-radius: 50%; }
+.tl.r { background: #ff5f57; } .tl.y { background: #febc2e; } .tl.g { background: #28c840; }
+.fs-group { display: grid; gap: 2px; }
+.fs-lbl { font-size: 9px; font-weight: 600; color: rgba(255, 255, 255, 0.34); padding: 2px 6px; }
+.fs-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 6px; font-size: 10.5px; color: rgba(255, 255, 255, 0.62); }
+.fs-row.on { background: rgba(255, 255, 255, 0.1); color: #fff; font-weight: 500; }
+.finder-main { display: flex; flex-direction: column; min-width: 0; }
+.finder-toolbar { height: 34px; padding: 0 12px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.065); font-size: 11.5px; font-weight: 600; color: rgba(255, 255, 255, 0.88); }
+.finder-hint { margin-left: auto; font: 500 10px/1 var(--font-mono); color: rgba(255, 255, 255, 0.38); }
+.finder-list { padding: 7px; display: grid; gap: 4px; }
+.drag-file { width: 100%; display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 7px 9px; border-radius: 8px; border: 0; background: transparent; color: var(--text); text-align: left; cursor: grab; touch-action: none; transition: background 0.14s, box-shadow 0.14s, opacity 0.2s; }
+.drag-file:hover { background: rgba(255, 255, 255, 0.075); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08); }
+.drag-file[aria-disabled="true"] { opacity: 0.36; cursor: default; }
+.drag-file b { display: block; font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.drag-file small { display: block; font: 400 10px/1.3 var(--font-mono); color: rgba(255, 255, 255, 0.45); }
+.drag-cta { font-size: 10px; font-weight: 500; color: #e0f2fe; padding: 3px 7px; border-radius: 6px; background: rgba(56, 189, 248, 0.22); opacity: 0; transform: translateX(-3px); transition: opacity 0.15s, transform 0.15s; }
+.drag-file:hover .drag-cta { opacity: 1; transform: translateX(0); }
+
+.fthumb { width: 32px; height: 32px; border-radius: 8px; flex: none; display: grid; place-items: center; position: relative; overflow: hidden; }
+.fthumb.sm { width: 28px; height: 28px; border-radius: 7px; }
+.fthumb.xs { width: 24px; height: 24px; border-radius: 6px; }
+.fthumb.pdf { background: linear-gradient(180deg, #f8fafc 0%, #dbe2ee 100%); box-shadow: 0 3px 8px rgba(0,0,0,0.35); }
+.fthumb.pdf::after { content: "PDF"; position: absolute; bottom: 3px; left: 3px; right: 3px; height: 11px; border-radius: 3px; background: linear-gradient(180deg, #ef4444, #dc2626); color: #fff; font: 700 6.5px/11px var(--font-mono); text-align: center; }
+.fthumb.pdf::before { content: ""; position: absolute; top: 5px; left: 6px; right: 9px; height: 2px; background: rgba(15, 23, 42, 0.25); box-shadow: 0 4px 0 rgba(15, 23, 42, 0.2); }
+.fthumb.dmg { background: linear-gradient(155deg, #cbd5e1 0%, #64748b 55%, #334155 100%); box-shadow: inset 0 1px 0 rgba(255,255,255,0.6), 0 3px 8px rgba(0,0,0,0.4); }
+.fthumb.dmg::before { content: ""; width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(15, 23, 42, 0.45); background: radial-gradient(circle, #38bdf8 0 30%, #e2e8f0 32% 100%); }
+.fthumb.mov { background: radial-gradient(circle at 25% 25%, #fb923c, transparent 58%), linear-gradient(145deg, #1e1b4b, #7c2d12); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.22); }
+.fthumb.mov::before { content: ""; width: 0; height: 0; margin-left: 2px; border-style: solid; border-width: 5px 0 5px 8px; border-color: transparent transparent transparent rgba(255, 255, 255, 0.92); }
+.fthumb.png { background: radial-gradient(circle at 75% 28%, #f472b6 0%, transparent 48%), radial-gradient(circle at 25% 78%, #38bdf8 0%, transparent 56%), linear-gradient(145deg, #1d4ed8 0%, #4c1d95 100%); box-shadow: inset 0 1px 0 rgba(255,255,255,0.35); }
+.fthumb.png::after { content: ""; position: absolute; inset: auto 0 0 0; height: 44%; background: linear-gradient(160deg, transparent 35%, rgba(15, 23, 42, 0.55) 36%); }
+.fthumb.txt { background: rgba(255, 255, 255, 0.08); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.11); color: #cbd5e1; }
+
+.mac-dock { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); z-index: 3; display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 15px; background: rgba(22, 24, 32, 0.62); backdrop-filter: blur(22px) saturate(180%); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 0 0 1px rgba(255, 255, 255, 0.08), 0 12px 26px rgba(0, 0, 0, 0.65); }
+.dock-app { width: 28px; height: 28px; border-radius: 7px; display: grid; place-items: center; position: relative; }
+.dock-app.active::after { content: ""; position: absolute; bottom: -4px; width: 3px; height: 3px; border-radius: 50%; background: rgba(255, 255, 255, 0.85); }
+.dock-sep { width: 1px; height: 20px; background: rgba(255, 255, 255, 0.12); margin-inline: 2px; }
+
+.ghost { position: absolute; z-index: 20; pointer-events: none; transform: translate(-50%, -50%) rotate(-3deg) scale(1.05); display: flex; align-items: center; gap: 8px; padding: 7px 11px 7px 8px; border-radius: 11px; background: rgba(22, 24, 32, 0.94); box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.55), 0 18px 38px rgba(0, 0, 0, 0.8); font-size: 12px; font-weight: 500; }
+
+.edge-handle { position: absolute; right: 0; top: 50%; width: 8px; height: 76px; transform: translateY(-50%); border-radius: 6px 0 0 6px; background: rgba(28, 30, 38, 0.9); box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.2), 0 0 24px rgba(56, 189, 248, 0.45); z-index: 5; cursor: pointer; transition: opacity 0.18s; }
+.edge-handle::after { content: ""; position: absolute; left: 3px; top: 24px; width: 2px; height: 28px; border-radius: 2px; background: rgba(255, 255, 255, 0.72); }
+.edge-pill { position: absolute; right: 12px; top: 50%; z-index: 6; display: flex; align-items: center; gap: 9px; height: 42px; padding: 0 14px 0 9px; border-radius: 12px; background: rgba(22, 24, 30, 0.95); backdrop-filter: blur(20px); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 0 0 1px rgba(56, 189, 248, 0.4), 0 18px 40px -10px rgba(0, 0, 0, 0.88); font-size: 12.5px; font-weight: 500; color: #f5f6f8; transform: translateY(-50%) scale(0.92); transform-origin: right center; opacity: 0; pointer-events: none; transition: opacity 0.16s, transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.edge-pill-ico { width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center; background: linear-gradient(135deg, #38bdf8, #2563eb); color: #fff; }
+
+.mac-drawer { position: absolute; right: 12px; top: 38px; bottom: 12px; width: min(36.5%, 354px); z-index: 7; display: flex; flex-direction: column; border-radius: 15px; background: rgba(31, 33, 38, 0.88); backdrop-filter: blur(30px) saturate(165%); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15), 0 0 0 1px rgba(255, 255, 255, 0.11), 0 30px 76px -18px rgba(0, 0, 0, 0.94); transform-origin: right center; transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.18s, box-shadow 0.18s; overflow: hidden; }
+.desk[data-mode="collapsed"] .mac-drawer, .desk[data-mode="pill"] .mac-drawer { transform: translateX(18px) scale(0.96); opacity: 0; pointer-events: none; }
+.desk[data-mode="pill"] .edge-pill { opacity: 1; transform: translateY(-50%) scale(1); }
+.desk[data-mode="open"] .edge-handle, .desk[data-mode="pill"] .edge-handle { opacity: 0; pointer-events: none; }
+.desk[data-hover="drop"] .mac-drawer { box-shadow: inset 0 0 0 1.5px var(--cyan), 0 0 56px -10px rgba(56, 189, 248, 0.6), 0 30px 76px -18px rgba(0, 0, 0, 0.94); }
+.md-grip { width: 24px; height: 2.5px; border-radius: 2px; background: rgba(255, 255, 255, 0.26); margin: 6px auto 0; }
+.md-head { display: flex; align-items: center; gap: 7px; padding: 6px 12px 9px; border-bottom: 1px solid rgba(255, 255, 255, 0.07); }
+.md-online { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px rgba(52, 211, 153, 0.85); }
+.md-head strong { font-size: 13px; font-weight: 600; letter-spacing: -0.01em; }
+.md-badge { font-size: 10px; color: rgba(255, 255, 255, 0.68); background: rgba(255, 255, 255, 0.085); padding: 2px 7px; border-radius: 5px; }
+.md-tools { margin-left: auto; display: flex; align-items: center; gap: 8px; color: rgba(255, 255, 255, 0.55); }
+.md-drop { margin: 10px 10px 8px; padding: 10px 11px; border-radius: 10px; background: rgba(255, 255, 255, 0.038); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08); display: flex; align-items: center; gap: 10px; transition: box-shadow 0.18s, background 0.18s; }
+.desk[data-hover="drop"] .md-drop { background: rgba(56, 189, 248, 0.14); box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.6); }
+.md-plus { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; background: rgba(255, 255, 255, 0.085); color: #fff; flex: none; }
+.md-drop b { display: block; font-size: 11.5px; font-weight: 600; color: #f3f5f8; }
+.md-drop small { display: block; font-size: 10px; color: rgba(255, 255, 255, 0.5); margin-top: 1px; }
+.md-seg { margin: 0 10px 8px; padding: 2.5px; border-radius: 8px; background: rgba(0, 0, 0, 0.3); display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; }
+.md-seg button { border: 0; background: transparent; color: rgba(255, 255, 255, 0.56); font-size: 10.5px; font-weight: 500; padding: 5px 4px; border-radius: 6px; cursor: pointer; white-space: nowrap; transition: background 0.15s, color 0.15s; }
+.md-seg button[aria-pressed="true"] { background: rgba(255, 255, 255, 0.13); color: #fff; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12); }
+.md-subbar { display: flex; align-items: center; justify-content: space-between; padding: 0 12px 6px; font-size: 10.5px; color: rgba(255, 255, 255, 0.46); }
+.md-list { list-style: none; margin: 0; padding: 0 10px; display: grid; gap: 6px; align-content: start; flex: 1; overflow: hidden; }
+.md-item { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 9px; align-items: center; padding: 8px 9px; border-radius: 10px; background: rgba(255, 255, 255, 0.055); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06); animation: item-in 0.28s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.md-item b { display: block; font-size: 11.5px; font-weight: 600; color: #f4f6fa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.md-item small { display: flex; align-items: center; gap: 5px; font-size: 10px; color: rgba(255, 255, 255, 0.55); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+.sdot { width: 5px; height: 5px; border-radius: 50%; flex: none; }
+.sdot.p2p { background: var(--green); } .sdot.cloud { background: var(--cyan); }
+.md-act { display: flex; gap: 6px; color: rgba(255, 255, 255, 0.44); }
+.md-foot { margin-top: auto; padding: 7px 12px; border-top: 1px solid rgba(255, 255, 255, 0.06); display: flex; justify-content: space-between; font-size: 10px; color: rgba(255, 255, 255, 0.45); }
+
+.ios-mock { position: absolute; left: -18px; bottom: -24px; width: 23.5%; min-width: 196px; max-width: 230px; aspect-ratio: 9 / 18.6; z-index: 9; border-radius: 34px; padding: 7px; background: linear-gradient(155deg, #4b5060 0%, #1c1e26 42%, #0c0d11 100%); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.13), 0 34px 76px -14px rgba(0, 0, 0, 0.96); }
+.ios-screen { height: 100%; border-radius: 28px; background: #141417; overflow: hidden; display: flex; flex-direction: column; }
+.ios-statusbar { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; padding: 7px 14px 3px; font: 600 9.5px/1 var(--font-sans); font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, 0.9); }
+.ios-island { width: 56px; height: 15px; border-radius: 99px; background: #000; }
+.ios-sigs { justify-self: end; display: inline-flex; align-items: center; gap: 4px; color: rgba(255, 255, 255, 0.88); }
+.ios-head { display: flex; align-items: center; gap: 6px; padding: 5px 11px 7px; border-bottom: 1px solid rgba(255, 255, 255, 0.06); font-size: 11.5px; font-weight: 600; }
+.ios-head .md-badge { font-size: 8.5px; padding: 1.5px 5px; }
+.ios-head-tools { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; color: rgba(255, 255, 255, 0.45); }
+.ios-quick { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; padding: 8px 9px 6px; }
+.ios-quick span { height: 26px; border-radius: 7px; display: inline-flex; align-items: center; justify-content: center; gap: 3px; font-size: 9px; font-weight: 500; color: rgba(255, 255, 255, 0.86); background: rgba(255, 255, 255, 0.06); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.075); }
+.ios-list { list-style: none; margin: 0; padding: 4px 9px; display: grid; gap: 5px; align-content: start; flex: 1; overflow: hidden; }
+.ios-item { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 7px; align-items: center; padding: 7px; border-radius: 9px; background: rgba(255, 255, 255, 0.055); animation: item-in 0.28s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.ios-item b { display: block; font-size: 10.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ios-item small { display: block; font-size: 9px; color: rgba(255, 255, 255, 0.52); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ios-bar { grid-column: 1 / -1; height: 3px; border-radius: 99px; background: rgba(255, 255, 255, 0.09); overflow: hidden; margin-top: 2px; }
+.ios-bar > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--indigo), var(--cyan)); transition: width linear; }
+.ios-foot { margin-top: auto; padding: 6px 10px 7px; border-top: 1px solid rgba(255, 255, 255, 0.055); font-size: 8.5px; color: rgba(255, 255, 255, 0.42); display: flex; justify-content: space-between; }
+.ios-home { width: 70px; height: 3.5px; border-radius: 99px; background: rgba(255, 255, 255, 0.28); margin: 0 auto 5px; }
+
+.spin { width: 12px; height: 12px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.16); border-top-color: var(--cyan); animation: spin 0.75s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes item-in { from { opacity: 0; transform: translateY(-5px); } }
+
+.stage-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 12px;
+  margin-top: 38px;
+}
+.stage-status { font-size: 13px; color: var(--text-2); margin-right: 4px; }
+.pill-ctrl {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 13px;
+  border-radius: 999px;
+  border: 0;
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), inset 0 0 0 1px rgba(255, 255, 255, 0.09);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.16s, transform 0.14s;
+}
+.pill-ctrl:hover { background: rgba(255, 255, 255, 0.11); transform: translateY(-1px); }
+.pill-ctrl.accent {
+  color: #e0f2fe;
+  background: rgba(56, 189, 248, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.36);
+}
+.pill-ctrl.accent:hover { background: rgba(56, 189, 248, 0.24); }
+
+@media (max-width: 960px) {
+  .finder-win { left: 3%; width: 52%; grid-template-columns: 1fr; }
+  .finder-side { display: none; }
+  .mac-drawer { width: 42%; }
+  .ios-mock { position: relative; left: auto; bottom: auto; width: 218px; margin: 18px auto 0; }
+  .stage-controls { margin-top: 18px; }
+}
+@media (max-width: 620px) {
+  .desk { aspect-ratio: 4 / 3.4; }
+  .mac-bar span, .mac-dock { display: none; }
+  .finder-win { left: 3%; top: 36px; width: 47%; }
+  .finder-hint, .drag-cta { display: none; }
+  .mac-drawer { width: 48%; right: 6px; top: 34px; bottom: 8px; }
+  .md-badge, .md-tools, .md-seg { display: none; }
+}
+
+/* =========================================================
+   SECTION 3: RAYCAST-STYLE EDITORIAL BENTO SHOWCASE
+   (Visual-FIRST oversized studio centerpieces + generous dark craft)
+   ========================================================= */
+.bento {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 18px;
+}
+.bcard {
+  position: relative;
+  border-radius: 24px;
+  background: linear-gradient(180deg, #101218 0%, #090a0e 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.11),
+    0 0 0 1px rgba(255, 255, 255, 0.07),
+    0 32px 80px -36px rgba(0, 0, 0, 0.96);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.bcard::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s;
+  background: radial-gradient(520px circle at var(--mx, 50%) var(--my, 0%), rgba(56, 189, 248, 0.1), transparent 52%);
+}
+.bcard::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s;
+  background: radial-gradient(320px circle at var(--mx, 50%) var(--my, 0%), rgba(255, 255, 255, 0.32), rgba(56, 189, 248, 0.25) 45%, transparent 72%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+}
+.bcard:hover::before, .bcard:hover::after { opacity: 1; }
+
+.span-7 { grid-column: span 7; }
+.span-5 { grid-column: span 5; }
+.span-6 { grid-column: span 6; }
+@media (max-width: 920px) { .span-7, .span-5, .span-6 { grid-column: span 12; } }
+
+/* Big studio visual arena at the TOP of each card (Raycast signature!) */
+.bcard-stage {
+  position: relative;
+  height: 270px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+}
+.bcard-stage.glow-cyan {
+  background:
+    radial-gradient(75% 85% at 78% 48%, rgba(56, 189, 248, 0.24), transparent 68%),
+    radial-gradient(60% 70% at 15% 15%, rgba(59, 130, 246, 0.14), transparent 68%),
+    #07090f;
+}
+.bcard-stage.glow-cobalt {
+  background:
+    radial-gradient(70% 80% at 50% 85%, rgba(59, 130, 246, 0.26), rgba(99, 102, 241, 0.12) 48%, transparent 74%),
+    #07090f;
+}
+.bcard-stage.glow-indigo {
+  background:
+    radial-gradient(65% 75% at 50% 50%, rgba(99, 102, 241, 0.24), rgba(56, 189, 248, 0.1) 46%, transparent 74%),
+    #07090f;
+}
+.bcard-stage.glow-emerald {
+  background:
+    radial-gradient(68% 76% at 50% 44%, rgba(16, 185, 129, 0.2), rgba(56, 189, 248, 0.08) 48%, transparent 74%),
+    #07090f;
+}
+.bcard-stage.glow-steel {
+  background:
+    radial-gradient(65% 70% at 50% 55%, rgba(148, 163, 184, 0.16), rgba(56, 189, 248, 0.1) 44%, transparent 74%),
+    #07090f;
+}
+/* Subtle dot matrix studio floor inside card visuals */
+.bcard-stage::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.09) 1px, transparent 1px);
+  background-size: 22px 22px;
+  -webkit-mask-image: radial-gradient(75% 75% at 50% 50%, #000 20%, transparent 80%);
+  mask-image: radial-gradient(75% 75% at 50% 50%, #000 20%, transparent 80%);
+}
+
+.bcard-body {
+  padding: 24px 28px 28px;
+  display: grid;
+  gap: 6px;
+}
+.bcard-body h3 { font-size: 18px; font-weight: 600; letter-spacing: -0.02em; color: var(--text); }
+.bcard-body p { font-size: 14px; line-height: 1.6; color: var(--text-2); }
+
+/* --- Visual 1: Zoomed 2.5D Edge-Drawer Macro --- */
+.em-arena { position: relative; width: 100%; height: 100%; }
+.em-bezel-right {
+  position: absolute; right: 0; top: 0; bottom: 0; width: 3px;
+  background: linear-gradient(180deg, transparent, rgba(125, 211, 252, 0.7), transparent);
+}
+.em-handle {
+  position: absolute; right: 0; top: 50%; width: 9px; height: 78px; transform: translateY(-50%);
+  border-radius: 7px 0 0 7px;
+  background: linear-gradient(180deg, #93c5fd, #38bdf8);
+  box-shadow: 0 0 28px rgba(56, 189, 248, 0.9);
+  transition: opacity 0.25s;
+}
+.em-pill {
+  position: absolute; right: 20px; top: 50%; transform: translateY(-50%) scale(0.92);
+  padding: 12px 18px 12px 12px; border-radius: 14px;
+  background: rgba(18, 20, 27, 0.95);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), 0 0 0 1px rgba(56, 189, 248, 0.5), 0 24px 48px rgba(0, 0, 0, 0.8);
+  display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 500;
+  opacity: 0; transition: opacity 0.26s, transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.em-drawer {
+  position: absolute; right: 16px; top: 18px; bottom: 18px; width: 256px; border-radius: 15px; padding: 13px;
+  background: rgba(29, 31, 39, 0.92); backdrop-filter: blur(24px);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 0 0 1px rgba(56, 189, 248, 0.55), 0 26px 56px rgba(0,0,0,0.88);
+  display: grid; gap: 9px; align-content: start;
+  transform: translateX(24px) scale(0.95); opacity: 0;
+  transition: opacity 0.28s, transform 0.32s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.em-drop-ring { padding: 14px 10px; border-radius: 10px; border: 1.5px dashed rgba(56, 189, 248, 0.7); background: rgba(56, 189, 248, 0.12); font-size: 12px; font-weight: 500; color: #e0f2fe; text-align: center; }
+.em-row { display: flex; align-items: center; gap: 9px; padding: 8px 10px; border-radius: 9px; background: rgba(255, 255, 255, 0.06); font-size: 12px; }
+.em-drag-card {
+  position: absolute; left: 54px; top: 78px;
+  display: flex; align-items: center; gap: 10px; padding: 11px 15px 11px 11px; border-radius: 13px;
+  background: rgba(26, 29, 38, 0.94);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), 0 0 0 1px rgba(255,255,255,0.12), 0 22px 44px rgba(0,0,0,0.82);
+  font-size: 13px; font-weight: 500;
+  transition: transform 0.6s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.3s;
+}
+.em-tabs {
+  position: absolute; left: 18px; bottom: 16px; display: flex; gap: 6px; z-index: 5;
+}
+.em-tabs button {
+  border: 0; padding: 6px 11px; border-radius: 8px; font-size: 11.5px; font-weight: 500;
+  color: var(--text-2); background: rgba(12, 14, 20, 0.85); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+  cursor: pointer; transition: all 0.16s;
+}
+.em-tabs button[aria-pressed="true"] { color: #e0f2fe; background: rgba(56, 189, 248, 0.22); box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.5); }
+.em-arena[data-step="1"] .em-handle { opacity: 1; }
+.em-arena[data-step="2"] .em-handle { opacity: 0; }
+.em-arena[data-step="2"] .em-pill { opacity: 1; transform: translateY(-50%) scale(1); }
+.em-arena[data-step="2"] .em-drag-card { transform: translate(130px, 16px) rotate(-4deg); }
+.em-arena[data-step="3"] .em-handle { opacity: 0; }
+.em-arena[data-step="3"] .em-drawer { opacity: 1; transform: translateX(0) scale(1); }
+.em-arena[data-step="3"] .em-drag-card { transform: translate(220px, 4px) scale(0.9); opacity: 0.2; }
+
+/* --- Visual 2: Sculpted Cropped iPhone + Floating Share Pill --- */
+.mob-hero-frame {
+  position: relative;
+  width: 248px;
+  height: 230px;
+  align-self: end;
+  border-radius: 36px 36px 0 0;
+  padding: 8px 8px 0;
+  background: linear-gradient(160deg, #52586a 0%, #1d2029 50%, #101218 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 -10px 50px -10px rgba(56, 189, 248, 0.25), 0 24px 60px rgba(0, 0, 0, 0.9);
+}
+.mob-hero-screen {
+  height: 100%;
+  border-radius: 29px 29px 0 0;
+  background: #131418;
+  padding: 10px 12px 0;
+  display: grid;
+  gap: 9px;
+  align-content: start;
+}
+.mob-hero-pill {
+  position: absolute;
+  left: -26px;
+  right: -26px;
+  bottom: 24px;
+  padding: 12px 14px;
+  border-radius: 15px;
+  background: rgba(22, 25, 34, 0.94);
+  backdrop-filter: blur(22px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 0 0 1px rgba(56, 189, 248, 0.42), 0 24px 50px rgba(0, 0, 0, 0.9);
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+.mob-hero-pill b { display: block; font-size: 13px; font-weight: 600; }
+.mob-hero-pill small { display: block; font-size: 11px; color: var(--text-2); }
+.mob-hero-pill .ok-chip {
+  margin-left: auto;
+  font: 600 10.5px/1 var(--font-mono);
+  padding: 5px 8px;
+  border-radius: 7px;
+  color: var(--green);
+  background: rgba(52, 211, 153, 0.14);
+}
+
+/* --- Visual 3: Floating Glass Share Card + Real QR Code --- */
+.share-float {
+  width: min(86%, 340px);
+  padding: 18px;
+  border-radius: 18px;
+  background: rgba(20, 22, 30, 0.88);
+  backdrop-filter: blur(24px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 0 0 1px rgba(255, 255, 255, 0.09), 0 30px 64px -16px rgba(0, 0, 0, 0.92);
+  display: grid;
+  gap: 13px;
+}
+.sf-top { display: flex; align-items: center; gap: 12px; }
+.sf-qr {
+  width: 58px; height: 58px; border-radius: 10px; padding: 6px; flex: none;
+  background: #ffffff; color: #090a0e;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.45);
+}
+.sf-info { min-width: 0; flex: 1; }
+.sf-info b { display: block; font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sf-info small { display: block; margin-top: 2px; font: 500 11.5px/1.3 var(--font-mono); color: #7dd3fc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sf-pins { display: flex; gap: 6px; margin-top: 8px; }
+.sf-pins span {
+  width: 26px; height: 28px; border-radius: 7px; display: grid; place-items: center;
+  font: 600 13px/1 var(--font-mono); background: rgba(255, 255, 255, 0.065);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+.sf-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding-top: 11px; border-top: 1px solid rgba(255, 255, 255, 0.07);
+  font: 500 11px/1 var(--font-mono); color: var(--text-2);
+}
+.sf-copy {
+  border: 0; padding: 6px 11px; border-radius: 7px; background: #fff; color: #090a0d;
+  font: 600 11.5px/1 var(--font-sans); cursor: pointer;
+}
+.sf-copy:hover { opacity: 0.92; }
+
+/* --- Visual 4: Raycast-Style Glossy App-Icon Cloud Constellation --- */
+.cloud-constellation {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  padding: 20px;
+}
+.cc-item {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+}
+.cc-squircle {
+  width: 56px;
+  height: 56px;
+  border-radius: 15px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.095) 0%, rgba(255, 255, 255, 0.03) 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.09), 0 16px 32px -10px rgba(0, 0, 0, 0.85);
+  transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.2s;
+}
+.cc-item:hover .cc-squircle {
+  transform: translateY(-4px) scale(1.04);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.34), 0 0 0 1px rgba(56, 189, 248, 0.45), 0 22px 40px -10px rgba(56, 189, 248, 0.3);
+}
+.cc-item span { font-size: 11.5px; font-weight: 500; color: var(--text-2); white-space: nowrap; }
+
+/* --- Visual 5: Oversized 3D Machined Mac Keyboard Plate --- */
+.kb-plate {
+  display: grid;
+  justify-items: center;
+  gap: 16px;
+}
+.kb-recess {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px 18px;
+  border-radius: 20px;
+  background: linear-gradient(180deg, #0b0c10 0%, #14161e 100%);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.85), 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+.hw-key {
+  width: 72px;
+  height: 68px;
+  border-radius: 14px;
+  border: 0;
+  position: relative;
+  display: grid;
+  place-items: center;
+  font: 600 24px/1 var(--font-sans);
+  color: #f6f7fa;
+  background: linear-gradient(180deg, #323746 0%, #191c25 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(255, 255, 255, 0.1),
+    0 7px 0 #090a0e,
+    0 16px 32px rgba(0, 0, 0, 0.85);
+  cursor: pointer;
+  transition: transform 0.08s ease, box-shadow 0.08s ease, color 0.08s ease;
+}
+.hw-key small { position: absolute; bottom: 7px; font: 500 8.5px/1 var(--font-mono); color: rgba(255, 255, 255, 0.42); text-transform: uppercase; }
+.hw-key.down, .hw-key:active {
+  transform: translateY(5px);
+  color: var(--cyan);
+  box-shadow: inset 0 1px 0 rgba(125, 211, 252, 0.55), 0 0 0 1px rgba(56, 189, 248, 0.55), 0 2px 0 #090a0e, 0 0 36px rgba(56, 189, 248, 0.55);
+}
+.kb-pill {
+  font: 500 12px/1 var(--font-mono);
+  color: #bae6fd;
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: rgba(56, 189, 248, 0.11);
+  box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.28);
+}
+
+/* --- Visual 6: Live BLAKE3 & Resumable QUIC Instrument --- */
+.inst-card {
+  width: min(88%, 420px);
+  padding: 20px;
+  border-radius: 18px;
+  background: rgba(18, 20, 27, 0.9);
+  backdrop-filter: blur(22px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 0 0 1px rgba(255, 255, 255, 0.08), 0 28px 60px -14px rgba(0, 0, 0, 0.92);
+  display: grid;
+  gap: 14px;
+}
+.inst-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.inst-file { display: flex; align-items: center; gap: 10px; }
+.inst-file b { display: block; font-size: 13px; font-weight: 600; }
+.inst-file small { display: block; font: 400 11px/1.2 var(--font-mono); color: var(--text-3); }
+.inst-speed { font: 600 13px/1 var(--font-mono); color: var(--cyan); font-variant-numeric: tabular-nums; }
+.res-chunks { display: grid; grid-template-columns: repeat(16, 1fr); gap: 5px; }
+.res-chunks i { height: 22px; border-radius: 5px; background: rgba(255, 255, 255, 0.065); transition: background 0.24s, box-shadow 0.24s; }
+.res-chunks i.done { background: linear-gradient(180deg, #7dd3fc, #3b82f6); box-shadow: 0 0 12px -2px rgba(56, 189, 248, 0.75); }
+.res-chunks i.warn { background: var(--amber); box-shadow: 0 0 12px -2px rgba(245, 158, 11, 0.85); }
+.res-chunks i.verified { background: linear-gradient(180deg, #6ee7b7, #10b981); box-shadow: 0 0 12px -2px rgba(52, 211, 153, 0.75); }
+.inst-foot { display: flex; justify-content: space-between; gap: 8px; padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.065); font: 500 11px/1 var(--font-mono); color: var(--text-3); }
+.inst-foot .ok { color: var(--green); } .inst-foot .warn { color: var(--amber); }
+
+/* =========================================================
+   SECTION 4: OPTICAL TRANSPORT CONSOLE (No More Visio Boxes!)
+   ========================================================= */
+.console-shell {
+  border-radius: 24px;
+  background: linear-gradient(180deg, #101219 0%, #08090d 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.11), 0 0 0 1px var(--line), 0 40px 100px -36px rgba(0, 0, 0, 0.96);
+  overflow: hidden;
+}
+.console-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 22px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.02);
+}
+.seg-tabs { display: inline-flex; padding: 3px; gap: 3px; border-radius: 10px; background: rgba(0, 0, 0, 0.45); box-shadow: inset 0 0 0 1px var(--line); }
+.seg-tabs button { border: 0; background: transparent; color: var(--text-2); font-size: 13px; font-weight: 500; padding: 7px 14px; border-radius: 7px; cursor: pointer; white-space: nowrap; transition: all 0.16s; }
+.seg-tabs button[aria-selected="true"] { background: rgba(255, 255, 255, 0.12); color: #fff; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14); }
+.console-telemetry { font: 500 12px/1 var(--font-mono); color: #7dd3fc; display: inline-flex; align-items: center; gap: 8px; }
+.console-telemetry::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px var(--green); }
+
+.console-stage {
+  position: relative;
+  padding: 28px 24px 20px;
+  background: radial-gradient(60% 80% at 50% 50%, rgba(56, 189, 248, 0.11), transparent 72%);
+}
+.console-stage svg { width: 100%; max-width: 820px; margin: 0 auto; height: auto; }
+.dg-dev { fill: #12151f; stroke: rgba(125, 211, 252, 0.42); stroke-width: 1.25; }
+.dg-mid { fill: #10121a; stroke: rgba(255, 255, 255, 0.11); stroke-width: 1; }
+.dg-title { fill: #f6f7fa; font: 600 13px var(--font-sans); }
+.dg-sub { fill: #7f8699; font: 400 10.5px var(--font-mono); }
+.dg-wire { fill: none; stroke: rgba(255, 255, 255, 0.08); stroke-width: 2; stroke-dasharray: 4 6; transition: stroke 0.25s; }
+.dg-wire.on { stroke: url(#routeGrad); stroke-width: 2.8; stroke-dasharray: none; filter: drop-shadow(0 0 10px rgba(56, 189, 248, 0.8)); }
+.dg-dot { fill: #e0f2fe; filter: drop-shadow(0 0 10px #38bdf8); opacity: 0; }
+
+.console-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-top: 1px solid var(--line);
+}
+.cstep { padding: 22px 24px; display: grid; gap: 6px; animation: item-in 0.3s ease both; }
+.cstep + .cstep { border-left: 1px solid var(--line); }
+.cstep span { font: 600 11px/1 var(--font-mono); color: var(--cyan); }
+.cstep b { font-size: 15px; font-weight: 600; color: var(--text); }
+.cstep p { font-size: 13.5px; line-height: 1.58; color: var(--text-2); }
+@media (max-width: 780px) {
+  .console-steps { grid-template-columns: 1fr; }
+  .cstep + .cstep { border-left: 0; border-top: 1px solid var(--line); }
+}
+
+/* =========================================================
+   SECTION 5: POLICY + SELF-HOST (Clean Editorial Split)
+   ========================================================= */
+.split { display: grid; grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr); gap: clamp(28px, 5vw, 64px); align-items: center; }
+.split-copy { display: grid; gap: 14px; align-content: start; }
+.split-copy h2 { font-size: clamp(28px, 3.6vw, 42px); font-weight: 600; line-height: 1.15; letter-spacing: -0.022em; }
+.split-copy p { font-size: 15.5px; line-height: 1.68; color: var(--text-2); }
+
+.glass-panel {
+  border-radius: 22px;
+  background: linear-gradient(180deg, #11131b 0%, #090a0e 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 0 0 1px var(--line), 0 34px 86px -34px rgba(0, 0, 0, 0.96);
+  overflow: hidden;
+}
+.policy-pad { padding: 28px; display: grid; gap: 22px; }
+.p-head { display: flex; align-items: baseline; justify-content: space-between; }
+.p-head span, .p-head label { font: 500 11.5px/1 var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+.p-head output { font: 600 28px/1 var(--font-mono); color: #fff; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.p-seg { display: grid; grid-template-columns: repeat(3, 1fr); padding: 4px; gap: 3px; border-radius: 11px; background: rgba(0, 0, 0, 0.45); box-shadow: inset 0 0 0 1px var(--line); }
+.p-seg button { border: 0; background: transparent; color: var(--text-2); font-size: 13.5px; font-weight: 500; padding: 9px 6px; border-radius: 8px; cursor: pointer; transition: all 0.16s; }
+.p-seg button[aria-pressed="true"] { background: rgba(255, 255, 255, 0.12); color: #fff; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16); }
+input[type="range"].precision-range { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 99px; background: linear-gradient(90deg, var(--cyan) 0%, var(--cyan) var(--pct, 38%), rgba(255, 255, 255, 0.12) var(--pct, 38%)); outline: none; cursor: pointer; }
+input[type="range"].precision-range::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 20px; height: 20px; border-radius: 50%; background: linear-gradient(180deg, #ffffff 0%, #dce2ee 100%); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 4px 12px rgba(0, 0, 0, 0.65), 0 0 0 5px rgba(56, 189, 248, 0.18); }
+.ticks { display: flex; justify-content: space-between; margin-top: 8px; font: 500 11px/1 var(--font-mono); color: var(--text-3); }
+.outcome-pills { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; padding-top: 16px; border-top: 1px solid var(--line); }
+.opill { padding: 13px 12px; border-radius: 12px; background: rgba(255, 255, 255, 0.025); box-shadow: inset 0 0 0 1px var(--line); display: grid; gap: 5px; transition: all 0.2s; }
+.opill.yes { background: rgba(52, 211, 153, 0.075); box-shadow: inset 0 0 0 1px rgba(52, 211, 153, 0.32); }
+.opill b { font-size: 13px; font-weight: 600; color: var(--text-2); }
+.opill.yes b { color: #fff; }
+.opill small { font: 500 11px/1.3 var(--font-mono); color: var(--text-3); }
+.opill.yes small { color: var(--green); }
+@media (max-width: 560px) { .outcome-pills { grid-template-columns: 1fr; } }
+
+/* Terminal & Clean Spec Columns (no clunky boxes!) */
+.term-head { display: flex; align-items: center; gap: 7px; padding: 12px 16px; border-bottom: 1px solid var(--line); background: rgba(255, 255, 255, 0.025); }
+.term-tabs { display: flex; gap: 4px; margin-left: 8px; }
+.term-tabs button { border: 0; background: transparent; color: var(--text-3); font: 500 12px/1 var(--font-mono); padding: 6px 10px; border-radius: 7px; cursor: pointer; }
+.term-tabs button[aria-selected="true"] { background: rgba(255, 255, 255, 0.09); color: #fff; }
+.copy-btn { margin-left: auto; border: 0; background: rgba(255, 255, 255, 0.07); box-shadow: inset 0 0 0 1px var(--line); color: var(--text); font-size: 12px; font-weight: 500; padding: 6px 12px; border-radius: 8px; cursor: pointer; }
+.copy-btn:hover { background: rgba(255, 255, 255, 0.13); }
+.term-body { margin: 0; padding: 22px 24px 24px; font: 400 13.5px/1.9 var(--font-mono); color: #e2e8f0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.t-p { color: var(--cyan); user-select: none; } .t-ok { color: var(--green); }
+
+.env-cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--line); }
+.env-col code { overflow-wrap: anywhere; font-size: 12.5px; color: #bae6fd; font-weight: 500; }
+.env-col p { margin-top: 5px; font-size: 13.5px; color: var(--text-2); }
+@media (max-width: 880px) { .split { grid-template-columns: 1fr; } .env-cols { grid-template-columns: 1fr; gap: 16px; } }
+
+/* =========================================================
+   SECTION 6: SCULPTED DOWNLOAD SHOWCASE + CLOSING HORIZON
+   ========================================================= */
+.dl-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.dl-card {
+  position: relative;
+  padding: 26px 22px;
+  border-radius: 22px;
+  background: linear-gradient(180deg, #101219 0%, #08090d 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 0 0 1px var(--line), 0 28px 70px -34px rgba(0, 0, 0, 0.95);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 256px;
+  transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.2s;
+}
+.dl-card:hover { transform: translateY(-3px); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 0 0 1px rgba(255, 255, 255, 0.14), 0 32px 80px -30px rgba(0, 0, 0, 0.96); }
+.dl-card.featured {
+  background: radial-gradient(85% 65% at 50% 0%, rgba(56, 189, 248, 0.14), transparent 72%), linear-gradient(180deg, #121520 0%, #08090d 100%);
+  box-shadow: inset 0 1px 0 rgba(125, 211, 252, 0.35), 0 0 0 1px rgba(56, 189, 248, 0.28), 0 32px 80px -30px rgba(0, 0, 0, 0.96);
+}
+.dl-medallion {
+  width: 48px; height: 48px; border-radius: 14px; display: grid; place-items: center;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.03));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+.dl-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 4px; }
+.dl-card h3 { font-size: 18px; font-weight: 600; letter-spacing: -0.02em; }
+.dl-tag { font: 500 10.5px/1 var(--font-mono); color: var(--text-2); padding: 4px 7px; border-radius: 6px; background: rgba(255, 255, 255, 0.055); }
+.dl-card p { font-size: 13.5px; line-height: 1.58; color: var(--text-2); }
+.dl-card .btn { margin-top: auto; width: 100%; }
+.dl-actions { display: grid; gap: 8px; margin-top: auto; }
+.dl-release-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 16px; margin-top: 24px; font-size: 14px; }
+.dl-release-links a { color: var(--sky); text-decoration: underline; text-underline-offset: 4px; }
+#ios-download { scroll-margin-top: 96px; }
+@media (max-width: 960px) { .dl-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .dl-grid { grid-template-columns: 1fr; } }
+
+.closing { text-align: center; overflow: hidden; isolation: isolate; padding-block: clamp(92px, 11vw, 144px); }
+.closing::before { content: ""; position: absolute; left: 50%; bottom: -240px; width: 1000px; height: 460px; transform: translateX(-50%); z-index: -1; background: radial-gradient(50% 60% at 50% 50%, rgba(56, 189, 248, 0.26), rgba(99, 102, 241, 0.12) 46%, transparent 74%); filter: blur(34px); }
+.closing-arc { position: absolute; left: 50%; bottom: 0; width: min(880px, 92vw); height: 1px; transform: translateX(-50%); background: linear-gradient(90deg, transparent, rgba(125, 211, 252, 0.78) 50%, transparent); }
+.closing h2 { font-size: clamp(32px, 4.8vw, 54px); font-weight: 600; line-height: 1.12; letter-spacing: -0.024em; }
+.closing p { margin: 12px auto 28px; max-width: 440px; font-size: 16px; color: var(--text-2); }
+.closing-cta { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+
+footer { border-top: 1px solid var(--line); padding-block: 30px calc(30px + env(safe-area-inset-bottom, 0px)); }
+.foot-inner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px 28px; font-size: 13px; color: var(--text-3); }
+.foot-links { display: flex; flex-wrap: wrap; gap: 18px; }
+.foot-links a { color: var(--text-2); transition: color 0.16s; }
+.foot-links a:hover { color: var(--text); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="nav-wrap">
+  <header class="nav">
+    <a class="brand" href="#top" aria-label="DropDrawer 首页">
+      <svg viewBox="0 0 128 128" aria-hidden="true">
+        <defs>
+          <linearGradient id="n-tile" x2="0.86" y2="1"><stop stop-color="#243d80"/><stop offset=".5" stop-color="#17274f"/><stop offset="1" stop-color="#10182f"/></linearGradient>
+          <linearGradient id="n-paper" x2="0" y2="1"><stop stop-color="#fff"/><stop offset="1" stop-color="#bbd7ff"/></linearGradient>
+          <linearGradient id="n-tray" x2="0" y2="1"><stop stop-color="#7cf5ff"/><stop offset=".46" stop-color="#3ed4ff"/><stop offset="1" stop-color="#4e8cff"/></linearGradient>
+        </defs>
+        <rect x="9" y="7" width="110" height="110" rx="26" fill="url(#n-tile)"/>
+        <rect x="9.7" y="7.7" width="108.6" height="108.6" rx="25.3" fill="none" stroke="#7d9ee4" stroke-opacity=".55" stroke-width="1.4"/>
+        <path fill="url(#n-paper)" d="M51 24h17l14 14v15h5a2 2 0 0 1 1.4 3.5L67 76a4.4 4.4 0 0 1-6 0L39.6 56.5A2 2 0 0 1 41 53h5V29a5 5 0 0 1 5-5Z"/>
+        <path fill="#89b3fa" d="M68 24v9a5 5 0 0 0 5 5h9Z"/>
+        <path fill="url(#n-tray)" fill-rule="evenodd" d="M33 64h7l16 15a11 11 0 0 0 16 0l16-15h7a6 6 0 0 1 5.8 4.6l5.9 23A9 9 0 0 1 98 103H30a9 9 0 0 1-8.7-11.4l5.9-23A6 6 0 0 1 33 64Zm25 24a3 3 0 0 0 0 6h12a3 3 0 0 0 0-6Z"/>
+      </svg>
+      DropDrawer
+    </a>
+    <nav class="nav-links" aria-label="主导航">
+      <a href="#demo">演示</a>
+      <a href="#features">特性</a>
+      <a href="#transfer">架构</a>
+      <a href="#policy">策略</a>
+      <a href="#selfhost">自托管</a>
+      <a href="#download">下载</a>
+    </nav>
+    <div class="nav-right">
+      <a class="nav-gh" href="https://github.com/StackTao/DropDrawer" target="_blank" rel="noopener">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.71 1.22 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/></svg>
+        <span>GitHub</span>
+      </a>
+      <a class="btn btn-primary btn-sm" id="nav-dl-btn" href="#download">
+        <span id="nav-dl-ico" aria-hidden="true"></span>
+        <span>下载</span>
+      </a>
+    </div>
+  </header>
+</div>
+
+<main id="top">
+  <!-- ======================== 1. FULL-SCREEN LIVE HERO ======================== -->
+  <section class="hero">
+    <canvas id="hero-canvas" aria-hidden="true"></canvas>
+    <div class="hero-spacer" aria-hidden="true"></div>
+
+    <div class="hero-center">
+      <h1>文件拖进边缘<br>全端即刻取走。</h1>
+      <p class="hero-sub">贴边隐身的开源跨端文件抽屉。<br>在线 P2P 直连，离线自有云盘兜底。</p>
+    </div>
+
+    <div class="hero-bottom">
+      <a class="btn btn-primary hero-cta-main" id="hero-primary-cta" href="#download">
+        <span id="hero-cta-ico" aria-hidden="true">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 4v11m0 0-4-4m4 4 4-4M4 19h16" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+        <span id="hero-cta-label">下载 DropDrawer</span>
+      </a>
+      <div class="hero-footnote">
+        <span><span data-release-version>正式版</span> · macOS / Windows / Android / iOS</span>
+        <div class="hero-footnote-links">
+          <a href="#demo">交互演示</a><i>|</i><a href="#selfhost">自托管服务端</a><i>|</i><a href="https://github.com/StackTao/DropDrawer" target="_blank" rel="noopener">MIT 开源</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================== 2. INTERACTIVE STAGE ======================== -->
+  <section class="stage-sec" id="demo">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <span class="eyebrow"><i></i>LIVE INTERACTION</span>
+        <h2 class="t-grad">拖到右边缘，手机立刻收到</h2>
+        <p>把访达里的文件拖向右侧抽屉，或点「自动演示」看全过程。</p>
+      </div>
+
+      <div class="stage-shell reveal">
+        <div class="stage-bezel">
+          <div class="desk" id="desk" data-mode="open" role="region" aria-label="DropDrawer 桌面与手机同步交互演示">
+            <svg class="desk-wallpaper" viewBox="0 0 1200 720" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+              <defs>
+                <linearGradient id="wpBase" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#0b1022"/><stop offset="50%" stop-color="#0a1324"/><stop offset="100%" stop-color="#080b14"/></linearGradient>
+                <radialGradient id="wpGlow1" cx="22%" cy="18%" r="55%"><stop offset="0%" stop-color="#3b5bdb" stop-opacity="0.42"/><stop offset="100%" stop-color="#080b14" stop-opacity="0"/></radialGradient>
+                <radialGradient id="wpGlow2" cx="84%" cy="32%" r="48%"><stop offset="0%" stop-color="#0ea5e9" stop-opacity="0.34"/><stop offset="100%" stop-color="#080b14" stop-opacity="0"/></radialGradient>
+                <linearGradient id="wave1" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#1e3a8a" stop-opacity="0.5"/><stop offset="55%" stop-color="#0369a1" stop-opacity="0.36"/><stop offset="100%" stop-color="#312e81" stop-opacity="0.45"/></linearGradient>
+                <linearGradient id="wave2" x1="100%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#38bdf8" stop-opacity="0.22"/><stop offset="60%" stop-color="#6366f1" stop-opacity="0.2"/><stop offset="100%" stop-color="#0f172a" stop-opacity="0"/></linearGradient>
+              </defs>
+              <rect width="1200" height="720" fill="url(#wpBase)"/>
+              <rect width="1200" height="720" fill="url(#wpGlow1)"/>
+              <rect width="1200" height="720" fill="url(#wpGlow2)"/>
+              <path d="M-80 510 C 180 340, 440 580, 740 420 C 940 315, 1100 390, 1280 280 L1280 760 L-80 760 Z" fill="url(#wave1)"/>
+              <path d="M-80 620 C 240 470, 520 650, 820 490 C 1020 385, 1130 460, 1280 390 L1280 760 L-80 760 Z" fill="url(#wave2)"/>
+              <path d="M-40 498 C 200 340, 450 568, 750 412 C 950 308, 1100 385, 1260 274" stroke="rgba(125,211,252,0.18)" stroke-width="1.4" fill="none"/>
+            </svg>
+
+            <div class="mac-bar" aria-hidden="true">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M16.4 12.6c0-2.5 2-3.7 2.1-3.8-1.2-1.7-3-1.9-3.6-2-1.5-.2-3 .9-3.8.9-.8 0-2-.9-3.3-.9-1.7 0-3.3 1-4.2 2.6-1.8 3.1-.5 7.7 1.3 10.2.9 1.2 1.9 2.6 3.2 2.6 1.3-.1 1.8-.8 3.3-.8 1.6 0 2 .8 3.3.8 1.4 0 2.3-1.2 3.1-2.5 1-1.4 1.4-2.8 1.4-2.9-.1 0-2.8-1-2.8-4.2ZM13.9 5.2c.7-.8 1.2-2 1-3.2-1 .1-2.2.7-2.9 1.5-.6.7-1.2 1.9-1 3.1 1.1.1 2.2-.6 2.9-1.4Z"/></svg>
+              <strong>访达</strong><span>文件</span><span>编辑</span><span>显示</span><span>前往</span>
+              <div class="mac-bar-right">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="#38bdf8"><path d="M5 13h3l2.2 2.4a2.5 2.5 0 0 0 3.6 0L16 13h3l1.6 6.2A2 2 0 0 1 18.7 21H5.3a2 2 0 0 1-1.9-1.8ZM11 3h2v7.6l2.3-2.3 1.4 1.4L12 14.4 7.3 9.7l1.4-1.4 2.3 2.3Z"/></svg>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.55a11 11 0 0 1 14.08 0M1.42 9a16 16 0 0 1 21.16 0M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01" stroke-linecap="round"/></svg>
+                <span>周三 14:32</span>
+              </div>
+            </div>
+
+            <div class="finder-win" aria-label="访达文件列表">
+              <div class="finder-side" aria-hidden="true">
+                <div class="finder-lights"><span class="tl r"></span><span class="tl y"></span><span class="tl g"></span></div>
+                <div class="fs-group">
+                  <span class="fs-lbl">个人收藏</span>
+                  <span class="fs-row">隔空投送</span>
+                  <span class="fs-row on">桌面</span>
+                  <span class="fs-row">下载</span>
+                  <span class="fs-row">文稿</span>
+                </div>
+              </div>
+              <div class="finder-main">
+                <div class="finder-toolbar" aria-hidden="true"><span>桌面 · 工作区</span><span class="finder-hint">3 项 · 拖入抽屉</span></div>
+                <div class="finder-list" id="files"></div>
+              </div>
+            </div>
+
+            <div class="mac-dock" aria-hidden="true">
+              <span class="dock-app active" style="background:linear-gradient(180deg,#60a5fa,#2563eb)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 9v2M15 9v2M8 15c1.5 1.3 6.5 1.3 8 0" stroke-linecap="round"/></svg></span>
+              <span class="dock-app" style="background:linear-gradient(180deg,#38bdf8,#0284c7)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="m14.8 9.2-5.6 5.6m1.4-4.2 4.2-1.4-1.4 4.2-4.2 1.4 1.4-4.2Z"/></svg></span>
+              <span class="dock-app active" style="background:linear-gradient(180deg,#27272a,#09090b);box-shadow:inset 0 0 0 1px rgba(255,255,255,0.16)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#a1a1aa" stroke-width="2"><path d="m7 9 4 3-4 3m5 0h5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+              <i class="dock-sep"></i>
+              <span class="dock-app active" style="background:linear-gradient(145deg,#243d80,#10182f);box-shadow:inset 0 0 0 1px rgba(125,211,252,0.4)"><svg width="15" height="15" viewBox="0 0 24 24" fill="#38bdf8"><path d="M5 13h3l2.2 2.4a2.5 2.5 0 0 0 3.6 0L16 13h3l1.6 6.2A2 2 0 0 1 18.7 21H5.3a2 2 0 0 1-1.9-1.8ZM11 3h2v7.6l2.3-2.3 1.4 1.4L12 14.4 7.3 9.7l1.4-1.4 2.3 2.3Z"/></svg></span>
+            </div>
+
+            <div class="edge-handle" id="edge-handle" title="点击展开抽屉"></div>
+            <div class="edge-pill" aria-hidden="true">
+              <span class="edge-pill-ico"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M5 13h3l2.2 2.4a2.5 2.5 0 0 0 3.6 0L16 13h3l1.6 6.2A2 2 0 0 1 18.7 21H5.3a2 2 0 0 1-1.9-1.8ZM11 3h2v7.6l2.3-2.3 1.4 1.4L12 14.4 7.3 9.7l1.4-1.4 2.3 2.3Z"/></svg></span>
+              拖到这儿，放入跨端抽屉
+            </div>
+
+            <aside class="mac-drawer" aria-label="macOS 贴边抽屉">
+              <div class="md-grip" aria-hidden="true"></div>
+              <div class="md-head">
+                <span class="md-online" aria-hidden="true"></span><strong>DropDrawer</strong><span class="md-badge">2 设备在线</span>
+                <div class="md-tools" aria-hidden="true">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6a1 1 0 0 1 1-1V3H8v2a1 1 0 0 1 1 1Z"/></svg>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+                </div>
+              </div>
+              <div class="md-drop" aria-hidden="true">
+                <span class="md-plus"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg></span>
+                <div><b>拖入、选取或 ⌘V 粘贴</b><small id="drawer-policy-sub">小于 20MB 自动云存 · 大文件纯 P2P 直连</small></div>
+              </div>
+              <div class="md-seg" role="group" aria-label="演示抽屉存储策略">
+                <button type="button" aria-pressed="true" data-demo-policy="smart">智能(&lt;20M上云)</button>
+                <button type="button" aria-pressed="false" data-demo-policy="p2p">纯 P2P 直连</button>
+                <button type="button" aria-pressed="false" data-demo-policy="cloud">强制存云盘</button>
+              </div>
+              <div class="md-subbar" aria-hidden="true"><span id="drawer-count">抽屉内容 · 3 项</span><span>搜索 · 多选 · 全部下载</span></div>
+              <ul class="md-list" id="dlist"></ul>
+              <div class="md-foot" aria-hidden="true"><span>iroh P2P 就绪 · 局域网与公网直连优先</span><span id="drawer-foot-count">3 项</span></div>
+            </aside>
+          </div>
+
+          <div class="ios-mock" aria-label="iPhone 端抽屉">
+            <div class="ios-screen">
+              <div class="ios-statusbar" aria-hidden="true">
+                <span>14:32</span><div class="ios-island"></div>
+                <span class="ios-sigs">
+                  <svg width="11" height="8" viewBox="0 0 14 10" fill="currentColor"><rect x="0" y="6" width="2.2" height="4" rx=".8"/><rect x="3.5" y="4" width="2.2" height="6" rx=".8"/><rect x="7" y="2" width="2.2" height="8" rx=".8"/><rect x="10.5" y="0" width="2.2" height="10" rx=".8"/></svg>
+                  <svg width="15" height="8" viewBox="0 0 22 11" fill="none"><rect x=".7" y=".7" width="17.6" height="9.6" rx="2.5" stroke="currentColor" stroke-opacity=".55"/><rect x="2.2" y="2.2" width="13.5" height="6.6" rx="1.4" fill="currentColor"/><path d="M20 3.6v3.8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+                </span>
+              </div>
+              <div class="ios-head">
+                <span class="md-online" aria-hidden="true"></span><span>DropDrawer</span><span class="md-badge">2 设备在线</span>
+                <span class="ios-head-tools" aria-hidden="true">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+                </span>
+              </div>
+              <div class="ios-quick" aria-hidden="true">
+                <span><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/></svg>选文件</span>
+                <span><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>选相册</span>
+                <span><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>粘贴</span>
+              </div>
+              <ul class="ios-list" id="plist"></ul>
+              <div class="ios-foot" aria-hidden="true"><span>iroh P2P 就绪</span><span id="phone-foot-count">3 项</span></div>
+              <div class="ios-home" aria-hidden="true"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="stage-controls">
+          <span class="stage-status" id="hint-text">拖入或点击访达中的任意文件。</span>
+          <button type="button" class="pill-ctrl accent" id="auto-demo-btn">▶ 自动演示一次</button>
+          <button type="button" class="pill-ctrl" id="toggle-drawer-btn">展开 / 收起</button>
+          <button type="button" class="pill-ctrl" id="reset" hidden>重置</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="sec-divider"></div>
+
+  <!-- ======================== 3. EDITORIAL VISUAL-FIRST BENTO ======================== -->
+  <section id="features">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <span class="eyebrow"><i></i>CRAFTED FOR FLOW</span>
+        <h2><span class="t-grad">不是网盘，也不是</span><span class="t-dim">聊天窗口</span></h2>
+        <p>每一个交互细节都为高频跨端传文件而设计。</p>
+      </div>
+
+      <div class="bento reveal">
+        <!-- Card 1: 2.5D Edge Drawer Macro -->
+        <article class="bcard span-7">
+          <div class="bcard-stage glow-cyan">
+            <div class="em-arena" id="edge-macro" data-step="2">
+              <div class="em-bezel-right" aria-hidden="true"></div>
+              <div class="em-drag-card" aria-hidden="true"><span class="fthumb png sm"></span><span>Hero-Banner.png</span></div>
+              <div class="em-handle" aria-hidden="true"></div>
+              <div class="em-pill" aria-hidden="true">
+                <span class="edge-pill-ico"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M5 13h3l2.2 2.4a2.5 2.5 0 0 0 3.6 0L16 13h3l1.6 6.2A2 2 0 0 1 18.7 21H5.3a2 2 0 0 1-1.9-1.8ZM11 3h2v7.6l2.3-2.3 1.4 1.4L12 14.4 7.3 9.7l1.4-1.4 2.3 2.3Z"/></svg></span>
+                拖到这儿，放入跨端抽屉
+              </div>
+              <div class="em-drawer" aria-hidden="true">
+                <div class="em-drop-ring">松手立即放入抽屉</div>
+                <div class="em-row"><span class="fthumb pdf xs"></span><span>Q4-Proposal.pdf</span></div>
+                <div class="em-row"><span class="fthumb dmg xs"></span><span>DropDrawer.dmg</span></div>
+              </div>
+              <div class="em-tabs" role="group" aria-label="切换贴边抽屉三态">
+                <button type="button" aria-pressed="false" data-em="1">01 贴边隐身</button>
+                <button type="button" aria-pressed="true" data-em="2">02 拖近引导</button>
+                <button type="button" aria-pressed="false" data-em="3">03 展开接住</button>
+              </div>
+            </div>
+          </div>
+          <div class="bcard-body">
+            <h3>贴边隐身，拖近即现</h3>
+            <p>平时极细手柄隐身不打扰；拖起文件靠近屏幕边缘才逐级展开，文件夹自动打包。</p>
+          </div>
+        </article>
+
+        <!-- Card 2: Cropped Sculpted iPhone + Floating Share Sheet -->
+        <article class="bcard span-5">
+          <div class="bcard-stage glow-cobalt">
+            <div class="mob-hero-frame" aria-hidden="true">
+              <div class="mob-hero-screen">
+                <div class="ios-statusbar" style="padding:2px 4px 0"><span>14:32</span><div class="ios-island"></div><span style="justify-self:end;font-size:9px">5G</span></div>
+                <div class="ios-quick" style="padding:2px 0">
+                  <span>选文件</span><span>选相册</span><span>粘贴</span>
+                </div>
+                <div style="display:grid;gap:6px">
+                  <div class="ios-item"><span class="fthumb png xs"></span><div><b>Design-preview.png</b><small>3.2 MB · P2P</small></div></div>
+                  <div class="ios-item"><span class="fthumb pdf xs"></span><div><b>Proposal.pdf</b><small>2.4 MB · 云端</small></div></div>
+                </div>
+              </div>
+              <div class="mob-hero-pill">
+                <span class="fthumb png sm"></span>
+                <div><b>分享 → DropDrawer</b><small>原生相册 &amp; 系统分享直入</small></div>
+                <span class="ok-chip">已同步</span>
+              </div>
+            </div>
+          </div>
+          <div class="bcard-body">
+            <h3>iOS &amp; Android 原生集成</h3>
+            <p>支持原生系统相册、微信/相册直接分享入屉，收到照片一键存相册。</p>
+          </div>
+        </article>
+
+        <!-- Card 3: Floating Glass Share Modal + Crisp Vector QR -->
+        <article class="bcard span-5">
+          <div class="bcard-stage glow-emerald">
+            <div class="share-float">
+              <div class="sf-top">
+                <div class="sf-qr" aria-hidden="true">
+                  <svg viewBox="0 0 21 21" fill="currentColor">
+                    <path d="M0 0h7v7H0zm1 1v5h5V1zm1 1h3v3H2zm12-2h7v7h-7zm1 1v5h5V1zm1 1h3v3h-3zM0 14h7v7H0zm1 1v5h5v-5zm1 1h3v3H2zM9 1h2v2H9zm0 4h3v2H9zm4 4h2v2h-2zm-4 0h3v3H9zm8 0h2v2h-2zm-4 4h4v2h-4zm6 0h2v4h-2zm-8 2h2v3h-2zm4 2h3v4h-3zm4 2h2v2h-2zM9 19h2v2H9z"/>
+                  </svg>
+                </div>
+                <div class="sf-info">
+                  <b>交付素材包 · 3 个文件</b>
+                  <small>drop.your-domain.com/s/k7m2</small>
+                  <div class="sf-pins" aria-hidden="true"><span>4</span><span>8</span><span>1</span><span>9</span></div>
+                </div>
+              </div>
+              <div class="sf-bar">
+                <span>7 天有效 · 2/5 次</span>
+                <button type="button" class="sf-copy" id="demo-share-copy">复制外链</button>
+              </div>
+            </div>
+          </div>
+          <div class="bcard-body">
+            <h3>可控公网外链分享</h3>
+            <p>无需对方安装，多文件自动打包 ZIP，支持提取码、有效期、次数上限与随时撤销。</p>
+          </div>
+        </article>
+
+        <!-- Card 4: Raycast-Style Glossy App-Icon Cloud Constellation -->
+        <article class="bcard span-7">
+          <div class="bcard-stage glow-indigo">
+            <div class="cloud-constellation" aria-hidden="true">
+              <div class="cc-item"><span class="cc-squircle"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="1.8"><path d="M8.5 3.5h7l6 10.5-3.5 6H6l-3.5-6 6-10.5Z"/><path d="M6 20l6-10.5M2.5 14h19"/></svg></span><span>Google Drive</span></div>
+              <div class="cc-item"><span class="cc-squircle"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fb923c" stroke-width="1.8"><path d="M17.5 19H7a5 5 0 0 1-.5-9.97A6.5 6.5 0 0 1 19 10.5a4 4 0 0 1-1.5 8.5Z"/></svg></span><span>Cloudflare R2</span></div>
+              <div class="cc-item"><span class="cc-squircle"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="1.8"><path d="M5 7h14l-1.4 12.2a2 2 0 0 1-2 1.8H8.4a2 2 0 0 1-2-1.8L5 7Z"/><path d="M4 7c0-1.6 3.6-3 8-3s8 1.4 8 3"/></svg></span><span>Amazon S3</span></div>
+              <div class="cc-item"><span class="cc-squircle"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><path d="M8 12a4 4 0 1 1 4 4v3"/></svg></span><span>夸克网盘</span></div>
+              <div class="cc-item"><span class="cc-squircle"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#818cf8" stroke-width="1.8"><circle cx="9" cy="14" r="3.5"/><circle cx="15.5" cy="14" r="3.5"/><circle cx="12" cy="8.5" r="2.8"/></svg></span><span>百度网盘</span></div>
+              <div class="cc-item"><span class="cc-squircle"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg></span><span>WebDAV</span></div>
+              <div class="cc-item"><span class="cc-squircle"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#e2e8f0" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M7 15h4M16 15h1"/></svg></span><span>本地磁盘</span></div>
+              <div class="cc-item"><span class="cc-squircle"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#7dd3fc" stroke-width="1.8"><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5" stroke-linecap="round"/></svg></span><span>多后端切换</span></div>
+            </div>
+          </div>
+          <div class="bcard-body">
+            <h3>零 Sidecar，直连你的云盘</h3>
+            <p>所有云盘适配器均内置于 Rust 服务端，无需部署 Alist/OpenList，S3/R2 预签名直链下载。</p>
+          </div>
+        </article>
+
+        <!-- Card 5: Oversized 3D Machined Mac Keyboard Plate -->
+        <article class="bcard span-6">
+          <div class="bcard-stage glow-steel">
+            <div class="kb-plate">
+              <div class="kb-recess" aria-label="交互式全局快捷键按键">
+                <button type="button" class="hw-key" data-key="Alt">⌥<small>opt</small></button>
+                <button type="button" class="hw-key" data-key="Shift">⇧<small>shift</small></button>
+                <button type="button" class="hw-key" data-key="KeyD">D<small>drawer</small></button>
+              </div>
+              <span class="kb-pill" id="hk-status" aria-live="polite">按 ⌥ ⇧ D 或点击按键试试</span>
+            </div>
+          </div>
+          <div class="bcard-body">
+            <h3>全局热键与剪贴板直贴</h3>
+            <p>任何界面一键呼出抽屉；截完图或复制文件后直接 ⌘V 粘贴即刻全端同步。</p>
+          </div>
+        </article>
+
+        <!-- Card 6: Live BLAKE3 & Resumable QUIC Instrument -->
+        <article class="bcard span-6">
+          <div class="bcard-stage glow-emerald">
+            <div class="inst-card" aria-hidden="true">
+              <div class="inst-top">
+                <div class="inst-file">
+                  <span class="fthumb mov sm"></span>
+                  <div><b>Product-Demo-4K.mov</b><small>1.1 GB · 256 KiB 分块</small></div>
+                </div>
+                <span class="inst-speed" id="res-speed">68.8% · 46.2 MB/s</span>
+              </div>
+              <div class="res-chunks" id="res-chunks"></div>
+              <div class="inst-foot">
+                <span id="res-hash">BLAKE3 <b class="ok">✓ 9f2c…e41a</b></span>
+                <span id="res-receipt">RECEIPT <b class="ok">0x4444 已落盘</b></span>
+              </div>
+            </div>
+          </div>
+          <div class="bcard-body">
+            <h3>断点续传与 BLAKE3 校验</h3>
+            <p>断网重连直接从断点续传，整文件哈希校验通过后原子落盘并回传确认。</p>
+          </div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <div class="sec-divider"></div>
+
+  <!-- ======================== 4. OPTICAL TRANSPORT CONSOLE ======================== -->
+  <section id="transfer">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <span class="eyebrow"><i></i>TRANSPORT ENGINE</span>
+        <h2 class="t-grad">在线直连，离线兜底</h2>
+        <p>服务端只做信令与鉴权，文件本体优先端到端加密传输。</p>
+      </div>
+
+      <div class="console-shell reveal">
+        <div class="console-bar">
+          <div class="seg-tabs" role="tablist" aria-label="选择网络场景">
+            <button type="button" role="tab" aria-selected="true" data-route="lan">同一 Wi-Fi · 直连</button>
+            <button type="button" role="tab" aria-selected="false" data-route="wan">跨网络 · 打洞升级</button>
+            <button type="button" role="tab" aria-selected="false" data-route="cloud">对方离线 · 云端回落</button>
+          </div>
+          <span class="console-telemetry" id="route-telemetry">QUIC DIRECT · END-TO-END ENCRYPTED</span>
+        </div>
+
+        <div class="console-stage">
+          <svg viewBox="0 0 760 264" role="img" aria-labelledby="dg-heading">
+            <title id="dg-heading">DropDrawer 三种传输路径示意图</title>
+            <defs>
+              <linearGradient id="routeGrad" gradientUnits="userSpaceOnUse" x1="180" y1="0" x2="580" y2="0"><stop offset="0%" stop-color="#6366f1"/><stop offset="50%" stop-color="#38bdf8"/><stop offset="100%" stop-color="#7dd3fc"/></linearGradient>
+            </defs>
+            <path id="p-lan" class="dg-wire on" d="M180 132 H580"/>
+            <path id="p-wan" class="dg-wire" d="M180 116 C 245 64, 280 42, 310 42 H450 C 480 42, 515 64, 580 116"/>
+            <path id="p-cloud" class="dg-wire" d="M180 148 C 245 200, 275 222, 300 222 H460 C 485 222, 515 200, 580 148"/>
+
+            <!-- Sender Device -->
+            <rect class="dg-dev" x="20" y="92" width="160" height="80" rx="16"/>
+            <text class="dg-title" x="100" y="128" text-anchor="middle">MacBook Pro</text>
+            <text class="dg-sub" x="100" y="149" text-anchor="middle">SENDER · QUIC</text>
+
+            <!-- Receiver Device -->
+            <rect class="dg-dev" x="580" y="92" width="160" height="80" rx="16"/>
+            <text class="dg-title" x="660" y="128" text-anchor="middle">iPhone / Win</text>
+            <text class="dg-sub" x="660" y="149" text-anchor="middle">RECEIVER · BLAKE3</text>
+
+            <!-- Relay -->
+            <rect class="dg-mid" x="304" y="14" width="152" height="56" rx="13"/>
+            <text class="dg-title" x="380" y="38" text-anchor="middle">加密中继</text>
+            <text class="dg-sub" x="380" y="56" text-anchor="middle">仅转发密文 · 6s 打洞</text>
+
+            <!-- Cloud -->
+            <rect class="dg-mid" x="284" y="194" width="192" height="56" rx="13"/>
+            <text class="dg-title" x="380" y="218" text-anchor="middle">自托管服务端 + 云盘</text>
+            <text class="dg-sub" x="380" y="236" text-anchor="middle">S3 · R2 · 网盘 · 本地</text>
+
+            <circle class="dg-dot" id="pulse" r="5"/>
+          </svg>
+        </div>
+
+        <div class="console-steps" id="steps" aria-live="polite"></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="sec-divider"></div>
+
+  <!-- ======================== 5. SMART POLICY SIMULATOR ======================== -->
+  <section id="policy">
+    <div class="wrap split reveal">
+      <div class="split-copy">
+        <span class="eyebrow"><i></i>SMART POLICY</span>
+        <h2 class="t-grad">小文件留底<br>大文件直传</h2>
+        <p>默认 20 MB 智能阈值，小文件双路径保障，大文件零云盘占用。</p>
+      </div>
+
+      <div class="glass-panel policy-pad">
+        <div class="p-seg" role="group" aria-label="选择存储策略">
+          <button type="button" aria-pressed="true" data-policy="smart">智能 · 20MB</button>
+          <button type="button" aria-pressed="false" data-policy="p2p">纯 P2P 直连</button>
+          <button type="button" aria-pressed="false" data-policy="cloud">强制存云盘</button>
+        </div>
+        <div>
+          <div class="p-head"><label for="size">文件体积</label><output id="size-out" for="size">6 MB</output></div>
+          <div style="padding-top:12px"><input id="size" class="precision-range" type="range" min="0" max="100" value="38"></div>
+          <div class="ticks" aria-hidden="true"><span>100 KB</span><span>20 MB 阈值</span><span>4 GB</span></div>
+        </div>
+        <div class="outcome-pills" aria-live="polite">
+          <div class="opill" id="op-p2p"><b>P2P 直连</b><small id="op-p2p-n">优先直连</small></div>
+          <div class="opill" id="op-cloud"><b>云盘留底</b><small id="op-cloud-n">≤ 20 MB 上传</small></div>
+          <div class="opill" id="op-off"><b>离线可取</b><small id="op-off-n">合盖仍可下</small></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="sec-divider"></div>
+
+  <!-- ======================== 6. SELF-HOST DEVELOPER CONSOLE ======================== -->
+  <section id="selfhost">
+    <div class="wrap reveal">
+      <div class="sec-head">
+        <span class="eyebrow"><i></i>SELF-HOSTED</span>
+        <h2 class="t-grad">一条命令，私有部署</h2>
+        <p>单个 Rust 二进制（Axum + SQLite + WebSocket），数据全在自己手里。</p>
+      </div>
+
+      <div style="max-width:820px;margin:0 auto">
+        <div class="glass-panel">
+          <div class="term-head">
+            <span class="tl r"></span><span class="tl y"></span><span class="tl g"></span>
+            <div class="term-tabs" role="tablist" aria-label="部署方式">
+              <button type="button" role="tab" aria-selected="true" data-term="docker">Docker Compose</button>
+              <button type="button" role="tab" aria-selected="false" data-term="cargo">Cargo 本地</button>
+            </div>
+            <button type="button" class="copy-btn" id="copy">复制命令</button>
+          </div>
+          <pre class="term-body" id="cmd"></pre>
+        </div>
+
+        <div class="env-cols">
+          <div class="env-col"><code>DROPDRAWER_JWT_SECRET</code><p>留空即可，首次启动自动生成高熵密钥并持久化。</p></div>
+          <div class="env-col"><code>DROPDRAWER_ALLOW_REGISTRATION</code><p>创建账号后设为 false 可关闭新用户注册。</p></div>
+          <div class="env-col"><code>DROPDRAWER_GOOGLE_CLIENT_ID</code><p>可选配置。填写 Google OAuth 客户端 ID、密钥和回调地址。</p></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="sec-divider"></div>
+
+  <!-- ======================== 7. NATIVE DOWNLOAD SHOWCASE ======================== -->
+  <section id="download">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <span class="eyebrow"><i></i>DOWNLOAD · <span data-release-version>正式版</span></span>
+        <h2 class="t-grad">全平台原生客户端</h2>
+        <p>macOS、Windows 和 Android 支持软件内更新。</p>
+      </div>
+
+      <div class="dl-grid reveal">
+        <article class="dl-card" data-plat="macos">
+          <div class="dl-medallion" aria-hidden="true"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M16.4 12.6c0-2.5 2-3.7 2.1-3.8-1.2-1.7-3-1.9-3.6-2-1.5-.2-3 .9-3.8.9-.8 0-2-.9-3.3-.9-1.7 0-3.3 1-4.2 2.6-1.8 3.1-.5 7.7 1.3 10.2.9 1.2 1.9 2.6 3.2 2.6 1.3-.1 1.8-.8 3.3-.8 1.6 0 2 .8 3.3.8 1.4 0 2.3-1.2 3.1-2.5 1-1.4 1.4-2.8 1.4-2.9-.1 0-2.8-1-2.8-4.2ZM13.9 5.2c.7-.8 1.2-2 1-3.2-1 .1-2.2.7-2.9 1.5-.6.7-1.2 1.9-1 3.1 1.1.1 2.2-.6 2.9-1.4Z"/></svg></div>
+          <div class="dl-head"><h3>macOS</h3><span class="dl-tag">Apple Silicon</span></div>
+          <p>原生贴边抽屉、全局热键、拖拽进出访达与自动更新。</p>
+          <a class="btn btn-ghost btn-sm" href="https://github.com/StackTao/DropDrawer/releases/latest/download/DropDrawer-macOS-arm64.dmg">下载 DMG</a>
+        </article>
+        <article class="dl-card" data-plat="windows">
+          <div class="dl-medallion" aria-hidden="true"><svg width="21" height="21" viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.5 10.4 4.5v7H3ZM11.4 4.4 21 3v8.5h-9.6ZM3 12.5h7.4v7L3 18.5ZM11.4 12.5H21V21l-9.6-1.4Z"/></svg></div>
+          <div class="dl-head"><h3>Windows</h3><span class="dl-tag">x64 Setup</span></div>
+          <p>Win32 贴边抽屉、Win11 亚克力毛玻璃与静默升级。</p>
+          <a class="btn btn-ghost btn-sm" href="https://github.com/StackTao/DropDrawer/releases/latest/download/DropDrawer-Windows-x64-Setup.exe">下载安装程序</a>
+        </article>
+        <article class="dl-card" data-plat="android">
+          <div class="dl-medallion" aria-hidden="true"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M17.5 9.2 19.3 6a.4.4 0 0 0-.7-.4l-1.8 3.2A10 10 0 0 0 12 7.8a10 10 0 0 0-4.8 1L5.4 5.6a.4.4 0 1 0-.7.4l1.8 3.2A8.6 8.6 0 0 0 2 16.2h20a8.6 8.6 0 0 0-4.5-7ZM7.5 13.3a.9.9 0 1 1 0-1.8.9.9 0 0 1 0 1.8Zm9 0a.9.9 0 1 1 0-1.8.9.9 0 0 1 0 1.8Z"/></svg></div>
+          <div class="dl-head"><h3>Android</h3><span class="dl-tag">APK</span></div>
+          <p>原生系统相册、系统分享接收、零权限存相册与 P2P。</p>
+          <div class="dl-actions">
+            <a class="btn btn-ghost btn-sm" href="https://github.com/StackTao/DropDrawer/releases/latest/download/DropDrawer-Android-arm64.apk">下载 ARM64 APK</a>
+            <a class="btn btn-ghost btn-sm" href="https://github.com/StackTao/DropDrawer/releases/latest/download/DropDrawer-Android-universal.apk">下载通用 APK</a>
+          </div>
+        </article>
+        <article class="dl-card" id="ios-download" data-plat="ios">
+          <div class="dl-medallion" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="6" y="2.5" width="12" height="19" rx="3"/><path d="M10.5 18h3" stroke-linecap="round"/></svg></div>
+          <div class="dl-head"><h3>iOS / iPadOS</h3></div>
+          <p>目前提供源码。使用 Flutter 和 Xcode 构建，真机安装需要签名。</p>
+          <a class="btn btn-ghost btn-sm" href="https://github.com/StackTao/DropDrawer#ios" target="_blank" rel="noopener">构建指南</a>
+        </article>
+      </div>
+      <div class="dl-release-links">
+        <a href="https://github.com/StackTao/DropDrawer/releases/latest">版本发布说明</a>
+        <a href="https://github.com/StackTao/DropDrawer/releases/latest/download/SHA256SUMS.txt">SHA-256 校验清单</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="closing">
+    <div class="wrap reveal">
+      <h2 class="t-grad">下一个文件，丢进抽屉</h2>
+      <p>开源、可自托管，文件只在你的设备与云盘间流动。</p>
+      <div class="closing-cta">
+        <a class="btn btn-primary" href="#download">选择平台下载</a>
+        <a class="btn btn-ghost" href="https://github.com/StackTao/DropDrawer" target="_blank" rel="noopener">GitHub 源码</a>
+      </div>
+    </div>
+    <div class="closing-arc" aria-hidden="true"></div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap foot-inner">
+    <span>DropDrawer · MIT License</span>
+    <nav class="foot-links" aria-label="页脚链接">
+      <a href="https://github.com/StackTao/DropDrawer" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/StackTao/DropDrawer/releases" target="_blank" rel="noopener">Releases</a>
+      <a href="https://github.com/StackTao/DropDrawer/blob/main/docs/ARCHITECTURE.md" target="_blank" rel="noopener">架构文档</a>
+      <a href="https://github.com/StackTao/DropDrawer/blob/main/docs/APP_UPDATES.md" target="_blank" rel="noopener">更新机制</a>
+      <a href="/privacy">隐私政策</a>
+      <a href="https://github.com/StackTao/DropDrawer/issues" target="_blank" rel="noopener">问题反馈</a>
+    </nav>
+  </div>
+</footer>
+
+<script>
+(() => {
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const $ = (s, el = document) => el.querySelector(s);
+  const wait = (ms) => new Promise((r) => setTimeout(r, reduce ? 0 : ms));
+  const fmt = (mb) => mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : mb >= 1 ? (mb >= 100 ? Math.round(mb) : +mb.toFixed(1)) + ' MB' : Math.round(mb * 1024) + ' KB';
+  const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  /* =========================================================
+     ORIGINAL DROPDRAWER "SCULPTED CURVED FLUTED-GLASS ARC" SHADER
+     Concentric staggered curved glass crescents floating in pure dark studio void,
+     with tactile film-grain stippling & luminous sapphire-cyan light pulses gliding along the arc.
+     ========================================================= */
+  (() => {
+    const canvas = $('#hero-canvas');
+    if (!canvas) return;
+    const gl = canvas.getContext('webgl', { alpha: false, antialias: false, powerPreference: 'high-performance' });
+    let mx = 0.5, my = 0.5, tx = 0.5, ty = 0.5;
+    addEventListener('pointermove', (e) => {
+      tx = e.clientX / Math.max(1, innerWidth);
+      ty = 1.0 - e.clientY / Math.max(1, innerHeight);
+    }, { passive: true });
+
+    if (gl) {
+      const vs = `attribute vec2 p; void main(){ gl_Position = vec4(p, 0.0, 1.0); }`;
+      const fs = `
+        precision highp float;
+        uniform vec2 u_res;
+        uniform float u_time;
+        uniform vec2 u_mouse;
+
+        float hash(vec2 p) {
+          p = fract(p * vec2(123.34, 456.21));
+          p += dot(p, p + 45.32);
+          return fract(p.x * p.y);
+        }
+
+        void main() {
+          vec2 uv = gl_FragCoord.xy / u_res;
+          vec2 p = (gl_FragCoord.xy - 0.5 * u_res) / min(u_res.x, u_res.y);
+
+          // Subtle cursor parallax
+          vec2 mp = (u_mouse - 0.5) * 0.14;
+          p -= mp * 0.42;
+
+          // Curved concentric optical glass arcs sweeping gracefully from lower-left through center to upper-right
+          vec2 center = vec2(0.38, -0.86);
+          vec2 q = p - center;
+          float r = length(q);
+          float ang = atan(q.y, q.x); // ~1.35 (upper-right) to ~2.75 (lower-left), center ~2.00
+
+          float t = u_time * 0.48;
+
+          // Subtle organic radial warp so arcs feel like blown optical crystal
+          float rWarp = r + 0.016 * sin(ang * 3.0 - t * 0.85);
+          float freq = 7.4;
+          float ribId = floor(rWarp * freq);
+          float f = fract(rWarp * freq);
+          float ribR = (ribId + 0.5) / freq;
+
+          // Each curved glass rib gets staggered angular start/length (sculptural silhouette in black void)
+          float angCenter = 2.02 + 0.14 * sin(ribId * 1.73 + 0.4) + 0.06 * sin(t * 0.7 + ribId * 0.9);
+          float angSpan = 0.42 + 0.14 * cos(ribId * 2.17);
+          float arcEnv = exp(-pow((ang - angCenter) / angSpan, 2.0));
+
+          // Radial cluster envelope: dramatic core around center, fading cleanly to pitch black at top/bottom corners
+          float radEnv = exp(-pow((ribR - 0.95) / 0.36, 2.0));
+
+          // Two kinetic light pulses gliding smoothly along the curved arcs (left -> right across the prism)
+          float pulseAng1 = 2.65 - mod(t * 0.44 + ribId * 0.07, 1.55);
+          float pulseAng2 = 2.65 - mod(t * 0.44 + 0.78 + ribId * 0.07, 1.55);
+          float flow1 = exp(-pow((ang - pulseAng1) / 0.30, 2.0));
+          float flow2 = exp(-pow((ang - pulseAng2) / 0.24, 2.0));
+
+          float energy = radEnv * arcEnv * (0.58 + 0.68 * flow1 + 0.44 * flow2);
+
+          // Bold 3D convex fluted-glass rib profile: deep pitch-black valley, bright sculptural glass crest
+          float ribBody = smoothstep(0.08, 0.38, f) * (1.0 - smoothstep(0.58, 0.92, f));
+          // Specular rim strictly bounded by lit energy so zero stray lines extend into darkness
+          float ribRim = exp(-pow((f - 0.84) / 0.042, 2.0)) * pow(clamp(energy, 0.0, 1.0), 1.45);
+
+          // Tactile cinema film-grain stippling baked into the optical falloff
+          float grain = hash(gl_FragCoord.xy + floor(u_time * 16.0) * 19.1) - 0.5;
+          float raw = ribBody * energy * 1.55;
+          // Gentle contrast cradle right behind the white typography
+          float centerDip = 1.0 - 0.20 * exp(-pow(length((uv - vec2(0.5, 0.50)) * vec2(2.7, 3.8)), 2.0));
+          float lit = clamp((1.0 - exp(-raw * 1.18)) * centerDip + grain * 0.17 * smoothstep(0.015, 0.58, raw), 0.0, 1.15);
+
+          // Jewel-toned optical prism palette: deep midnight indigo -> electric cobalt -> luminous glacial cyan
+          vec3 col = vec3(0.016, 0.017, 0.024);
+          vec3 violet = vec3(0.14, 0.12, 0.58);
+          vec3 cobalt = vec3(0.05, 0.44, 0.98);
+          vec3 cyanHot = vec3(0.42, 0.86, 1.0);
+          vec3 rimTint = vec3(0.48, 0.88, 1.0);
+
+          vec3 ribCol = mix(violet, cobalt, smoothstep(0.10, 0.58, lit));
+          ribCol = mix(ribCol, cyanHot, smoothstep(0.64, 1.08, lit));
+
+          col += ribCol * pow(max(lit, 0.0), 1.12) * 1.14;
+          col += rimTint * ribRim * 0.62;
+          col += grain * 0.015;
+
+          // Deep pure-black studio framing so top navbar & bottom CTA breathe cleanly
+          float topFade = smoothstep(0.99, 0.80, uv.y);
+          float botFade = smoothstep(0.02, 0.22, uv.y);
+          float vig = smoothstep(1.30, 0.24, length((uv - 0.5) * vec2(1.24, 1.08)));
+          col = mix(vec3(0.018, 0.019, 0.026), col, vig * topFade * botFade);
+
+          gl_FragColor = vec4(col, 1.0);
+        }
+      `;
+
+      const compile = (type, src) => {
+        const s = gl.createShader(type);
+        gl.shaderSource(s, src);
+        gl.compileShader(s);
+        return gl.getShaderParameter(s, gl.COMPILE_STATUS) ? s : null;
+      };
+      const vsh = compile(gl.VERTEX_SHADER, vs);
+      const fsh = compile(gl.FRAGMENT_SHADER, fs);
+      if (vsh && fsh) {
+        const prog = gl.createProgram();
+        gl.attachShader(prog, vsh);
+        gl.attachShader(prog, fsh);
+        gl.linkProgram(prog);
+        gl.useProgram(prog);
+
+        const buf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+        const loc = gl.getAttribLocation(prog, 'p');
+        gl.enableVertexAttribArray(loc);
+        gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+
+        const uRes = gl.getUniformLocation(prog, 'u_res');
+        const uTime = gl.getUniformLocation(prog, 'u_time');
+        const uMouse = gl.getUniformLocation(prog, 'u_mouse');
+
+        const resize = () => {
+          const dpr = Math.min(window.devicePixelRatio || 1, 1.75);
+          const w = Math.floor(canvas.clientWidth * dpr);
+          const h = Math.floor(canvas.clientHeight * dpr);
+          if (canvas.width !== w || canvas.height !== h) {
+            canvas.width = w;
+            canvas.height = h;
+            gl.viewport(0, 0, w, h);
+          }
+        };
+        resize();
+        addEventListener('resize', resize, { passive: true });
+
+        const start = performance.now();
+        const draw = (now) => {
+          mx += (tx - mx) * 0.06;
+          my += (ty - my) * 0.06;
+          gl.uniform2f(uRes, canvas.width, canvas.height);
+          gl.uniform1f(uTime, reduce ? 1.8 : (now - start) * 0.001 + 1.4);
+          gl.uniform2f(uMouse, mx, my);
+          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+          if (!reduce) requestAnimationFrame(draw);
+        };
+        requestAnimationFrame(draw);
+        return;
+      }
+    }
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const draw2d = () => {
+      const w = canvas.width = canvas.clientWidth || 1440;
+      const h = canvas.height = canvas.clientHeight || 820;
+      ctx.fillStyle = '#050507';
+      ctx.fillRect(0, 0, w, h);
+      const cx = w * 0.68, cy = h * 1.25;
+      for (let i = 0; i < 6; i++) {
+        const rad = h * (0.62 + i * 0.13);
+        ctx.beginPath();
+        ctx.arc(cx, cy, rad, Math.PI * 1.06, Math.PI * 1.48);
+        ctx.strokeStyle = `rgba(38,140,255,${(0.32 - i * 0.03).toFixed(3)})`;
+        ctx.lineWidth = Math.max(18, h * 0.045);
+        ctx.lineCap = 'round';
+        ctx.stroke();
+      }
+    };
+    draw2d();
+    addEventListener('resize', draw2d, { passive: true });
+  })();
+
+  /* ---------- OS-aware primary CTA, Nav & Download Highlight ---------- */
+  const ua = navigator.userAgent || '';
+  const ctaLabel = $('#hero-cta-label'), ctaIco = $('#hero-cta-ico'), navDlIco = $('#nav-dl-ico');
+  const APPLE_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M16.4 12.6c0-2.5 2-3.7 2.1-3.8-1.2-1.7-3-1.9-3.6-2-1.5-.2-3 .9-3.8.9-.8 0-2-.9-3.3-.9-1.7 0-3.3 1-4.2 2.6-1.8 3.1-.5 7.7 1.3 10.2.9 1.2 1.9 2.6 3.2 2.6 1.3-.1 1.8-.8 3.3-.8 1.6 0 2 .8 3.3.8 1.4 0 2.3-1.2 3.1-2.5 1-1.4 1.4-2.8 1.4-2.9-.1 0-2.8-1-2.8-4.2ZM13.9 5.2c.7-.8 1.2-2 1-3.2-1 .1-2.2.7-2.9 1.5-.6.7-1.2 1.9-1 3.1 1.1.1 2.2-.6 2.9-1.4Z"/></svg>';
+  const WIN_SVG = '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.5 10.4 4.5v7H3ZM11.4 4.4 21 3v8.5h-9.6ZM3 12.5h7.4v7L3 18.5ZM11.4 12.5H21V21l-9.6-1.4Z"/></svg>';
+  const isIOS = /iPhone|iPad|iPod/i.test(ua) ||
+    (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1);
+  let platform;
+  if (isIOS) {
+    platform = 'ios';
+    ctaLabel.textContent = '查看 iOS 构建指南';
+    $('#hero-primary-cta').href = '#ios-download';
+  } else if (/Android/i.test(ua)) {
+    platform = 'android';
+    ctaLabel.textContent = '下载 Android 版';
+  } else if (/Windows/i.test(ua)) {
+    platform = 'windows';
+    ctaLabel.textContent = '下载 Windows x64 版';
+    ctaIco.innerHTML = WIN_SVG;
+    navDlIco.innerHTML = WIN_SVG;
+  } else if (/Macintosh|Mac OS X/i.test(ua)) {
+    platform = 'macos';
+    ctaLabel.textContent = '下载 macOS 版（Apple 芯片）';
+    ctaIco.innerHTML = APPLE_SVG;
+    navDlIco.innerHTML = APPLE_SVG;
+  }
+  if (platform) {
+    const card = $('.dl-card[data-plat="' + platform + '"]');
+    const button = $('.btn', card);
+    card.classList.add('featured');
+    button.classList.replace('btn-ghost', 'btn-primary');
+    if (!isIOS) {
+      $('#hero-primary-cta').href = button.href;
+      $('#nav-dl-btn').href = button.href;
+    }
+  }
+
+  // The download links work without JavaScript or the release metadata.
+  fetch('https://api.github.com/repos/StackTao/DropDrawer/releases/latest', {
+    signal: AbortSignal.timeout(4500),
+  }).then((response) => response.ok ? response.json() : null).then((release) => {
+    if (!/^v[0-9]+\.[0-9]+\.[0-9]+$/.test(release?.tag_name ?? '')) return;
+    document.querySelectorAll('[data-release-version]').forEach((label) => {
+      label.textContent = release.tag_name;
+    });
+  }).catch(() => {});
+
+  /* ---------- Scroll reveal ---------- */
+  if (!reduce && 'IntersectionObserver' in window) {
+    document.documentElement.classList.add('js-ready');
+    const reveals = [...document.querySelectorAll('.reveal')];
+    const checkVisible = () => {
+      reveals.forEach((el) => {
+        if (!el.classList.contains('in') && el.getBoundingClientRect().top < innerHeight * 1.08) el.classList.add('in');
+      });
+    };
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach((e) => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+    }, { threshold: 0.01 });
+    reveals.forEach((el) => io.observe(el));
+    checkVisible();
+    addEventListener('hashchange', () => setTimeout(checkVisible, 60), { passive: true });
+    addEventListener('scroll', checkVisible, { passive: true });
+  }
+
+  /* ---------- Spotlight border tracking ---------- */
+  document.querySelectorAll('.bcard').forEach((el) => {
+    el.addEventListener('pointermove', (e) => {
+      const r = el.getBoundingClientRect();
+      el.style.setProperty('--mx', `${e.clientX - r.left}px`);
+      el.style.setProperty('--my', `${e.clientY - r.top}px`);
+    });
+  });
+
+  /* ---------- Interactive Product Stage ---------- */
+  const desk = $('#desk'), filesEl = $('#files'), dlist = $('#dlist'), plist = $('#plist');
+  const hintText = $('#hint-text'), resetBtn = $('#reset'), toggleBtn = $('#toggle-drawer-btn'), autoDemoBtn = $('#auto-demo-btn');
+  const drawerCount = $('#drawer-count'), drawerFootCount = $('#drawer-foot-count'), phoneFootCount = $('#phone-foot-count');
+  const drawerPolicySub = $('#drawer-policy-sub');
+
+  const DESKTOP_FILES = [
+    { id: 'pdf', name: 'Q4-Proposal.pdf', kind: 'pdf', mb: 2.4 },
+    { id: 'dmg', name: 'DropDrawer-macOS-arm64.dmg', kind: 'dmg', mb: 18.6 },
+    { id: 'mov', name: 'Product-Demo-4K.mov', kind: 'mov', mb: 1126 },
+  ];
+  const INITIAL_ITEMS = [
+    { name: 'Design-preview.png', kind: 'png', mb: 3.2, mode: 'both' },
+    { name: 'Release-checklist.pdf', kind: 'pdf', mb: 0.4, mode: 'cloud' },
+    { name: '会议纪要 · 架构评审', kind: 'txt', mb: 0.002, mode: 'cloud', text: true },
+  ];
+  const THRESHOLD = 20;
+  let demoPolicy = 'smart', busy = false;
+  const POLICY_SUB = {
+    smart: '小于 20MB 自动云存 · 大文件纯 P2P 直连',
+    p2p: '所有文件仅设备间 P2P 直连 · 不占云盘',
+    cloud: '所有文件放入时自动缓存到云盘',
+  };
+
+  function thumbHtml(kind, sizeClass = '') {
+    if (kind === 'txt') return `<span class="fthumb txt ${sizeClass}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h12M4 17h9" stroke-linecap="round"/></svg></span>`;
+    return `<span class="fthumb ${kind} ${sizeClass}"></span>`;
+  }
+  function routeTag(it) {
+    if (it.text) return { cls: 'cloud', text: '文本 · 已同步' };
+    if (it.mode === 'p2p') return { cls: 'p2p', text: 'P2P 直连' };
+    if (it.mode === 'cloud') return { cls: 'cloud', text: '已存云盘' };
+    return { cls: 'p2p', text: 'P2P · 云端' };
+  }
+  function updateCounts() {
+    const n = dlist.children.length;
+    drawerCount.textContent = `抽屉内容 · ${n} 项`;
+    drawerFootCount.textContent = `${n} 项`;
+    phoneFootCount.textContent = `${n} 项`;
+  }
+  function makeDrawerItem(it, pending = false) {
+    const li = document.createElement('li'); li.className = 'md-item';
+    if (pending) {
+      li.innerHTML = `<span class="fthumb txt sm"><span class="spin"></span></span><div><b>${esc(it.name)}</b><small>正在加入抽屉…</small></div><span></span>`;
+      return li;
+    }
+    const r = routeTag(it);
+    li.innerHTML = `${thumbHtml(it.kind, 'sm')}<div><b>${esc(it.name)}</b><small><span class="sdot ${r.cls}"></span>${it.text ? '文本' : fmt(it.mb)} · ${r.text}</small></div><div class="md-act" aria-hidden="true"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v8m0 0-3-3m3 3 3-3"/></svg></div>`;
+    return li;
+  }
+  function makePhoneItem(it, receiving = false) {
+    const li = document.createElement('li'); li.className = 'ios-item';
+    const r = routeTag(it);
+    li.innerHTML = `${thumbHtml(it.kind, 'xs')}<div><b>${esc(it.name)}</b><small>${receiving ? '建立 QUIC 传输…' : (it.text ? '文本' : fmt(it.mb)) + ' · ' + r.text}</small></div>`;
+    if (receiving) li.insertAdjacentHTML('beforeend', '<span class="ios-bar"><i></i></span>');
+    return li;
+  }
+  function trimList(ul, max) { while (ul.children.length > max) ul.lastElementChild.remove(); }
+  function renderStart() {
+    filesEl.innerHTML = '';
+    DESKTOP_FILES.forEach((f) => {
+      const btn = document.createElement('button');
+      btn.type = 'button'; btn.className = 'drag-file'; btn.dataset.id = f.id;
+      btn.setAttribute('aria-label', `拖入或点击同步 ${f.name}`);
+      btn.innerHTML = `${thumbHtml(f.kind)}<div><b>${esc(f.name)}</b><small>${fmt(f.mb)}</small></div><span class="drag-cta">拖入 →</span>`;
+      filesEl.appendChild(btn);
+    });
+    dlist.innerHTML = ''; plist.innerHTML = '';
+    INITIAL_ITEMS.forEach((it) => { dlist.appendChild(makeDrawerItem(it)); plist.appendChild(makePhoneItem(it)); });
+    updateCounts(); desk.dataset.mode = 'open'; resetBtn.hidden = true;
+    hintText.textContent = '拖入或点击访达中的任意文件。';
+  }
+  function resolveMode(mb) { return demoPolicy === 'p2p' ? 'p2p' : demoPolicy === 'cloud' ? 'cloud' : (mb <= THRESHOLD ? 'both' : 'p2p'); }
+  async function deliver(f) {
+    busy = true;
+    const mode = resolveMode(f.mb);
+    const it = { name: f.name, kind: f.kind, mb: f.mb, mode };
+    const pend = makeDrawerItem(it, true);
+    dlist.prepend(pend); trimList(dlist, 4); updateCounts();
+    await wait(420);
+    pend.replaceWith(makeDrawerItem(it));
+    const pItem = makePhoneItem(it, true);
+    plist.prepend(pItem); trimList(plist, 4); updateCounts();
+    const dur = Math.min(2000, Math.max(740, f.mb * 1.7));
+    pItem.querySelector('small').textContent = mode === 'cloud' ? '云端高速分发' : (f.mb > THRESHOLD ? 'QUIC 直连 · 46.2 MB/s' : 'QUIC 直连 · 24.8 MB/s');
+    hintText.textContent = mode === 'p2p' ? `${f.name}：纯 P2P 直连，不占云盘。` : mode === 'cloud' ? `${f.name}：已存云盘，离线可取。` : `${f.name}：P2P 直连 + 云端留底。`;
+    const bar = pItem.querySelector('.ios-bar > i');
+    bar.style.transitionDuration = (reduce ? 0 : dur) + 'ms';
+    requestAnimationFrame(() => requestAnimationFrame(() => { bar.style.width = '100%'; }));
+    await wait(dur + 120);
+    pItem.replaceWith(makePhoneItem(it));
+    filesEl.querySelector(`[data-id="${f.id}"]`)?.setAttribute('aria-disabled', 'true');
+    resetBtn.hidden = false;
+    busy = false;
+  }
+  async function autoplay(f) {
+    if (busy) return;
+    busy = true;
+    desk.dataset.mode = 'collapsed'; await wait(240);
+    desk.dataset.mode = 'pill'; await wait(480);
+    desk.dataset.mode = 'open'; await wait(200);
+    busy = false;
+    await deliver(f);
+  }
+  autoDemoBtn.addEventListener('click', () => {
+    if (busy) return;
+    const next = DESKTOP_FILES.find((f) => filesEl.querySelector(`[data-id="${f.id}"]`)?.getAttribute('aria-disabled') !== 'true');
+    if (next) autoplay(next);
+    else { renderStart(); autoplay(DESKTOP_FILES[0]); }
+  });
+  let drag = null;
+  filesEl.addEventListener('pointerdown', (e) => {
+    const btn = e.target.closest('.drag-file');
+    if (!btn || busy || btn.getAttribute('aria-disabled') === 'true') return;
+    drag = { f: DESKTOP_FILES.find((x) => x.id === btn.dataset.id), x0: e.clientX, y0: e.clientY, moved: false, ghost: null, id: e.pointerId };
+    btn.setPointerCapture(e.pointerId);
+  });
+  filesEl.addEventListener('pointermove', (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const r = desk.getBoundingClientRect();
+    if (!drag.moved && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 6) return;
+    if (!drag.moved) {
+      drag.moved = true; drag.ghost = document.createElement('div'); drag.ghost.className = 'ghost';
+      drag.ghost.innerHTML = `${thumbHtml(drag.f.kind, 'xs')}<span>${esc(drag.f.name)}</span>`;
+      desk.appendChild(drag.ghost); desk.dataset.mode = 'collapsed';
+    }
+    const x = e.clientX - r.left, y = e.clientY - r.top;
+    drag.ghost.style.left = x + 'px'; drag.ghost.style.top = y + 'px';
+    const fromRight = r.width - x, mode = desk.dataset.mode;
+    if (mode === 'collapsed' && fromRight < r.width * 0.34) desk.dataset.mode = 'pill';
+    else if (mode === 'pill' && fromRight < 165 && Math.abs(y - r.height / 2) < r.height * 0.38) desk.dataset.mode = 'open';
+    else if (mode === 'pill' && fromRight > r.width * 0.44) desk.dataset.mode = 'collapsed';
+    const drawerW = Math.min(r.width * 0.365, 354) + 14;
+    desk.dataset.hover = desk.dataset.mode === 'open' && fromRight < drawerW ? 'drop' : '';
+  });
+  const endDrag = (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const d = drag; drag = null; d.ghost?.remove();
+    const dropped = desk.dataset.hover === 'drop'; desk.dataset.hover = '';
+    if (!d.moved) { autoplay(d.f); return; }
+    desk.dataset.mode = 'open';
+    if (dropped) deliver(d.f);
+  };
+  filesEl.addEventListener('pointerup', endDrag);
+  filesEl.addEventListener('pointercancel', endDrag);
+  document.querySelectorAll('[data-demo-policy]').forEach((btn) => btn.addEventListener('click', () => {
+    demoPolicy = btn.dataset.demoPolicy;
+    document.querySelectorAll('[data-demo-policy]').forEach((b) => b.setAttribute('aria-pressed', String(b === btn)));
+    drawerPolicySub.textContent = POLICY_SUB[demoPolicy];
+  }));
+  $('#edge-handle').addEventListener('click', () => { desk.dataset.mode = 'open'; });
+  toggleBtn.addEventListener('click', () => { desk.dataset.mode = desk.dataset.mode === 'open' ? 'collapsed' : 'open'; });
+  resetBtn.addEventListener('click', () => { if (!busy) renderStart(); });
+  renderStart();
+
+  /* ---------- Bento Edge Macro ---------- */
+  const edgeMacro = $('#edge-macro');
+  let emTimer = null;
+  function setEdgeStep(step) {
+    edgeMacro.dataset.step = String(step);
+    document.querySelectorAll('[data-em]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.em === String(step))));
+  }
+  document.querySelectorAll('[data-em]').forEach((b) => b.addEventListener('click', () => { clearInterval(emTimer); setEdgeStep(b.dataset.em); }));
+  if (!reduce) { let cur = 2; emTimer = setInterval(() => { cur = (cur % 3) + 1; setEdgeStep(cur); }, 2800); }
+
+  /* ---------- Share Copy ---------- */
+  const shareCopyBtn = $('#demo-share-copy');
+  shareCopyBtn.addEventListener('click', () => { shareCopyBtn.textContent = '已复制 ✓'; setTimeout(() => { shareCopyBtn.textContent = '复制外链'; }, 1600); });
+
+  /* ---------- Keyboard Plate ---------- */
+  const caps = [...document.querySelectorAll('.hw-key')], hkStatus = $('#hk-status');
+  const capFor = (e) => caps.find((c) => c.dataset.key === (e.code === 'KeyD' ? 'KeyD' : e.key));
+  function triggerChord() {
+    const open = desk.dataset.mode !== 'open';
+    desk.dataset.mode = open ? 'open' : 'collapsed';
+    hkStatus.textContent = open ? '✓ 已呼出演示抽屉' : '✓ 已收起至边缘';
+  }
+  addEventListener('keydown', (e) => { capFor(e)?.classList.add('down'); if (e.altKey && e.shiftKey && e.code === 'KeyD') { e.preventDefault(); triggerChord(); } });
+  addEventListener('keyup', (e) => { capFor(e)?.classList.remove('down'); if (e.key === 'Alt' || e.key === 'Shift') caps.forEach((c) => c.dataset.key === e.key && c.classList.remove('down')); });
+  addEventListener('blur', () => caps.forEach((c) => c.classList.remove('down')));
+  caps.forEach((c) => c.addEventListener('click', async () => { caps.forEach((k) => k.classList.add('down')); triggerChord(); await wait(240); caps.forEach((k) => k.classList.remove('down')); }));
+
+  /* ---------- Live BLAKE3 Telemetry ---------- */
+  const chunksEl = $('#res-chunks'), resSpeed = $('#res-speed'), resHash = $('#res-hash'), resReceipt = $('#res-receipt');
+  const chunkNodes = Array.from({ length: 16 }, () => { const i = document.createElement('i'); chunksEl.appendChild(i); return i; });
+  function paintChunks(count, state) {
+    chunkNodes.forEach((n, idx) => { n.className = state === 'verified' ? 'verified' : idx < count ? 'done' : (idx === count && state === 'warn') ? 'warn' : ''; });
+  }
+  paintChunks(11, 'warn');
+  if (!reduce) {
+    let step = 10;
+    setInterval(() => {
+      step = (step + 1) % 24;
+      if (step < 10) {
+        paintChunks(step + 1, 'run'); resSpeed.textContent = `${Math.round(((step + 1) / 16) * 100)}% · 44.8 MB/s`;
+        resHash.innerHTML = 'BLAKE3 <b>流式校验中…</b>'; resReceipt.innerHTML = 'RECEIPT <b>传输中</b>';
+      } else if (step < 12) {
+        paintChunks(10, 'warn'); resSpeed.textContent = '62.5% · 断点续传中';
+        resHash.innerHTML = 'OFFSET <b class="warn">692 MB 断点已保留</b>'; resReceipt.innerHTML = 'RECEIPT <b class="warn">自动重连…</b>';
+      } else if (step < 18) {
+        const done = Math.min(16, 10 + (step - 11)); paintChunks(done, 'run');
+        resSpeed.textContent = `${Math.round((done / 16) * 100)}% · 48.1 MB/s`;
+        resHash.innerHTML = 'BLAKE3 <b>续传校验中…</b>'; resReceipt.innerHTML = 'RECEIPT <b>传输中</b>';
+      } else {
+        paintChunks(16, 'verified'); resSpeed.textContent = '100% · 校验通过';
+        resHash.innerHTML = 'BLAKE3 <b class="ok">✓ 9f2c…e41a</b>'; resReceipt.innerHTML = 'RECEIPT <b class="ok">0x4444 已落盘</b>';
+      }
+    }, 520);
+  }
+
+  /* ---------- Optical Transport Console ---------- */
+  const ROUTES = {
+    lan: {
+      tel: 'QUIC DIRECT · END-TO-END ENCRYPTED',
+      steps: [
+        ['01', '签发一次性票据', '服务端确认双方在线，签发 10 分钟有效的一次性传输令牌。'],
+        ['02', '局域网 QUIC 直连', '设备间直接建立端到端加密通道，文件不经过你的服务器。'],
+        ['03', 'BLAKE3 落盘确认', '收完做整文件校验，原子替换落盘并回传 0x4444 送达回执。'],
+      ],
+    },
+    wan: {
+      tel: 'ENCRYPTED RELAY → 6s HOLE PUNCH',
+      steps: [
+        ['01', '加密中继立即起跑', '跨 NAT 时先经中继建链，传输秒开，中继仅能看到密文。'],
+        ['02', '并发 NAT 打洞探测', '传输同时后台穿透；6 秒后仍在中继则自动重探直连。'],
+        ['03', '无感升级为直连', '打洞成功后同一连接直接切到 P2P 直连，进度零中断。'],
+      ],
+    },
+    cloud: {
+      tel: 'ZERO SIDECAR · PRESIGNED DIRECT URL',
+      steps: [
+        ['01', '入屉即写入云盘', '符合策略的文件放入抽屉时已由服务端原生写入你的云盘。'],
+        ['02', '预签名直链取回', '来源设备离线时改走云端；S3 / R2 直链不占服务器带宽。'],
+        ['03', '原子替换保护原文件', '先写入同卷临时文件，校验完整后再安全覆盖目标路径。'],
+      ],
+    },
+  };
+  const stepsEl = $('#steps'), pulseDot = $('#pulse'), routeTel = $('#route-telemetry');
+  let pulseAnim = null;
+  function showRoute(key) {
+    document.querySelectorAll('[data-route]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.route === key)));
+    ['lan', 'wan', 'cloud'].forEach((k) => $('#p-' + k).classList.toggle('on', k === key));
+    routeTel.textContent = ROUTES[key].tel;
+    stepsEl.innerHTML = ROUTES[key].steps.map(([n, t, d], i) => `<div class="cstep" style="animation-delay:${i * 55}ms"><span>${n}</span><b>${t}</b><p>${d}</p></div>`).join('');
+    pulseAnim?.cancel?.();
+    const path = $('#p-' + key);
+    if (reduce || !path.getTotalLength) return;
+    const len = path.getTotalLength();
+    const frames = Array.from({ length: 41 }, (_, i) => { const pt = path.getPointAtLength((len * i) / 40); return { transform: `translate(${pt.x}px, ${pt.y}px)`, opacity: i === 0 || i === 40 ? 0 : 1 }; });
+    pulseAnim = pulseDot.animate(frames, { duration: key === 'lan' ? 1350 : 2000, iterations: Infinity });
+  }
+  document.querySelectorAll('[data-route]').forEach((b) => b.addEventListener('click', () => showRoute(b.dataset.route)));
+  showRoute('lan');
+
+  /* ---------- Smart Policy Simulator ---------- */
+  const sizeInput = $('#size'), sizeOut = $('#size-out');
+  let activePolicy = 'smart';
+  const toMb = (v) => 0.1 * Math.pow(40960, v / 100);
+  function setPill(id, yes, note) {
+    const el = $('#' + id);
+    el.classList.toggle('yes', yes);
+    $('#' + id + '-n').textContent = note;
+  }
+  function updatePolicy() {
+    const val = +sizeInput.value; sizeInput.style.setProperty('--pct', val + '%');
+    const mb = toMb(val); sizeOut.textContent = fmt(mb); sizeInput.setAttribute('aria-valuetext', fmt(mb));
+    const small = mb <= THRESHOLD;
+    if (activePolicy === 'smart') {
+      setPill('op-p2p', true, '优先直连');
+      setPill('op-cloud', small, small ? '≤ 20 MB 上传' : '超过阈值跳过');
+      setPill('op-off', small, small ? '合盖仍可取' : '需来源在线');
+    } else if (activePolicy === 'p2p') {
+      setPill('op-p2p', true, '始终直连');
+      setPill('op-cloud', false, '绝不上传');
+      setPill('op-off', false, '需来源在线');
+    } else {
+      setPill('op-p2p', false, '跳过做种');
+      setPill('op-cloud', true, '入屉上传');
+      setPill('op-off', true, '随时下载');
+    }
+  }
+  document.querySelectorAll('[data-policy]').forEach((b) => b.addEventListener('click', () => {
+    activePolicy = b.dataset.policy;
+    document.querySelectorAll('[data-policy]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    updatePolicy();
+  }));
+  sizeInput.addEventListener('input', updatePolicy); updatePolicy();
+
+  /* ---------- Self-host Terminal ---------- */
+  const TERM_SNIPPETS = {
+    docker: {
+      html: `<span class="t-p">$ </span>git clone https://github.com/StackTao/DropDrawer.git\n<span class="t-p">$ </span>cd DropDrawer\n<span class="t-p">$ </span>cp -n .env.example .env\n<span class="t-p">$ </span>docker compose --env-file .env -f deploy/docker-compose.yml up -d --build\n\n<span class="t-p">$ </span>curl -fsS http://localhost:8080/health\n<span class="t-ok">{"status":"ok","service":"dropdrawer-server"}</span>`,
+      raw: `git clone https://github.com/StackTao/DropDrawer.git\ncd DropDrawer\ncp -n .env.example .env\ndocker compose --env-file .env -f deploy/docker-compose.yml up -d --build\ncurl -fsS http://localhost:8080/health`,
+    },
+    cargo: {
+      html: `<span class="t-p">$ </span>git clone https://github.com/StackTao/DropDrawer.git\n<span class="t-p">$ </span>cd DropDrawer\n<span class="t-p">$ </span>cargo run --release --bin dropdrawer-server\n<span class="t-ok">dropdrawer-server listening on 0.0.0.0:8080</span>`,
+      raw: `git clone https://github.com/StackTao/DropDrawer.git\ncd DropDrawer\ncargo run --release --bin dropdrawer-server`,
+    },
+  };
+  let activeTerm = 'docker';
+  const cmdEl = $('#cmd'), copyBtn = $('#copy');
+  function renderTerm(key) { activeTerm = key; document.querySelectorAll('[data-term]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.term === key))); cmdEl.innerHTML = TERM_SNIPPETS[key].html; }
+  document.querySelectorAll('[data-term]').forEach((b) => b.addEventListener('click', () => renderTerm(b.dataset.term)));
+  renderTerm('docker');
+  copyBtn.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(TERM_SNIPPETS[activeTerm].raw); copyBtn.textContent = '已复制 ✓'; }
+    catch { copyBtn.textContent = '请手动复制'; }
+    setTimeout(() => { copyBtn.textContent = '复制命令'; }, 2000);
+  });
+})();
+</script>
+</body>
+</html>
