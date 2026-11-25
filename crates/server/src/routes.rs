@@ -39,6 +39,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 
     Router::new()
         .route("/health", get(health))
+        .route("/privacy", get(crate::google_login::privacy_notice))
         // Auth
         .route("/api/auth/register", post(register))
         .route("/api/auth/login", post(login))

@@ -141,6 +141,10 @@ pub(crate) struct CallbackQuery {
     error: Option<String>,
 }
 
+pub(crate) async fn privacy_notice() -> &'static str {
+    include_str!("google_privacy.txt")
+}
+
 pub(crate) async fn start(State(state): State<Arc<AppState>>) -> Result<Response, LoginError> {
     let google = state.google_login.as_ref().ok_or(UNAVAILABLE)?;
     let proof = Proof {

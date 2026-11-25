@@ -6,8 +6,9 @@ DropDrawer opens the system browser for Google authorization and signs in automa
 
 1. In [Google Auth Platform](https://console.cloud.google.com/auth/overview), configure the app name, support email and audience. Request only the `openid` and `email` scopes for sign-in. If the app is in testing, add the Google accounts allowed to sign in.
 2. Create an OAuth client of type **Web application**. Add the exact public redirect URI under **Authorized redirect URIs**, for example `https://drop.example.com/api/auth/google/callback`. The server must be accessible to the system browser. Use HTTPS for a public server. Google also accepts localhost HTTP for local testing.
-3. Set all three Google variables in the server's private `.env`. Use [.env.example](../.env.example) as the template. Use the OAuth client ID, its client secret, and the exact authorized redirect URI.
-4. Restart the server and select **使用 Google 登录** on the updated DropDrawer login screen. Complete the Google prompt in the browser, then return to the app.
+3. For public sign-in, set the app privacy policy URL to your server’s `/privacy` page under **Branding**. Add your domain under **Authorized domains**.
+4. Set all three Google variables in the server's private `.env`. Use [.env.example](../.env.example) as the template. Use the OAuth client ID, its client secret, and the exact authorized redirect URI.
+5. Restart the server and select **使用 Google 登录** on the updated DropDrawer login screen. Complete the Google prompt in the browser, then return to the app.
 
 The Google Drive storage setup has its own OAuth client and callback. Existing Google users can still sign in when `DROPDRAWER_ALLOW_REGISTRATION=false`. First-time Google sign-ins follow the same registration policy as password accounts.
 

@@ -89,6 +89,18 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  Future<void> _openPrivacyNotice() async {
+    final base = _serverCtrl.text.trim().replaceFirst(RegExp(r'/+$'), '');
+    final uri = Uri.tryParse('$base/privacy');
+    if (uri != null &&
+        (uri.scheme == 'https' || uri.scheme == 'http') &&
+        uri.host.isNotEmpty &&
+        await widget.controller.windowService.openExternalUrl(uri.toString())) {
+      return;
+    }
+    if (mounted) setState(() => _error = '请先填写有效的服务器地址。');
+  }
+
   @override
   Widget build(BuildContext context) {
     final isMobile = widget.controller.windowService.isMobile;
@@ -241,6 +253,17 @@ class _LoginScreenState extends State<LoginScreen> {
                       child: OutlinedButton(
                         onPressed: _loading ? null : _signInWithGoogle,
                         child: const Text('使用 Google 登录'),
+                      ),
+                    ),
+                  if (!_loading)
+                    TextButton(
+                      onPressed: _openPrivacyNotice,
+                      child: const Text(
+                        '隐私说明',
+                        style: TextStyle(
+                          color: MacPalette.textSecondary,
+                          fontSize: 11.5,
+                        ),
                       ),
                     ),
                   const SizedBox(height: 12),
