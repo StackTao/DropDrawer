@@ -51,6 +51,7 @@ class MainFlutterWindow: NSWindow {
   private var dockSide: DockSide = .right
   private var dockYRatio: CGFloat = 0.5
   private var handleTrackingDown: Bool = false
+  private var expandedDragOffset: NSPoint?
   private var isAnimating: Bool = false
   private var isPinned: Bool = false
   private var isModalOpen: Bool = false
@@ -331,7 +332,8 @@ class MainFlutterWindow: NSWindow {
       matching: [.leftMouseDown, .rightMouseDown]
     ) { [weak self] _ in
       guard let self = self else { return }
-      guard self.isEdgeMode, self.mode == .expanded, !self.isPinned, !self.isAnimating else { return }
+      guard self.isEdgeMode, self.mode == .expanded, !self.isPinned, !self.isAnimating,
+            self.expandedDragOffset == nil else { return }
       if self.isModalOpen || self.hasBlockingModalPanel() { return }
 
       let mouse = NSEvent.mouseLocation
@@ -379,6 +381,11 @@ class MainFlutterWindow: NSWindow {
         self.isPinned = false
         self.openedByDrag = false
         self.transitionTo(.collapsed, animated: true, restoreFocus: true)
+        result(true)
+      case "dragExpandedDrawer":
+        if let phase = call.arguments as? String {
+          self.dragExpandedDrawer(phase)
+        }
         result(true)
       case "setPinned":
         let pinned = (call.arguments as? [String: Any])?["pinned"] as? Bool ?? false
@@ -522,6 +529,34 @@ class MainFlutterWindow: NSWindow {
     return NSScreen.screens.first ?? NSScreen.main!
   }
 
+  private func dragExpandedDrawer(_ phase: String) {
+    guard isEdgeMode, mode == .expanded, !isAnimating, !isModalOpen else {
+      expandedDragOffset = nil
+      return
+    }
+    let mouse = NSEvent.mouseLocation
+    if phase == "start" {
+      expandedDragOffset = NSPoint(x: mouse.x - frame.minX, y: mouse.y - frame.minY)
+      openedByDrag = false
+      return
+    }
+    guard let offset = expandedDragOffset else { return }
+    if phase == "update" || phase == "end" {
+      let area = activeScreen().visibleFrame
+      let x = min(max(mouse.x - offset.x, area.minX), max(area.minX, area.maxX - frame.width))
+      let y = min(max(mouse.y - offset.y, area.minY), area.maxY - frame.height)
+      setFrameOrigin(NSPoint(x: x, y: y))
+    }
+    if phase == "end" {
+      expandedDragOffset = nil
+      let area = (screen ?? activeScreen()).visibleFrame
+      dockSide = frame.midX < area.midX ? .left : .right
+      dockYRatio = min(max((frame.midY - area.minY) / area.height, 0.06), 0.94)
+      saveDockPreferences()
+      notifyDrawerState()
+    }
+  }
+
   private func clampedOriginY(height: CGFloat, margin: CGFloat, in screen: NSRect) -> CGFloat {
     let desired = screen.minY + (screen.height * dockYRatio) - (height / 2.0)
     let minY = screen.minY + margin
@@ -591,6 +626,7 @@ class MainFlutterWindow: NSWindow {
   }
 
   func applyEdgeDrawerMode(enabled: Bool) {
+    expandedDragOffset = nil
     isEdgeMode = enabled
     isAnimating = false
     openedByDrag = false
@@ -761,6 +797,7 @@ class MainFlutterWindow: NSWindow {
     guard isEdgeMode else { return }
     if mode == target { return }
 
+    expandedDragOffset = nil
     let previous = mode
     let screen = activeScreen().visibleFrame
     let targetFrame = frameFor(target, on: screen)
@@ -1559,7 +1596,7 @@ class MainFlutterWindow: NSWindow {
   }
 
   private func tickDragMonitor() {
-    guard isEdgeMode, !isAnimating, !handleTrackingDown else { return }
+    guard isEdgeMode, !isAnimating, !handleTrackingDown, expandedDragOffset == nil else { return }
     if isModalOpen || hasBlockingModalPanel() { return }
 
     let screen = activeScreen().visibleFrame

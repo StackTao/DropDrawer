@@ -199,6 +199,11 @@ void DrawerWindow::HandleCall(const flutter::MethodCall<Value>& call,
     SetMode(Mode::kCollapsed);
   } else if (method == "showDragGuide") {
     if (edge_ && mode_ == Mode::kCollapsed) SetMode(Mode::kDragGuide);
+  } else if (method == "dragExpandedDrawer") {
+    if (call.arguments()) {
+      const auto* phase = std::get_if<std::string>(call.arguments());
+      if (phase) DragExpandedDrawer(*phase);
+    }
   } else if (method == "moveDrawerHandle") {
     MoveHandle(Arg<bool>(args, "save"));
   } else if (method == "setPinned") {
@@ -271,6 +276,7 @@ void DrawerWindow::SetEdgeMode(bool enabled) {
     if (IsZoomed(window_) || IsIconic(window_)) ShowWindow(window_, SW_RESTORE);
     GetWindowRect(window_, &regular_bounds_);
   }
+  expanded_drag_offset_.reset();
   const bool start_collapsed = background_ && enabled;
   if (enabled) background_ = false;
   edge_ = enabled;
@@ -307,6 +313,7 @@ void DrawerWindow::SetMode(Mode mode, bool activate) {
     return;
   }
   if (mode_ != mode) {
+    expanded_drag_offset_.reset();
     mode_ = mode;
     drag_guide_timeout_ = 0;
     if (mode != Mode::kDragGuide) guide_from_ole_drag_ = false;
@@ -350,12 +357,59 @@ void DrawerWindow::PlaceDrawer() {
   SetWindowLongPtrW(window_, GWL_EXSTYLE, style);
   SetWindowPos(window_, HWND_TOPMOST, left, top, width, height,
                SWP_NOACTIVATE | SWP_FRAMECHANGED);
+  UpdateDrawerRegion(width, height, dpi);
+}
+
+void DrawerWindow::UpdateDrawerRegion(LONG width, LONG height, int dpi) {
   // CreateRoundRectRgn takes ellipse width/height (2 * corner radius).
   const int diameter = MulDiv(
       mode_ == Mode::kExpanded ? 32 : mode_ == Mode::kDragGuide ? 26 : 12,
       dpi, 96);
   HRGN region = CreateRoundRectRgn(0, 0, width + 1, height + 1, diameter, diameter);
   if (region && !SetWindowRgn(window_, region, TRUE)) DeleteObject(region);
+}
+
+void DrawerWindow::DragExpandedDrawer(const std::string& phase) {
+  if (!edge_ || mode_ != Mode::kExpanded || modal_open_) {
+    expanded_drag_offset_.reset();
+    return;
+  }
+  POINT cursor{};
+  RECT bounds{};
+  if (!GetCursorPos(&cursor) || !GetWindowRect(window_, &bounds)) {
+    expanded_drag_offset_.reset();
+    return;
+  }
+  if (phase == "start") {
+    expanded_drag_offset_ = POINT{cursor.x - bounds.left, cursor.y - bounds.top};
+    opened_by_drag_ = false;
+    return;
+  }
+  if (!expanded_drag_offset_) return;
+  if (phase == "update" || phase == "end") {
+    const RECT area = WorkArea(MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST));
+    const LONG width = bounds.right - bounds.left;
+    const LONG height = bounds.bottom - bounds.top;
+    const LONG x = std::clamp(cursor.x - expanded_drag_offset_->x, area.left,
+                              std::max(area.left, area.right - width));
+    const LONG y = std::clamp(cursor.y - expanded_drag_offset_->y, area.top,
+                              std::max(area.top, area.bottom - height));
+    SetWindowPos(window_, nullptr, x, y, 0, 0,
+                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+  }
+  if (phase == "end") {
+    expanded_drag_offset_.reset();
+    const RECT area = WorkArea(MonitorFromWindow(window_, MONITOR_DEFAULTTONEAREST));
+    if (!GetWindowRect(window_, &bounds) || area.bottom <= area.top) return;
+    const LONG center_x = bounds.left + (bounds.right - bounds.left) / 2;
+    const LONG center_y = bounds.top + (bounds.bottom - bounds.top) / 2;
+    dock_left_ = center_x < area.left + (area.right - area.left) / 2;
+    const int ratio = MulDiv(center_y - area.top, 1000, area.bottom - area.top);
+    anchor_ = static_cast<DWORD>(std::clamp(ratio, 0, 1000));
+    SavePreference(L"DrawerAnchor", anchor_);
+    SavePreference(L"DockLeft", dock_left_);
+    NotifyState();
+  }
 }
 
 void DrawerWindow::MoveHandle(bool save) {
@@ -422,7 +476,7 @@ void DrawerWindow::Toggle() {
 }
 
 void DrawerWindow::OnTimer() {
-  if (modal_open_) return;
+  if (modal_open_ || expanded_drag_offset_) return;
   POINT cursor{};
   RECT bounds{};
   if (!GetCursorPos(&cursor) || !GetWindowRect(window_, &bounds)) return;
@@ -661,7 +715,7 @@ std::optional<LRESULT> DrawerWindow::HandleMessage(UINT message, WPARAM wparam,
       }
       if (LOWORD(wparam) == WA_INACTIVE && edge_ &&
           mode_ == Mode::kExpanded && !pinned_ && !opened_by_drag_ && !modal_open_ &&
-          !IsOleDragActive()) {
+          !expanded_drag_offset_ && !IsOleDragActive()) {
         POINT cursor{};
         RECT bounds{};
         if (GetCursorPos(&cursor) && GetWindowRect(window_, &bounds) &&
@@ -672,11 +726,21 @@ std::optional<LRESULT> DrawerWindow::HandleMessage(UINT message, WPARAM wparam,
       }
       break;
     case kOutsideClickMessage:
-      if (!pinned_ && !modal_open_ && !IsOleDragActive() && GetForegroundWindow() != window_) {
+      if (!pinned_ && !modal_open_ && !expanded_drag_offset_ &&
+          !IsOleDragActive() && GetForegroundWindow() != window_) {
         SetMode(Mode::kCollapsed);
       }
       return 0;
     case WM_DPICHANGED:
+      if (expanded_drag_offset_) {
+        const auto* suggested = reinterpret_cast<const RECT*>(lparam);
+        const LONG width = suggested->right - suggested->left;
+        const LONG height = suggested->bottom - suggested->top;
+        SetWindowPos(window_, nullptr, suggested->left, suggested->top, width,
+                     height, SWP_NOZORDER | SWP_NOACTIVATE);
+        UpdateDrawerRegion(width, height, static_cast<int>(LOWORD(wparam)));
+        return 0;
+      }
       if (edge_) {
         PlaceDrawer();
         return 0;

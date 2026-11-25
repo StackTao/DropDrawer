@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+enum DrawerDragPhase { start, update, end }
+
 class DrawerWindowService {
   static const _channel = MethodChannel('com.dropdrawer/drawer_window');
 
@@ -27,6 +29,7 @@ class DrawerWindowService {
   void Function()? onPasteShortcut;
   bool _dragGuidePending = false;
   bool _handleMovePending = false;
+  bool _drawerDragUpdatePending = false;
 
   DrawerWindowService() {
     if (supportsEdgeDrawer) {
@@ -77,6 +80,21 @@ class DrawerWindowService {
       await _channel.invokeMethod('moveDrawerHandle', {'save': save});
     } finally {
       _handleMovePending = false;
+    }
+  }
+
+  Future<void> dragExpandedDrawer(DrawerDragPhase phase) async {
+    if (!supportsEdgeDrawer) return;
+    if (phase != DrawerDragPhase.update) {
+      await _channel.invokeMethod('dragExpandedDrawer', phase.name);
+      return;
+    }
+    if (_drawerDragUpdatePending) return;
+    _drawerDragUpdatePending = true;
+    try {
+      await _channel.invokeMethod('dragExpandedDrawer', phase.name);
+    } finally {
+      _drawerDragUpdatePending = false;
     }
   }
 

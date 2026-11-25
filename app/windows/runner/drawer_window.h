@@ -33,6 +33,8 @@ class DrawerWindow {
   void SetMode(Mode mode, bool activate = false);
   void SetDockLeft(bool left);
   void PlaceDrawer();
+  void UpdateDrawerRegion(LONG width, LONG height, int dpi);
+  void DragExpandedDrawer(const std::string& phase);
   void MoveHandle(bool save);
   void Toggle();
   void Hide();
@@ -50,6 +52,7 @@ class DrawerWindow {
   flutter::MethodChannel<flutter::EncodableValue> channel_;
   std::unique_ptr<Result> recording_;
   RECT regular_bounds_{};
+  std::optional<POINT> expanded_drag_offset_;
   LONG_PTR regular_style_;
   LONG_PTR regular_ex_style_;
   HWND previous_window_ = nullptr;

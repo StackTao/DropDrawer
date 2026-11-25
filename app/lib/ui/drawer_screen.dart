@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:super_drag_and_drop/super_drag_and_drop.dart';
 
 import '../models/models.dart';
+import '../services/drawer_window_service.dart';
 import '../state/drawer_controller.dart';
 import 'item_preview_view.dart';
 import 'preferences_view.dart';
@@ -225,11 +226,52 @@ class _DrawerScreenState extends State<DrawerScreen> {
             ),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(c.windowService.edgeMode ? 16 : 0),
-              child: _buildActivePage(context, c),
+              child: Column(
+                children: [
+                  if (c.windowService.edgeMode &&
+                      c.windowService.supportsEdgeDrawer)
+                    _buildDrawerDragGrip(c.windowService),
+                  Expanded(child: _buildActivePage(context, c)),
+                ],
+              ),
             ),
           ),
         );
       },
+    );
+  }
+
+  Widget _buildDrawerDragGrip(DrawerWindowService window) {
+    return SizedBox(
+      width: double.infinity,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.grab,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onPanStart: (_) =>
+              unawaited(window.dragExpandedDrawer(DrawerDragPhase.start)),
+          onPanUpdate: (_) =>
+              unawaited(window.dragExpandedDrawer(DrawerDragPhase.update)),
+          onPanEnd: (_) =>
+              unawaited(window.dragExpandedDrawer(DrawerDragPhase.end)),
+          child: Tooltip(
+            message: '拖动抽屉',
+            child: SizedBox(
+              height: 20,
+              child: Center(
+                child: Container(
+                  width: 30,
+                  height: 3,
+                  decoration: BoxDecoration(
+                    color: MacPalette.textTertiary,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
