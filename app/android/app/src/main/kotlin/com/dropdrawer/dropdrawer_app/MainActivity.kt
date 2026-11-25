@@ -14,8 +14,10 @@ import android.os.Environment
 import android.os.ext.SdkExtensions
 import android.provider.MediaStore
 import android.provider.OpenableColumns
+import android.provider.Settings
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
+import androidx.core.content.pm.PackageInfoCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
@@ -87,6 +89,10 @@ class MainActivity : FlutterActivity() {
             "openExternalUrl" -> {
                 val url = call.argument<String>("url") ?: ""
                 result.success(openExternalUrl(url))
+            }
+            "openUpdatePackage" -> {
+                val path = call.argument<String>("path") ?: ""
+                result.success(openUpdatePackage(path))
             }
             "readClipboard" -> {
                 val imagePath = call.argument<String>("imagePath") ?: ""
@@ -425,6 +431,39 @@ class MainActivity : FlutterActivity() {
             true
         } catch (_: Exception) {
             false
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun openUpdatePackage(path: String): String {
+        return try {
+            val root = File(cacheDir, "dropdrawer-updates").canonicalFile
+            val apk = File(path).canonicalFile
+            if (!apk.path.startsWith(root.path + File.separator) || !apk.isFile || apk.extension != "apk") {
+                return "unavailable"
+            }
+            val update = packageManager.getPackageArchiveInfo(apk.path, 0) ?: return "unavailable"
+            if (update.packageName != packageName) return "unavailable"
+            val installed = packageManager.getPackageInfo(packageName, 0)
+            if (PackageInfoCompat.getLongVersionCode(update) <= PackageInfoCompat.getLongVersionCode(installed)) {
+                return "incompatible_version"
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                !packageManager.canRequestPackageInstalls()
+            ) {
+                startActivity(
+                    Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName"))
+                )
+                return "permission_required"
+            }
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", apk)
+            startActivity(Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            })
+            "opened"
+        } catch (_: Exception) {
+            "unavailable"
         }
     }
 

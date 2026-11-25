@@ -97,6 +97,8 @@ The iPhone drawer offers quick access to files, photos, and the clipboard. Synce
 | Android | Download the `DropDrawer-Android-APK` artifact from a successful [Android APK](https://github.com/StackTao/DropDrawer/actions/workflows/android-apk.yml) run. Unzip it and install the appropriate APK. |
 | iOS | [Build from source](#build-from-source) on macOS with Flutter and Xcode. Installing on a physical device requires code signing. |
 
+Open **Settings → Software Update** to check for updates within DropDrawer. See the [app update guide](docs/APP_UPDATES.md) for platform availability and release packaging.
+
 Windows and Android build artifacts are kept for 30 days. Repository members with the required permissions can run the workflows manually to generate fresh installers.
 
 ### Your first transfer

@@ -531,11 +531,18 @@ class MainFlutterWindow: NSWindow {
       case "openExternalUrl":
         if let urlStr = (call.arguments as? [String: Any])?["url"] as? String,
            let url = URL(string: urlStr) {
-          NSWorkspace.shared.open(url)
-          result(true)
+          result(NSWorkspace.shared.open(url))
         } else {
           result(false)
         }
+      case "openUpdatePackage":
+        guard let path = (call.arguments as? [String: Any])?["path"] as? String,
+              path.hasSuffix(".dmg"),
+              FileManager.default.fileExists(atPath: path) else {
+          result("unavailable")
+          return
+        }
+        result(NSWorkspace.shared.open(URL(fileURLWithPath: path)) ? "opened" : "unavailable")
       default:
         result(FlutterMethodNotImplemented)
       }

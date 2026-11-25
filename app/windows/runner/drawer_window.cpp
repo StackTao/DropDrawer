@@ -311,6 +311,10 @@ void DrawerWindow::HandleCall(const flutter::MethodCall<Value>& call,
     return result->Success(Value(drawer_files::OpenDirectory(window_, Arg<std::string>(args, "path"))));
   } else if (method == "openExternalUrl") {
     return result->Success(Value(drawer_files::OpenWebUrl(window_, Arg<std::string>(args, "url"))));
+  } else if (method == "openUpdatePackage") {
+    const bool opened = drawer_files::OpenUpdatePackage(
+        window_, Arg<std::string>(args, "path"));
+    return result->Success(Value(std::string(opened ? "opened" : "unavailable")));
   } else {
     return result->NotImplemented();
   }

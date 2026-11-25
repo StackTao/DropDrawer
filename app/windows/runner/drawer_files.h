@@ -13,6 +13,7 @@ bool CopyFiles(HWND window, const flutter::EncodableList& paths);
 bool RevealFile(const std::string& path);
 bool OpenDirectory(HWND window, const std::string& path);
 bool OpenWebUrl(HWND window, const std::string& url);
+bool OpenUpdatePackage(HWND window, const std::string& path);
 
 }  // namespace drawer_files
 

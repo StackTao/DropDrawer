@@ -11,6 +11,8 @@ import 'package:path_provider/path_provider.dart';
 
 enum DrawerDragPhase { start, update, end }
 
+enum UpdatePackageOpenResult { opened, permissionRequired, incompatibleVersion, unavailable }
+
 class DrawerWindowService {
   static const _channel = MethodChannel('com.dropdrawer/drawer_window');
   static const _mobileChannel = MethodChannel('com.dropdrawer/mobile');
@@ -358,6 +360,23 @@ class DrawerWindowService {
     if (!supportsEdgeDrawer) return false;
     final ok = await _channel.invokeMethod<bool>('openExternalUrl', {'url': url});
     return ok ?? false;
+  }
+
+  Future<UpdatePackageOpenResult> openUpdatePackage(String path) async {
+    if (!isAndroid && !supportsEdgeDrawer) {
+      return UpdatePackageOpenResult.unavailable;
+    }
+    final channel = isAndroid ? _mobileChannel : _channel;
+    final result = await channel.invokeMethod<String>(
+      'openUpdatePackage',
+      {'path': path},
+    );
+    return switch (result) {
+      'opened' => UpdatePackageOpenResult.opened,
+      'permission_required' => UpdatePackageOpenResult.permissionRequired,
+      'incompatible_version' => UpdatePackageOpenResult.incompatibleVersion,
+      _ => UpdatePackageOpenResult.unavailable,
+    };
   }
 
   Future<String?> pickDirectoryNative() async {

@@ -24,7 +24,8 @@ if [[ -n "$SNE_MANIFEST" ]]; then
     cargo build --manifest-path "$SNE_MANIFEST" -p super_native_extensions --release \
     --target aarch64-apple-darwin --target-dir "$SNE_TARGET_DIR"
 fi
-(cd "$ROOT_DIR/app" && flutter analyze && CARGO_PROFILE_RELEASE_LTO=false CARGO_PROFILE_RELEASE_PANIC=unwind flutter build macos --release)
+(cd "$ROOT_DIR/app" && flutter analyze && CARGO_PROFILE_RELEASE_LTO=false CARGO_PROFILE_RELEASE_PANIC=unwind flutter build macos --release \
+  "--dart-define=DROPDRAWER_RELEASE_TAG=${DROPDRAWER_RELEASE_TAG:-}")
 
 RAW_APP="$ROOT_DIR/app/build/macos/Build/Products/Release/dropdrawer_app.app"
 DIST_DIR="$ROOT_DIR/dist"

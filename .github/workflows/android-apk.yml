@@ -2,6 +2,11 @@ name: Android APK
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to embed in the app (requires distribution signing)"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -57,8 +62,27 @@ jobs:
           nm -D app/android/app/src/main/jniLibs/arm64-v8a/libdropdrawer_p2p.so | grep -q dropdrawer_p2p_start
           nm -D app/android/app/src/main/jniLibs/arm64-v8a/libdropdrawer_p2p.so | grep -q dropdrawer_p2p_cancel_transfer
 
+      - name: Prepare distribution signing
+        if: inputs.release_tag != ''
+        env:
+          KEYSTORE_BASE64: ${{ secrets.DROPDRAWER_ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::Configure the Android release keystore before building a tagged APK."
+            exit 1
+          fi
+          umask 077
+          keystore="$RUNNER_TEMP/dropdrawer-release.keystore"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          printf 'DROPDRAWER_ANDROID_KEYSTORE=%s\n' "$keystore" >> "$GITHUB_ENV"
+
       - name: Analyze, test, and build Android Release APK
         working-directory: app
+        env:
+          DROPDRAWER_RELEASE_TAG: ${{ inputs.release_tag }}
+          DROPDRAWER_ANDROID_STORE_PASSWORD: ${{ inputs.release_tag != '' && secrets.DROPDRAWER_ANDROID_STORE_PASSWORD || '' }}
+          DROPDRAWER_ANDROID_KEY_ALIAS: ${{ inputs.release_tag != '' && secrets.DROPDRAWER_ANDROID_KEY_ALIAS || '' }}
+          DROPDRAWER_ANDROID_KEY_PASSWORD: ${{ inputs.release_tag != '' && secrets.DROPDRAWER_ANDROID_KEY_PASSWORD || '' }}
         run: |
           flutter pub get --enforce-lockfile
 
@@ -105,12 +129,17 @@ jobs:
 
           flutter analyze --no-pub
           flutter test --no-pub
-          flutter build apk --release --no-pub --target-platform android-arm64,android-arm --split-per-abi
-          flutter build apk --release --no-pub --target-platform android-arm64,android-arm
+          release_define="--dart-define=DROPDRAWER_RELEASE_TAG=$DROPDRAWER_RELEASE_TAG"
+          flutter build apk --release --no-pub "$release_define" --target-platform android-arm64,android-arm --split-per-abi
+          flutter build apk --release --no-pub "$release_define" --target-platform android-arm64,android-arm
           mkdir -p ../dist
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk ../dist/DropDrawer-Android-arm64.apk
           cp build/app/outputs/flutter-apk/app-release.apk ../dist/DropDrawer-Android-universal.apk
           ls -lh ../dist/*.apk
+
+      - name: Remove distribution signing file
+        if: always() && inputs.release_tag != ''
+        run: rm -f "$RUNNER_TEMP/dropdrawer-release.keystore"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

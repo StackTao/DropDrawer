@@ -3,6 +3,10 @@ name: Windows installer
 on:
   workflow_dispatch:
     inputs:
+      release_tag:
+        description: "Optional release tag to embed in the app"
+        type: string
+        required: false
       previous_run:
         description: "Optional Windows installer run to upgrade from in the smoke test"
         required: false
@@ -43,12 +47,14 @@ jobs:
 
       - name: Build Flutter app
         working-directory: app
+        env:
+          DROPDRAWER_RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           $env:PUB_CACHE = Join-Path $env:RUNNER_TEMP 'pub-cache'
           flutter pub get --enforce-lockfile
           flutter test --no-pub
-          flutter build windows --release --no-pub
+          flutter build windows --release --no-pub "--dart-define=DROPDRAWER_RELEASE_TAG=$env:DROPDRAWER_RELEASE_TAG"
 
       - name: Build native P2P library
         run: |

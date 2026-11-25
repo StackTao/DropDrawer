@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../state/drawer_controller.dart';
 import 'theme.dart';
+import 'update_settings.dart';
 
 /// macOS System-Settings style in-drawer Preferences view.
 class PreferencesView extends StatefulWidget {
@@ -148,6 +149,10 @@ class _PreferencesViewState extends State<PreferencesView> {
           child: ListView(
             padding: const EdgeInsets.all(14),
             children: [
+              const _SectionLabel('软件更新'),
+              const SizedBox(height: 6),
+              _GroupBox(children: [UpdateSettings(windowService: c.windowService)]),
+              const SizedBox(height: 16),
               const _SectionLabel('传输与自动清理'),
               const SizedBox(height: 6),
               _GroupBox(
