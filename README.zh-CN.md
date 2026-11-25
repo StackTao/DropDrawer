@@ -21,6 +21,7 @@
 </p>
 
 <p align="center">
+  <a href="#操作演示">操作演示</a> ·
   <a href="#安装客户端">安装客户端</a> ·
   <a href="#自托管服务端">自托管服务端</a> ·
   <a href="docs/ARCHITECTURE.md">架构文档</a> ·
@@ -28,11 +29,52 @@
   <a href="LICENSE">MIT License</a>
 </p>
 
+DropDrawer 是一款可自托管的跨平台文件传输与暂存工具。桌面端在屏幕边缘提供随时可打开的抽屉，手机端也能收取和发送文件、图片与文本。设备在线时优先尝试 P2P 直连，已缓存的文件可以通过云盘中转离线取用。需要发给其他人时，可生成浏览器下载链接。
+
+## 操作演示
+
+**拖入并上传.** 从 Finder 拖着文件靠近屏幕边缘，抽屉展开后，在高亮区域松手。开启云端缓存时，上传完成的文件可在其他设备取用。
+
+![从 Finder 拖动文件，打开贴边抽屉，松手后上传](docs/images/macos-drag-upload.gif)
+
+**在另一台设备取走.** 登录同一账号，点击同步文件旁的下载按钮。动图中可以看到文件出现在接收设备的 Finder 文件夹里。
+
+![接收端从 DropDrawer 下载已同步的文件，文件出现在 Finder 中](docs/images/macos-receive-download.gif)
+
+<details>
+<summary>展开查看桌面操作截图</summary>
+
+1. 拖动文件时，屏幕边缘出现引导条。
+
+   ![拖动文件时，屏幕边缘出现引导条。](docs/images/macos-drag-hint.png)
+
+2. 抽屉展开，高亮区域提示松手位置。
+
+   ![抽屉展开，高亮区域提示松手位置。](docs/images/macos-drop-target.png)
+
+3. 上传完成后，新文件出现在抽屉列表。
+
+   ![上传完成后，新文件出现在抽屉列表。](docs/images/macos-upload-complete.png)
+
+4. 下载后，文件出现在接收端文件夹。
+
+   ![下载后，文件出现在接收端文件夹。](docs/images/macos-download-complete.png)
+
+**展开的桌面抽屉**
+
 <p align="center">
   <img src="docs/images/macos-drawer.png" alt="DropDrawer 的 macOS 贴边抽屉展开后显示同步的图片、PDF 和文本" width="368" />
 </p>
 
-DropDrawer 是一款可自托管的跨平台文件传输与暂存工具。桌面端在屏幕边缘提供随时可打开的抽屉，手机端也能收取和发送文件、图片与文本。设备在线时优先尝试 P2P 直连，已缓存的文件可以通过云盘中转离线取用。需要发给其他人时，可生成浏览器下载链接。
+</details>
+
+### iPhone 端
+
+可以快捷选取文件或相册图片，也可以从剪贴板粘贴。同步条目显示在下方，可直接下载或分享。
+
+<p align="center">
+  <img src="docs/images/ios-drawer.png" alt="DropDrawer 的 iPhone 抽屉，顶部是选文件、选相册和粘贴按钮，下方是同步条目" width="280" />
+</p>
 
 ## 主要功能
 

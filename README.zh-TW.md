@@ -21,6 +21,7 @@
 </p>
 
 <p align="center">
+  <a href="#操作示範">操作示範</a> ·
   <a href="#安裝用戶端">安裝用戶端</a> ·
   <a href="#自行架設伺服器">自行架設伺服器</a> ·
   <a href="docs/ARCHITECTURE.md">架構文件（簡體中文）</a> ·
@@ -28,11 +29,52 @@
   <a href="LICENSE">MIT License</a>
 </p>
 
+DropDrawer 是一款可自行架設的跨平台檔案傳輸與暫存工具。桌面版在螢幕邊緣提供隨時可開啟的抽屜，行動版也能收發檔案、相片和文字。兩台裝置都在線時，DropDrawer 會優先嘗試 P2P 直連。來源裝置離線時，仍可透過已設定的儲存空間下載快取檔案。你也可以建立分享連結，讓其他人透過瀏覽器下載。
+
+## 操作示範
+
+**拖入並上傳.** 從 Finder 將檔案拖到螢幕邊緣附近。抽屜展開後，在醒目提示區放開。啟用雲端快取時，上傳完成的檔案可在其他裝置取用。
+
+![從 Finder 拖曳檔案，展開貼邊抽屜並放開以上傳](docs/images/macos-drag-upload.gif)
+
+**在另一台裝置取出.** 登入同一個帳號，點選同步檔案旁的下載按鈕。動圖顯示檔案出現在接收裝置的 Finder 資料夾裡。
+
+![接收端從 DropDrawer 下載已同步的檔案，檔案出現在 Finder 中](docs/images/macos-receive-download.gif)
+
+<details>
+<summary>展開查看桌面操作截圖</summary>
+
+1. 拖曳檔案時，螢幕邊緣會出現提示。
+
+   ![拖曳檔案時，螢幕邊緣會出現提示。](docs/images/macos-drag-hint.png)
+
+2. 抽屜展開，醒目提示區顯示放開的位置。
+
+   ![抽屜展開，醒目提示區顯示放開的位置。](docs/images/macos-drop-target.png)
+
+3. 上傳完成後，新檔案會出現在抽屜清單。
+
+   ![上傳完成後，新檔案會出現在抽屜清單。](docs/images/macos-upload-complete.png)
+
+4. 下載後，檔案會出現在接收端的資料夾。
+
+   ![下載後，檔案會出現在接收端的資料夾。](docs/images/macos-download-complete.png)
+
+**展開的桌面抽屜**
+
 <p align="center">
   <img src="docs/images/macos-drawer.png" alt="DropDrawer 的 macOS 貼邊抽屜展開後顯示已同步的圖片、PDF 和文字" width="368" />
 </p>
 
-DropDrawer 是一款可自行架設的跨平台檔案傳輸與暫存工具。桌面版在螢幕邊緣提供隨時可開啟的抽屜，行動版也能收發檔案、相片和文字。兩台裝置都在線時，DropDrawer 會優先嘗試 P2P 直連。來源裝置離線時，仍可透過已設定的儲存空間下載快取檔案。你也可以建立分享連結，讓其他人透過瀏覽器下載。
+</details>
+
+### iPhone 版
+
+可快速選取檔案或相簿照片，也可以從剪貼簿貼上。同步項目顯示在下方，可直接下載或分享。
+
+<p align="center">
+  <img src="docs/images/ios-drawer.png" alt="DropDrawer 的 iPhone 抽屜，上方是選取檔案、相簿與貼上按鈕，下方是同步項目" width="280" />
+</p>
 
 ## 主要功能
 

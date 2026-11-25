@@ -21,6 +21,7 @@
 </p>
 
 <p align="center">
+  <a href="#see-dropdrawer-in-action">Demo</a> ·
   <a href="#install-the-client">Install</a> ·
   <a href="#self-host-the-server">Self-host</a> ·
   <a href="docs/ARCHITECTURE.md">Architecture (Chinese)</a> ·
@@ -28,11 +29,52 @@
   <a href="LICENSE">MIT License</a>
 </p>
 
+DropDrawer is a self-hostable, cross-platform app for transferring and temporarily storing files. The desktop app gives you a drawer at the edge of your screen, and the mobile app can send and receive files, photos, and text. When both devices are online, DropDrawer tries a direct peer-to-peer connection first. Cached files stay available through your configured storage even when the source device is offline. You can also create a download link that works in a browser.
+
+## See DropDrawer in action
+
+**Drag a file in.** Drag a file from Finder toward the screen edge. When the drawer opens, drop it in the highlighted area. With cloud caching enabled, the uploaded file becomes available to your other devices.
+
+![A Finder file is dragged to the screen edge, dropped into the drawer, and uploaded](docs/images/macos-drag-upload.gif)
+
+**Pick it up on another device.** Sign in with the same account and click the download button beside the synced file. The GIF shows the file appearing in the receiving device’s Finder folder.
+
+![The receiving DropDrawer client downloads the synced file and displays it in Finder](docs/images/macos-receive-download.gif)
+
+<details>
+<summary>Step-by-step desktop screenshots</summary>
+
+1. The edge hint appears as you drag a file.
+
+   ![The edge hint appears as you drag a file.](docs/images/macos-drag-hint.png)
+
+2. The expanded drawer shows where to drop it.
+
+   ![The expanded drawer shows where to drop it.](docs/images/macos-drop-target.png)
+
+3. The new file appears in the drawer after uploading.
+
+   ![The new file appears in the drawer after uploading.](docs/images/macos-upload-complete.png)
+
+4. The downloaded file appears in the receiving folder.
+
+   ![The downloaded file appears in the receiving folder.](docs/images/macos-download-complete.png)
+
+**Expanded desktop drawer**
+
 <p align="center">
   <img src="docs/images/macos-drawer.png" alt="DropDrawer’s expanded macOS edge drawer showing a synced image, PDF, and text snippet" width="368" />
 </p>
 
-DropDrawer is a self-hostable, cross-platform app for transferring and temporarily storing files. The desktop app gives you a drawer at the edge of your screen, and the mobile app can send and receive files, photos, and text. When both devices are online, DropDrawer tries a direct peer-to-peer connection first. Cached files stay available through your configured storage even when the source device is offline. You can also create a download link that works in a browser.
+</details>
+
+### On iPhone
+
+The iPhone drawer offers quick access to files, photos, and the clipboard. Synced items appear below, ready to download or share.
+
+<p align="center">
+  <img src="docs/images/ios-drawer.png" alt="DropDrawer on iPhone showing the file, photo, and paste buttons above synced items" width="280" />
+</p>
 
 ## Features
 
