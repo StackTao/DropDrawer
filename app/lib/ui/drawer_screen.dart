@@ -243,7 +243,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
 
   Widget _buildDrawerDragGrip(DrawerWindowService window) {
     return SizedBox(
-      width: double.infinity,
+      width: 64,
       child: MouseRegion(
         cursor: SystemMouseCursors.grab,
         child: GestureDetector(
@@ -257,10 +257,10 @@ class _DrawerScreenState extends State<DrawerScreen> {
           child: Tooltip(
             message: '拖动抽屉',
             child: SizedBox(
-              height: 20,
+              height: 14,
               child: Center(
                 child: Container(
-                  width: 30,
+                  width: 22,
                   height: 3,
                   decoration: BoxDecoration(
                     color: MacPalette.textTertiary,

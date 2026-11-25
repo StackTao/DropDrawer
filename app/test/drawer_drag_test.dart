@@ -41,6 +41,11 @@ void main() {
 
     final grip = find.byTooltip('拖动抽屉');
     expect(grip, findsOneWidget);
+    expect(tester.getSize(grip), const Size(64, 14));
+    final gripY = tester.getCenter(grip).dy;
+    await tester.dragFrom(Offset(12, gripY), const Offset(0, 120));
+    expect(phases, isEmpty);
+
     await tester.drag(grip, const Offset(85, 110));
     await tester.pump();
     expect(phases.first, 'start');

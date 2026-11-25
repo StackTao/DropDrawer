@@ -52,6 +52,8 @@ class MainFlutterWindow: NSWindow {
   private var dockYRatio: CGFloat = 0.5
   private var handleTrackingDown: Bool = false
   private var expandedDragOffset: NSPoint?
+  private var expandedMouseDown: NSPoint?
+  private var expandedMousePosition: NSPoint?
   private var isAnimating: Bool = false
   private var isPinned: Bool = false
   private var isModalOpen: Bool = false
@@ -100,6 +102,18 @@ class MainFlutterWindow: NSWindow {
     if event.type == .leftMouseDown && isEdgeMode && mode == .collapsed && !isAnimating {
       handleCollapsedHandleMouseDown()
       return
+    }
+    if isEdgeMode && mode == .expanded {
+      switch event.type {
+      case .leftMouseDown:
+        let point = convertPoint(toScreen: event.locationInWindow)
+        expandedMouseDown = point
+        expandedMousePosition = point
+      case .leftMouseDragged, .leftMouseUp:
+        expandedMousePosition = convertPoint(toScreen: event.locationInWindow)
+      default:
+        break
+      }
     }
     if event.type == .leftMouseDown && isEdgeMode && mode == .expanded {
       if !NSApp.isActive {
@@ -521,8 +535,8 @@ class MainFlutterWindow: NSWindow {
     }
   }
 
-  private func activeScreen() -> NSScreen {
-    let mouse = NSEvent.mouseLocation
+  private func activeScreen(at point: NSPoint? = nil) -> NSScreen {
+    let mouse = point ?? NSEvent.mouseLocation
     if let hit = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) {
       return hit
     }
@@ -534,22 +548,23 @@ class MainFlutterWindow: NSWindow {
       expandedDragOffset = nil
       return
     }
-    let mouse = NSEvent.mouseLocation
+    let mouse = expandedMousePosition ?? NSEvent.mouseLocation
     if phase == "start" {
-      expandedDragOffset = NSPoint(x: mouse.x - frame.minX, y: mouse.y - frame.minY)
+      let start = expandedMouseDown ?? mouse
+      expandedDragOffset = NSPoint(x: start.x - frame.minX, y: start.y - frame.minY)
       openedByDrag = false
       return
     }
     guard let offset = expandedDragOffset else { return }
     if phase == "update" || phase == "end" {
-      let area = activeScreen().visibleFrame
+      let area = activeScreen(at: mouse).visibleFrame
       let x = min(max(mouse.x - offset.x, area.minX), max(area.minX, area.maxX - frame.width))
       let y = min(max(mouse.y - offset.y, area.minY), area.maxY - frame.height)
       setFrameOrigin(NSPoint(x: x, y: y))
     }
     if phase == "end" {
       expandedDragOffset = nil
-      let area = (screen ?? activeScreen()).visibleFrame
+      let area = (screen ?? activeScreen(at: mouse)).visibleFrame
       dockSide = frame.midX < area.midX ? .left : .right
       dockYRatio = min(max((frame.midY - area.minY) / area.height, 0.06), 0.94)
       saveDockPreferences()
