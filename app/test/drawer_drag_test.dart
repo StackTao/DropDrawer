@@ -41,7 +41,9 @@ void main() {
 
     final grip = find.byTooltip('拖动抽屉');
     expect(grip, findsOneWidget);
-    expect(tester.getSize(grip), const Size(64, 14));
+    expect(tester.getSize(grip), const Size(64, 10));
+    // The toolbar stays directly beneath its original top padding.
+    expect(tester.getTopLeft(find.text('DropDrawer')).dy, lessThan(24));
     final gripY = tester.getCenter(grip).dy;
     await tester.dragFrom(Offset(12, gripY), const Offset(0, 120));
     expect(phases, isEmpty);

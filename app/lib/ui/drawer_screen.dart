@@ -226,12 +226,17 @@ class _DrawerScreenState extends State<DrawerScreen> {
             ),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(c.windowService.edgeMode ? 16 : 0),
-              child: Column(
+              child: Stack(
+                alignment: Alignment.topCenter,
+                fit: StackFit.expand,
                 children: [
+                  _buildActivePage(context, c),
                   if (c.windowService.edgeMode &&
                       c.windowService.supportsEdgeDrawer)
-                    _buildDrawerDragGrip(c.windowService),
-                  Expanded(child: _buildActivePage(context, c)),
+                    Positioned(
+                      top: 0,
+                      child: _buildDrawerDragGrip(c.windowService),
+                    ),
                 ],
               ),
             ),
@@ -257,11 +262,11 @@ class _DrawerScreenState extends State<DrawerScreen> {
           child: Tooltip(
             message: '拖动抽屉',
             child: SizedBox(
-              height: 14,
+              height: 10,
               child: Center(
                 child: Container(
                   width: 22,
-                  height: 3,
+                  height: 2,
                   decoration: BoxDecoration(
                     color: MacPalette.textTertiary,
                     borderRadius: BorderRadius.circular(2),
