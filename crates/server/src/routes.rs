@@ -17,7 +17,8 @@ use protocol::{
     AuthResponse, CloudDownloadInfo, CreateBatchShareRequest, CreateDrawerItemRequest,
     CreateShareRequest, CreateStorageBackendRequest, DeviceInfo, DownloadPlan, DrawerItem,
     DrawerItemKind, LoginRequest, P2pSourceInfo, RegisterDeviceRequest, RegisterRequest,
-    ShareLinkInfo, StorageBackendSummary, StorageHealthResponse, TransferMode, UploadPlan,
+    ShareLinkInfo, StorageBackendConfig, StorageBackendSummary, StorageHealthResponse,
+    TransferMode, UploadPlan,
     WsClientCommand, WsEvent,
 };
 use serde::Deserialize;
@@ -96,6 +97,12 @@ async fn register(
     State(state): State<Arc<AppState>>,
     Json(req): Json<RegisterRequest>,
 ) -> Result<Json<AuthResponse>, (StatusCode, String)> {
+    if !state.registration_open() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "registration is disabled on this server".to_string(),
+        ));
+    }
     let username = req.username.trim();
     if username.len() < 2 || req.password.len() < 6 {
         return Err((
@@ -128,15 +135,27 @@ async fn login(
     State(state): State<Arc<AppState>>,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<AuthResponse>, (StatusCode, String)> {
+    let limit_key = req.username.trim().to_lowercase();
+    if state.failed_logins.is_blocked(&limit_key) {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            "too many failed login attempts, try again later".to_string(),
+        ));
+    }
+    let invalid = || {
+        state.failed_logins.record_failure(&limit_key);
+        (StatusCode::UNAUTHORIZED, "invalid credentials".to_string())
+    };
     let user_rec = state
         .db
         .find_user_by_username(req.username.trim())
         .map_err(internal_err)?
-        .ok_or_else(|| (StatusCode::UNAUTHORIZED, "invalid credentials".to_string()))?;
+        .ok_or_else(invalid)?;
 
-    if !verify_password(&req.password, &user_rec.password_hash) {
-        return Err((StatusCode::UNAUTHORIZED, "invalid credentials".to_string()));
+    if !verify_password_blocking(&req.password, &user_rec.password_hash).await {
+        return Err(invalid());
     }
+    state.failed_logins.reset(&limit_key);
 
     let token =
         create_jwt(&user_rec.id, &user_rec.username, &state.jwt_secret).map_err(internal_err)?;
@@ -214,9 +233,21 @@ async fn create_storage_backend(
     Json(req): Json<CreateStorageBackendRequest>,
 ) -> Result<Json<StorageBackendSummary>, (StatusCode, String)> {
     let id = Uuid::new_v4().to_string();
+    let config = match req.config {
+        // Server-local storage always lives in the caller's own directory under
+        // `DROPDRAWER_LOCAL_STORAGE`; a client-chosen path would expose the server's disk.
+        StorageBackendConfig::Local { max_bytes, .. } => StorageBackendConfig::Local {
+            root_dir: state
+                .user_local_storage_dir(&auth.user_id)
+                .to_string_lossy()
+                .to_string(),
+            max_bytes,
+        },
+        other => other,
+    };
     let rec = state
         .db
-        .create_storage_backend(&id, &auth.user_id, &req.name, &req.config, req.is_default)
+        .create_storage_backend(&id, &auth.user_id, &req.name, &config, req.is_default)
         .map_err(internal_err)?;
     Ok(Json(rec.to_summary()))
 }
@@ -569,8 +600,7 @@ async fn request_upload_plan(
         .map_err(internal_err)?;
     let provider = state.build_storage_provider(&backend).map_err(internal_err)?;
 
-    let safe_name = sanitize_filename(&item.name);
-    let remote_key = format!("{}/{}_{}", auth.user_id, item.id, safe_name);
+    let remote_key = item_storage_key(&auth.user_id, &item.id, &item.name);
 
     if let Some(presigned) = provider.presign_upload(&remote_key, 1800) {
         return Ok(Json(UploadPlan::DirectPresignedPut {
@@ -627,8 +657,7 @@ async fn stream_upload_item(
         .and_then(|s| s.parse::<u64>().ok())
         .or(if item.size > 0 { Some(item.size) } else { None });
 
-    let safe_name = sanitize_filename(&item.name);
-    let remote_key = format!("{}/{}_{}", auth.user_id, item.id, safe_name);
+    let remote_key = item_storage_key(&auth.user_id, &item.id, &item.name);
 
     let stream = body
         .into_data_stream()
@@ -660,6 +689,11 @@ async fn stream_upload_item(
     Ok(Json(hydrated))
 }
 
+/// Storage key for an item's cached blob. Always derived server-side.
+fn item_storage_key(user_id: &str, item_id: &str, name: &str) -> String {
+    format!("{user_id}/{item_id}_{}", sanitize_filename(name))
+}
+
 #[derive(Debug, Deserialize)]
 struct ConfirmUploadRequest {
     storage_backend_id: String,
@@ -676,6 +710,26 @@ async fn confirm_direct_upload(
     Path(id): Path<String>,
     Json(req): Json<ConfirmUploadRequest>,
 ) -> Result<Json<DrawerItem>, (StatusCode, String)> {
+    let item = state
+        .db
+        .get_drawer_item(&id, &auth.user_id)
+        .map_err(internal_err)?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "item not found".to_string()))?;
+    let backend = state
+        .db
+        .get_storage_backend(&req.storage_backend_id, &auth.user_id)
+        .map_err(internal_err)?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "storage backend not found".to_string()))?;
+    // Only presigned direct uploads are confirmed by the client, and only for the
+    // exact key the server handed out in the upload plan.
+    if matches!(backend.config, StorageBackendConfig::Local { .. })
+        || req.remote_key != item_storage_key(&auth.user_id, &item.id, &item.name)
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "remote_key does not match the upload plan for this item".to_string(),
+        ));
+    }
     let ok = state
         .db
         .mark_item_cloud_ready(
@@ -724,8 +778,18 @@ async fn get_download_plan(
             if let Some(node_id) = owner_dev.iroh_node_id {
                 let token = Uuid::new_v4().to_string();
                 let expires_at = Utc::now() + Duration::minutes(10);
-                // Pre-authorize this transfer token on the source device over WebSocket.
-                state.send_to_device(
+                let requester_node_id = query.requester_device_id.as_deref().and_then(|id| {
+                    state
+                        .db
+                        .get_device(id, &auth.user_id)
+                        .ok()
+                        .flatten()
+                        .and_then(|d| d.iroh_node_id)
+                });
+                // Pre-authorize this single-use transfer token on the source device over
+                // WebSocket. If the push cannot be queued the source would reject the
+                // pull, so only offer P2P when it was.
+                let pushed = state.send_to_device(
                     &auth.user_id,
                     &item.owner_device_id,
                     WsEvent::AuthorizeP2pToken {
@@ -733,11 +797,13 @@ async fn get_download_plan(
                         token: token.clone(),
                         requester_device_id: query
                             .requester_device_id
+                            .clone()
                             .unwrap_or_else(|| "unknown".to_string()),
                         expires_at,
+                        requester_node_id,
                     },
                 );
-                p2p = Some(P2pSourceInfo {
+                p2p = pushed.then(|| P2pSourceInfo {
                     device_id: owner_dev.id,
                     iroh_node_id: node_id,
                     iroh_relay_url: owner_dev.iroh_relay_url,
@@ -1059,7 +1125,43 @@ struct PublicShareQuery {
     item_id: Option<String>,
 }
 
-fn validate_share_access(
+/// Runs Argon2 verification off the async worker threads.
+async fn verify_password_blocking(password: &str, hash: &str) -> bool {
+    let (password, hash) = (password.to_string(), hash.to_string());
+    tokio::task::spawn_blocking(move || verify_password(&password, &hash))
+        .await
+        .unwrap_or(false)
+}
+
+/// Whether `passcode` unlocks `share`. Failed attempts are rate limited per share code.
+async fn share_unlocked(
+    state: &AppState,
+    share: &crate::db::ShareLinkRow,
+    passcode: Option<&str>,
+) -> Result<bool, (StatusCode, String)> {
+    let Some(ref hash) = share.passcode_hash else {
+        return Ok(true);
+    };
+    let provided = passcode.unwrap_or("").trim();
+    if provided.is_empty() {
+        return Ok(false);
+    }
+    if state.failed_passcodes.is_blocked(&share.code) {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            "提取码尝试次数过多，请稍后再试".to_string(),
+        ));
+    }
+    if verify_password_blocking(provided, hash).await {
+        Ok(true)
+    } else {
+        state.failed_passcodes.record_failure(&share.code);
+        Ok(false)
+    }
+}
+
+async fn validate_share_access(
+    state: &AppState,
     share: &crate::db::ShareLinkRow,
     passcode: Option<&str>,
 ) -> Result<(), (StatusCode, String)> {
@@ -1073,11 +1175,8 @@ fn validate_share_access(
             return Err((StatusCode::GONE, "该分享链接已达到下载次数上限".to_string()));
         }
     }
-    if let Some(ref hash) = share.passcode_hash {
-        let provided = passcode.unwrap_or("").trim();
-        if provided.is_empty() || !verify_password(provided, hash) {
-            return Err((StatusCode::FORBIDDEN, "需要正确的提取码".to_string()));
-        }
+    if !share_unlocked(state, share, passcode).await? {
+        return Err((StatusCode::FORBIDDEN, "需要正确的提取码".to_string()));
     }
     Ok(())
 }
@@ -1112,12 +1211,7 @@ async fn public_share_meta(
         return Err((StatusCode::NOT_FOUND, "关联文件已被删除".to_string()));
     }
 
-    let locked = if let Some(ref hash) = share.passcode_hash {
-        let provided = query.passcode.as_deref().unwrap_or("").trim();
-        provided.is_empty() || !verify_password(provided, hash)
-    } else {
-        false
-    };
+    let locked = !share_unlocked(&state, &share, query.passcode.as_deref()).await?;
 
     let display_name = format_share_display_name(share.title.as_deref(), &items);
     let total_size: u64 = items.iter().map(|it| it.size).sum();
@@ -1176,7 +1270,7 @@ async fn public_share_download(
         .map_err(internal_err)?
         .ok_or_else(|| (StatusCode::NOT_FOUND, "分享链接不存在或已被撤销".to_string()))?;
 
-    validate_share_access(&share, query.passcode.as_deref())?;
+    validate_share_access(&state, &share, query.passcode.as_deref()).await?;
 
     let items = state
         .db
@@ -1196,7 +1290,13 @@ async fn public_share_download(
     };
 
     if item.kind == DrawerItemKind::Text {
-        let _ = state.db.increment_share_download(&code);
+        if !state
+            .db
+            .increment_share_download(&code)
+            .map_err(internal_err)?
+        {
+            return Err((StatusCode::GONE, "该分享链接已达到下载次数上限".to_string()));
+        }
         let text = item.text_content.unwrap_or_default();
         return Response::builder()
             .status(StatusCode::OK)
@@ -1453,14 +1553,22 @@ async function load(errMsg) {
 }
 
 async function unlock() {
-  currentPasscode = document.getElementById("pw").value.trim();
-  if (!currentPasscode) return;
-  const q = "?passcode=" + encodeURIComponent(currentPasscode);
+  const typed = document.getElementById("pw").value.trim();
+  if (!typed) return;
+  const q = "?passcode=" + encodeURIComponent(typed);
   const resp = await fetch("/api/s/" + encodeURIComponent(code) + "/meta" + q);
+  // Failed attempts are rate limited, so never resend a rejected passcode.
+  if (!resp.ok) {
+    currentPasscode = "";
+    load((await resp.text()) || resp.statusText);
+    return;
+  }
   const d = await resp.json();
   if (d.locked) {
+    currentPasscode = "";
     load("提取码不正确，请重试");
   } else {
+    currentPasscode = typed;
     load();
   }
 }
@@ -1504,16 +1612,28 @@ load();
 
 #[derive(Debug, Deserialize)]
 struct WsQuery {
-    token: String,
+    /// Accepted for older clients; current clients send `Authorization: Bearer`
+    /// so the token does not end up in proxy access logs.
+    #[serde(default)]
+    token: Option<String>,
     device_id: String,
 }
 
 async fn ws_upgrade(
     ws: WebSocketUpgrade,
     Query(query): Query<WsQuery>,
+    headers: axum::http::HeaderMap,
     State(state): State<Arc<AppState>>,
 ) -> Result<Response, (StatusCode, String)> {
-    let claims = decode_jwt(&query.token, &state.jwt_secret)
+    let header_token = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(str::trim);
+    let token = header_token
+        .or(query.token.as_deref())
+        .ok_or_else(|| (StatusCode::UNAUTHORIZED, "missing ws token".to_string()))?;
+    let claims = decode_jwt(token, &state.jwt_secret)
         .map_err(|_| (StatusCode::UNAUTHORIZED, "invalid ws token".to_string()))?;
 
     if state

@@ -612,6 +612,7 @@ class DropDrawerController extends ChangeNotifier {
               itemId: authMap['item_id'] as String,
               token: authMap['token'] as String,
               expiresAtIso: authMap['expires_at'] as String,
+              requesterNodeId: authMap['requester_node_id'] as String?,
             );
           } catch (_) {}
         }
@@ -880,7 +881,11 @@ class DropDrawerController extends ChangeNotifier {
     try {
       final downloadsDir = await _resolveDownloadDir();
       if (cancel.isCancelled) return;
-      final destPath = p.join(downloadsDir, _downloadFileName(item.name));
+      final destPath = availableDownloadPath(
+        downloadsDir,
+        _downloadFileName(item.name),
+        previousPath: localFilePaths[item.id],
+      );
       final plan = await _api!.getDownloadPlan(
         item.id,
         requesterDeviceId: deviceId!,
@@ -1399,19 +1404,8 @@ class DropDrawerController extends ChangeNotifier {
             p.basenameWithoutExtension(_downloadFileName(other.name)).toLowerCase() == stem);
   }
 
-  String _downloadFileName(String name) {
-    if (!Platform.isWindows) return name;
-    var safe = name
-        .replaceAll(RegExp(r'[<>:"/\\|?*\x00-\x1f]'), '_')
-        .replaceFirst(RegExp(r'[. ]+$'), '');
-    if (safe.isEmpty) return 'download';
-    final stem = safe.split('.').first.trimRight().toUpperCase();
-    if (RegExp(r'^(CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])$')
-        .hasMatch(stem)) {
-      safe = '_$safe';
-    }
-    return safe;
-  }
+  String _downloadFileName(String name) =>
+      safeDownloadFileName(name, windows: Platform.isWindows);
 
   Future<String> _resolveDownloadDir() async {
     if (customDownloadDir != null && customDownloadDir!.trim().isNotEmpty) {
@@ -1443,4 +1437,49 @@ class DropDrawerController extends ChangeNotifier {
     if (Platform.isIOS) return 'ios';
     return 'web';
   }
+}
+
+/// Reduces a drawer item name (which comes from the server) to a single safe
+/// file name, so a download can never be written outside the download folder.
+@visibleForTesting
+String safeDownloadFileName(String name, {required bool windows}) {
+  // Keep only the last path segment, whichever separator the sender used.
+  var safe = name.split(RegExp(r'[/\\]')).last;
+  safe = safe.replaceAll(RegExp(r'[\x00-\x1f\x7f]'), '_');
+  if (windows) {
+    safe = safe
+        .replaceAll(RegExp(r'[<>:"|?*]'), '_')
+        .replaceFirst(RegExp(r'[. ]+$'), '');
+    final stem = safe.split('.').first.trimRight().toUpperCase();
+    if (RegExp(r'^(CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])$')
+        .hasMatch(stem)) {
+      safe = '_$safe';
+    }
+  }
+  if (safe.trim().isEmpty || safe == '.' || safe == '..') return 'download';
+  return safe;
+}
+
+/// Picks where to save a download named [name] in [dir] without replacing an
+/// unrelated file that already has that name: `photo.png` becomes
+/// `photo (1).png`, and so on. [previousPath], where this item was saved before,
+/// may be reused so re-downloading an item replaces its own earlier copy. A name
+/// whose only trace is an unfinished `.dropdrawer.part` is still free, so an
+/// interrupted transfer resumes under the same name.
+@visibleForTesting
+String availableDownloadPath(String dir, String name, {String? previousPath}) {
+  bool usable(String candidate) =>
+      (previousPath != null && p.equals(previousPath, candidate)) ||
+      FileSystemEntity.typeSync(candidate, followLinks: false) ==
+          FileSystemEntityType.notFound;
+
+  final preferred = p.join(dir, name);
+  if (usable(preferred)) return preferred;
+  final stem = p.basenameWithoutExtension(name);
+  final ext = p.extension(name);
+  for (var i = 1; i < 10000; i++) {
+    final candidate = p.join(dir, '$stem ($i)$ext');
+    if (usable(candidate)) return candidate;
+  }
+  return p.join(dir, '$stem (${DateTime.now().millisecondsSinceEpoch})$ext');
 }

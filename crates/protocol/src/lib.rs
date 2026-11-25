@@ -417,6 +417,10 @@ pub enum WsEvent {
         token: String,
         requester_device_id: String,
         expires_at: DateTime<Utc>,
+        /// iroh node id of the requesting device, when known; the source only
+        /// accepts the token from this peer.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        requester_node_id: Option<String>,
     },
     Pong,
 }

@@ -12,7 +12,7 @@ DropDrawer 将**控制面**与**数据面**解耦：
   - 负责用户认证（JWT）、设备注册与在线心跳、抽屉条目元数据同步（WebSocket `/ws`）、下载计划调度（`DownloadPlan`）、多云盘凭据管理、TTL 定期清理与外链分享管理。
 - **数据面 A — 端到端 P2P（`crates/p2p-core`，`iroh` QUIC）**：
   - 双方在线时优先直连传输，客户端通过 C-ABI FFI 加载本地 `libdropdrawer_p2p.dylib` / `dropdrawer_p2p.dll` / `libdropdrawer_p2p.so`。
-  - 源文件按路径引用做种（零磁盘冗余拷贝），经控制面下发短时一次性 `transfer_token` 授权拉取。
+  - 源文件按路径引用做种（零磁盘冗余拷贝），经控制面下发短时一次性 `transfer_token` 授权拉取：token 10 分钟有效、校验通过即作废，并绑定请求方设备的 iroh 节点 ID（`requester_node_id`）；源端收到早于 token 推送到达的请求时最多等待 5 秒；服务端仅在 token 成功推送到源设备后才在下载计划中提供 P2P。
 - **数据面 B — 原生多云盘中转（零外部 Sidecar）**：
   - 按策略（`smart` 小于阈值自动上云 / `cloud_cached` 全部上云 / `p2p_only` 仅 P2P）或在 P2P 不可达/失败时自动回退云端。
   - 所有存储后端均在 `crates/server/src/storage/` 内原生实现：
@@ -35,6 +35,7 @@ DropDrawer 将**控制面**与**数据面**解耦：
   - 若连接 6 秒后仍停留在中继路径，仅由下载发起方触发 `RelayProbe`（[relay_probe.rs](../crates/p2p-core/src/relay_probe.rs)），携带完整 `EndpointAddr` 发起一次辅助 QUIC 握手促使 `iroh` 重新打洞；完成后以 `PROBE_CODE (0x4450)` 关闭，接收端静默忽略该辅助连接。
 - **断点续传与防冲突**：
   - 分片临时文件命名为 `<dest_path>.dropdrawer.part`（追加后缀而非替换扩展名），彻底避免 `a.png` 与 `a.jpg` 冲突。
+  - 分片旁的 `<dest_path>.dropdrawer.part.owner` 记录所属条目 ID：同名但属于其他条目的分片不会被续传（删除后从 0 开始）；无 owner 文件的旧分片按原逻辑续传。接收方写入超过对端声明大小的数据时立即中止。
   - 本地通过 `PartialLease` (`DashSet<PathBuf>`) 防止并发写入同一目标路径。
   - 对升级前遗留的旧命名 `a.dropdrawer.part`：仅在无同名异后缀歧义（`!skip_legacy_resume`）且对端校验前缀 BLAKE3 一致时才安全迁入续传，否则保留原文件不误删。
 - **完整性与送达回执**：
@@ -48,9 +49,9 @@ DropDrawer 将**控制面**与**数据面**解耦：
 所有函数返回堆分配的 UTF-8 JSON 字符串（`{"ok": bool, "data": ..., "error": ...}`），调用方必须通过 `dropdrawer_p2p_free_string` 释放：
 - `dropdrawer_p2p_start(config_json)`
 - `dropdrawer_p2p_node_info()`
-- `dropdrawer_p2p_register_file(req_json)`
+- `dropdrawer_p2p_register_file(req_json)`：只做 `stat` 并按路径登记后立即返回（`blake3_hash` 为空字符串），BLAKE3 在后台计算（最多 2 个并发），首个拉取请求会等待其完成。
 - `dropdrawer_p2p_unregister_file(item_id)`
-- `dropdrawer_p2p_authorize_token(req_json)`
+- `dropdrawer_p2p_authorize_token(req_json)`：可选字段 `requester_node_id` 将 token 绑定到请求方节点；每次登记时顺带清理过期 token。
 - `dropdrawer_p2p_download_file(req_json)` → 返回 `transfer_id`
 - `dropdrawer_p2p_cancel_transfer(transfer_id)`
 - `dropdrawer_p2p_poll_events()`
@@ -60,6 +61,14 @@ DropDrawer 将**控制面**与**数据面**解耦：
 ---
 
 ## 3. 服务端 API 与外链分享 (`crates/server`)
+
+### 安全约束
+- **服务器本地存储沙箱**：用户创建的 `local` 存储一律落在 `DROPDRAWER_LOCAL_STORAGE/<user_id>`，忽略客户端提交的 `root_dir`；使用时还会校验根目录位于存储区内，且对象 key 必须以 `<user_id>/` 开头。
+- **对象 key 由服务端生成**：`confirm-upload` 只接受与上传计划一致的 `remote_key`（`<user_id>/<item_id>_<name>`），且不适用于 `local` 存储。
+- **注册开关**：`DROPDRAWER_ALLOW_REGISTRATION=false` 关闭新用户注册（默认开启）。
+- **JWT 密钥**：未设置或使用旧占位值时自动生成随机密钥并以 `0600` 权限保存到数据库同目录的 `jwt_secret`。
+- **暴力破解限流**：同一用户名 15 分钟内登录失败 10 次、同一分享码 15 分钟内提取码错误 10 次后返回 `429`，Argon2 校验在 `spawn_blocking` 中执行。
+- **WebSocket 鉴权**：客户端通过 `Authorization: Bearer` 头传 JWT；`?token=` 查询参数仅为兼容旧客户端保留。
 
 ### 核心路由
 - **健康检查**：`GET /health`

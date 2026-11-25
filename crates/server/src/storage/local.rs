@@ -10,6 +10,9 @@ use super::{ByteStream, DownloadResolution, PutResult, StorageProvider};
 pub struct LocalProvider {
     root_dir: PathBuf,
     max_bytes: Option<u64>,
+    /// When set, every storage key must live under this first path component
+    /// (the owning user's id), so one account can never address another's blobs.
+    key_prefix: Option<String>,
 }
 
 impl LocalProvider {
@@ -19,7 +22,14 @@ impl LocalProvider {
         Ok(Self {
             root_dir,
             max_bytes,
+            key_prefix: None,
         })
+    }
+
+    /// Restricts all keys handled by this provider to `<prefix>/...`.
+    pub fn restrict_keys_to(mut self, prefix: impl Into<String>) -> Self {
+        self.key_prefix = Some(prefix.into());
+        self
     }
 
     fn safe_path(&self, remote_key: &str) -> anyhow::Result<PathBuf> {
@@ -30,6 +40,18 @@ impl LocalProvider {
                 Component::CurDir => {}
                 _ => anyhow::bail!("invalid storage key path traversal: {remote_key}"),
             }
+        }
+        if let Some(prefix) = &self.key_prefix {
+            let owned = rel
+                .components()
+                .next()
+                .is_some_and(|c| c.as_os_str() == prefix.as_str());
+            if !owned || rel.components().count() < 2 {
+                anyhow::bail!("storage key is outside the owner's namespace: {remote_key}");
+            }
+        }
+        if rel.as_os_str().is_empty() {
+            anyhow::bail!("empty storage key");
         }
         Ok(self.root_dir.join(rel))
     }
@@ -126,5 +148,33 @@ impl StorageProvider for LocalProvider {
             self.root_dir.display(),
             used
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keys_must_stay_inside_root_and_owner_namespace() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let provider = LocalProvider::new(dir.path(), None)
+            .unwrap()
+            .restrict_keys_to("alice");
+        assert_eq!(
+            provider.safe_path("alice/item_a.txt").unwrap(),
+            dir.path().join("alice").join("item_a.txt")
+        );
+        for bad in [
+            "bob/item_b.txt",
+            "alice",
+            "",
+            "../alice/x",
+            "alice/../bob/x",
+            "/etc/passwd",
+            "etc/passwd",
+        ] {
+            assert!(provider.safe_path(bad).is_err(), "{bad} must be rejected");
+        }
     }
 }

@@ -120,7 +120,7 @@ curl -fsS http://localhost:8080/health
 
 For local development, you can also run `cargo run --bin dropdrawer-server`. On other devices on the same network, enter the server host’s address, such as `http://192.168.1.10:8080`.
 
-In production, set a dedicated `DROPDRAWER_JWT_SECRET` that persists across restarts so existing sessions stay valid, and use an HTTPS reverse proxy that supports WebSocket upgrades. For large transfers, disable proxy buffering and set the upload size limit to suit your deployment. Share link recipients need to be able to reach the server. [Production Compose template](deploy/compose.baota.yml) · [Architecture (Chinese)](docs/ARCHITECTURE.md)
+If `DROPDRAWER_JWT_SECRET` is not set, the server generates a random secret on first start and keeps it in `jwt_secret` next to the database. You can also set your own long random value. Once every account you need exists, set `DROPDRAWER_ALLOW_REGISTRATION=false` to stop new sign-ups. In production, use an HTTPS reverse proxy that supports WebSocket upgrades. For large transfers, disable proxy buffering and set the upload size limit to suit your deployment. Share link recipients need to be able to reach the server. [Production Compose template](deploy/compose.baota.yml) · [Architecture (Chinese)](docs/ARCHITECTURE.md)
 
 ## Build from source
 

@@ -11,7 +11,10 @@ services:
       - DROPDRAWER_BIND=0.0.0.0:8080
       - DROPDRAWER_DB_PATH=/data/dropdrawer.db
       - DROPDRAWER_LOCAL_STORAGE=/data/blobs
-      - DROPDRAWER_JWT_SECRET=${DROPDRAWER_JWT_SECRET:-change-me-to-a-long-random-secret}
+      # Leave empty to have the server generate one and keep it in /data/jwt_secret.
+      - DROPDRAWER_JWT_SECRET=${DROPDRAWER_JWT_SECRET:-}
+      # Set to false once every account you need has been created.
+      - DROPDRAWER_ALLOW_REGISTRATION=${DROPDRAWER_ALLOW_REGISTRATION:-true}
       - DROPDRAWER_TTL_CLEANUP_SECS=300
       - RUST_LOG=info
     volumes:

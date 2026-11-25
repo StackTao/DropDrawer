@@ -199,7 +199,19 @@ async fn test_replaced_websocket_cannot_mark_device_offline() {
         .unwrap();
     timeout(connection_timeout, previous.next()).await.unwrap().unwrap().unwrap();
 
-    let (mut current, _) = timeout(connection_timeout, connect_async(&ws_url))
+    // Current clients authenticate with a header instead of a query token.
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let bare_url = format!("ws://{addr}/ws?device_id={}", device.id);
+    assert!(timeout(connection_timeout, connect_async(&bare_url))
+        .await
+        .unwrap()
+        .is_err());
+    let mut request = bare_url.into_client_request().unwrap();
+    request.headers_mut().insert(
+        header::AUTHORIZATION,
+        format!("Bearer {}", auth.token).parse().unwrap(),
+    );
+    let (mut current, _) = timeout(connection_timeout, connect_async(request))
         .await
         .unwrap()
         .unwrap();
@@ -928,4 +940,278 @@ async fn test_public_share_link_passcode_limit_and_revoke() {
         .await
         .unwrap();
     assert_eq!(&b_bytes[..], payload);
+}
+
+async fn send_raw(
+    app: &Router,
+    method: &str,
+    uri: &str,
+    token: Option<&str>,
+    body: Option<serde_json::Value>,
+) -> (StatusCode, Vec<u8>) {
+    let mut builder = Request::builder().method(method).uri(uri);
+    if let Some(tok) = token {
+        builder = builder.header(header::AUTHORIZATION, format!("Bearer {tok}"));
+    }
+    let req = match body {
+        Some(b) => builder
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::to_vec(&b).unwrap()))
+            .unwrap(),
+        None => builder.body(Body::empty()).unwrap(),
+    };
+    let resp = app.clone().oneshot(req).await.unwrap();
+    let status = resp.status();
+    let bytes = axum::body::to_bytes(resp.into_body(), 10 * 1024 * 1024)
+        .await
+        .unwrap();
+    (status, bytes.to_vec())
+}
+
+#[tokio::test]
+async fn test_local_storage_cannot_escape_server_storage_area() {
+    let (app, state, tmp) = spawn_test_server().await;
+    let secret = tmp.path().join("server-secret.txt");
+    std::fs::write(&secret, b"top secret").unwrap();
+
+    let (_, mallory): (_, AuthResponse) = send_json(
+        &app,
+        "POST",
+        "/api/auth/register",
+        None,
+        Some(json!({"username": "mallory", "password": "password123"})),
+    )
+    .await;
+    let (_, device): (_, DeviceInfo) = send_json(
+        &app,
+        "POST",
+        "/api/devices",
+        Some(&mallory.token),
+        Some(json!({"device_id": "m1", "name": "M", "platform": "linux"})),
+    )
+    .await;
+
+    // A client-chosen root directory is replaced with the caller's own storage directory.
+    let (status, backend): (_, StorageBackendSummary) = send_json(
+        &app,
+        "POST",
+        "/api/storage",
+        Some(&mallory.token),
+        Some(json!({
+            "name": "root",
+            "config": {"kind": "local", "root_dir": "/"},
+            "is_default": false,
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let stored = state
+        .db
+        .get_storage_backend(&backend.id, &mallory.user.id)
+        .unwrap()
+        .unwrap();
+    match stored.config {
+        StorageBackendConfig::Local { root_dir, .. } => assert_eq!(
+            std::path::PathBuf::from(root_dir),
+            tmp.path().join("local_blobs").join(&mallory.user.id)
+        ),
+        other => panic!("unexpected config {other:?}"),
+    }
+
+    let (_, item): (_, DrawerItem) = send_json(
+        &app,
+        "POST",
+        "/api/drawer/items",
+        Some(&mallory.token),
+        Some(json!({
+            "device_id": device.id,
+            "kind": "file",
+            "name": "x.bin",
+            "size": 10,
+            "transfer_mode": "p2p_only",
+        })),
+    )
+    .await;
+
+    // The client cannot pick an arbitrary key when confirming a direct upload.
+    let forged_key = secret.to_string_lossy().trim_start_matches('/').to_string();
+    let (status, _) = send_raw(
+        &app,
+        "POST",
+        &format!("/api/drawer/items/{}/confirm-upload", item.id),
+        Some(&mallory.token),
+        Some(json!({"storage_backend_id": backend.id, "remote_key": forged_key})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // A pre-existing record pointing outside the storage area is refused when used,
+    // and keys outside the owner's namespace are refused even inside it.
+    let escaped = state
+        .db
+        .create_storage_backend(
+            "legacy-escape",
+            &mallory.user.id,
+            "legacy",
+            &StorageBackendConfig::Local {
+                root_dir: "/".to_string(),
+                max_bytes: None,
+            },
+            false,
+        )
+        .unwrap();
+    assert!(state.build_storage_provider(&escaped).is_err());
+    for (backend_id, key) in [("legacy-escape", forged_key.as_str()), (backend.id.as_str(), "other-user/x")] {
+        state
+            .db
+            .mark_item_cloud_ready(&item.id, &mallory.user.id, backend_id, key, None, None)
+            .unwrap();
+        let (status, body) = send_raw(
+            &app,
+            "GET",
+            &format!("/api/drawer/items/{}/download", item.id),
+            Some(&mallory.token),
+            None,
+        )
+        .await;
+        assert_ne!(status, StatusCode::OK, "{key}");
+        assert!(!body.windows(10).any(|w| w == b"top secret"));
+    }
+    state
+        .db
+        .mark_item_cloud_ready(&item.id, &mallory.user.id, "legacy-escape", &forged_key, None, None)
+        .unwrap();
+    let (status, _) = send_raw(
+        &app,
+        "DELETE",
+        &format!("/api/drawer/items/{}", item.id),
+        Some(&mallory.token),
+        None,
+    )
+    .await;
+    assert!(status.is_success());
+    assert!(secret.exists(), "deleting an item must not delete files outside storage");
+
+    state.set_registration_open(false);
+    let (status, _) = send_raw(
+        &app,
+        "POST",
+        "/api/auth/register",
+        None,
+        Some(json!({"username": "eve", "password": "password123"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn test_login_and_passcode_guessing_is_throttled() {
+    let (app, _state, _tmp) = spawn_test_server().await;
+    let (_, alice): (_, AuthResponse) = send_json(
+        &app,
+        "POST",
+        "/api/auth/register",
+        None,
+        Some(json!({"username": "alice", "password": "password123"})),
+    )
+    .await;
+
+    for _ in 0..10 {
+        let (status, _) = send_raw(
+            &app,
+            "POST",
+            "/api/auth/login",
+            None,
+            Some(json!({"username": "alice", "password": "wrong-password"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+    // Even the right password is refused while the account is throttled.
+    let (status, _) = send_raw(
+        &app,
+        "POST",
+        "/api/auth/login",
+        None,
+        Some(json!({"username": "Alice", "password": "password123"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+
+    let (_, device): (_, DeviceInfo) = send_json(
+        &app,
+        "POST",
+        "/api/devices",
+        Some(&alice.token),
+        Some(json!({"device_id": "d1", "name": "D", "platform": "linux"})),
+    )
+    .await;
+    let (_, item): (_, DrawerItem) = send_json(
+        &app,
+        "POST",
+        "/api/drawer/items",
+        Some(&alice.token),
+        Some(json!({
+            "device_id": device.id,
+            "kind": "text",
+            "name": "note",
+            "size": 5,
+            "text_content": "hello",
+            "transfer_mode": "cloud_cached",
+        })),
+    )
+    .await;
+    let (status, share): (_, ShareLinkInfo) = send_json(
+        &app,
+        "POST",
+        &format!("/api/drawer/items/{}/share", item.id),
+        Some(&alice.token),
+        Some(json!({"passcode": "4321", "max_downloads": 1})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Text shares honour the download limit.
+    let download = |passcode: &str| {
+        format!("/api/s/{}/download?passcode={passcode}", share.code)
+    };
+    let (status, body) = send_raw(&app, "GET", &download("4321"), None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, b"hello");
+    let (status, _) = send_raw(&app, "GET", &download("4321"), None, None).await;
+    assert_eq!(status, StatusCode::GONE);
+
+    // A second share to exercise passcode throttling on the meta endpoint.
+    let (_, share): (_, ShareLinkInfo) = send_json(
+        &app,
+        "POST",
+        &format!("/api/drawer/items/{}/share", item.id),
+        Some(&alice.token),
+        Some(json!({"passcode": "4321"})),
+    )
+    .await;
+    for guess in 0..10 {
+        let (status, meta): (_, serde_json::Value) = send_json(
+            &app,
+            "GET",
+            &format!("/api/s/{}/meta?passcode={guess:04}", share.code),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(meta["locked"], true);
+    }
+    let (status, _) = send_raw(
+        &app,
+        "GET",
+        &format!("/api/s/{}/meta?passcode=4321", share.code),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    // Viewing the locked page without a passcode still works.
+    let (status, _) = send_raw(&app, "GET", &format!("/api/s/{}/meta", share.code), None, None).await;
+    assert_eq!(status, StatusCode::OK);
 }

@@ -180,11 +180,13 @@ class P2pFfiBridge {
     required String itemId,
     required String token,
     required String expiresAtIso,
+    String? requesterNodeId,
   }) {
     _callJson(_authorizeToken!, {
       'item_id': itemId,
       'token': token,
       'expires_at': expiresAtIso,
+      'requester_node_id': ?requesterNodeId,
     });
   }
 

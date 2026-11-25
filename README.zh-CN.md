@@ -120,7 +120,7 @@ curl -fsS http://localhost:8080/health
 
 也可运行 `cargo run --bin dropdrawer-server` 启动本地开发实例。局域网中的其他设备填写运行服务端的主机地址，例如 `http://192.168.1.10:8080`。
 
-生产部署请固定配置独立的 `DROPDRAWER_JWT_SECRET`，以便重启后维持会话，并使用支持 WebSocket 升级的 HTTPS 反向代理。大文件传输需关闭代理缓冲，并按实际需求调整上传大小上限。外链下载要求收件人能够访问服务端。[生产 Compose 模板](deploy/compose.baota.yml) · [架构文档](docs/ARCHITECTURE.md)
+未设置 `DROPDRAWER_JWT_SECRET` 时，服务端会在首次启动时生成随机密钥并保存在数据库旁的 `jwt_secret` 文件中；也可以自行设置足够长的随机值。所需账号都创建好后，请设置 `DROPDRAWER_ALLOW_REGISTRATION=false` 关闭注册。生产部署请使用支持 WebSocket 升级的 HTTPS 反向代理。大文件传输需关闭代理缓冲，并按实际需求调整上传大小上限。外链下载要求收件人能够访问服务端。[生产 Compose 模板](deploy/compose.baota.yml) · [架构文档](docs/ARCHITECTURE.md)
 
 ## 从源码构建
 

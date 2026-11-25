@@ -20,10 +20,16 @@ use iroh::{
 use protocol::{P2pPathKind, P2pTransferProgress};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+use tokio::sync::{Notify, OnceCell, Semaphore};
 use uuid::Uuid;
 
 pub const DROPDRAWER_ALPN: &[u8] = b"/dropdrawer/file/1";
 const CHUNK_SIZE: usize = 256 * 1024; // 256 KiB QUIC streaming chunks
+/// How long a source waits for the control server's token push to arrive when a
+/// pull request races ahead of it.
+const TOKEN_ARRIVAL_GRACE: Duration = Duration::from_secs(5);
+/// Files hashed concurrently in the background (startup re-registers every seeded file).
+const MAX_CONCURRENT_HASHES: usize = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct P2pConfig {
@@ -52,17 +58,74 @@ pub struct RegisteredFileInfo {
     pub blake3_hash: String,
 }
 
+/// `(size, blake3 hex)` of a shared file, computed once in the background.
+type FileDigest = (u64, String);
+
 #[derive(Debug, Clone)]
 struct SharedFileEntry {
     path: PathBuf,
-    size: u64,
-    blake3_hash: String,
+    digest: Arc<OnceCell<FileDigest>>,
 }
 
 #[derive(Debug, Clone)]
 struct AuthorizedToken {
     item_id: String,
     expires_at: DateTime<Utc>,
+    /// When known, only this peer may redeem the token.
+    requester_node_id: Option<String>,
+}
+
+/// State shared between the node and its incoming-connection handlers.
+struct SourceState {
+    shared_files: DashMap<String, SharedFileEntry>,
+    /// Map of `token -> AuthorizedToken`. Each token is redeemed at most once.
+    authorized_tokens: DashMap<String, AuthorizedToken>,
+    token_added: Notify,
+    hash_permits: Semaphore,
+    require_auth_token: bool,
+}
+
+impl SourceState {
+    async fn digest(&self, entry: &SharedFileEntry) -> anyhow::Result<FileDigest> {
+        entry
+            .digest
+            .get_or_try_init(|| async {
+                let _permit = self.hash_permits.acquire().await?;
+                compute_file_blake3(&entry.path).await
+            })
+            .await
+            .cloned()
+    }
+
+    /// Redeems `token` for `item_id`, waiting briefly in case the control server's
+    /// authorization push has not reached this device yet.
+    async fn redeem_token(&self, token: &str, item_id: &str, remote_node_id: &str) -> bool {
+        let deadline = tokio::time::Instant::now() + TOKEN_ARRIVAL_GRACE;
+        loop {
+            let added = self.token_added.notified();
+            tokio::pin!(added);
+            added.as_mut().enable();
+            let now = Utc::now();
+            if self
+                .authorized_tokens
+                .remove_if(token, |_, t| {
+                    t.item_id == item_id
+                        && t.expires_at > now
+                        && t.requester_node_id.as_deref().is_none_or(|r| r == remote_node_id)
+                })
+                .is_some()
+            {
+                return true;
+            }
+            if self.authorized_tokens.contains_key(token) {
+                // Known but expired, for another item, or for another peer.
+                return false;
+            }
+            if tokio::time::timeout_at(deadline, added).await.is_err() {
+                return false;
+            }
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -111,10 +174,7 @@ struct DownloadFileReq {
 pub struct P2pNode {
     endpoint: Endpoint,
     partial_paths: DashSet<PathBuf>,
-    shared_files: Arc<DashMap<String, SharedFileEntry>>,
-    /// Map of `token -> AuthorizedToken`. If empty & `require_auth_token` is false, allows test pulls.
-    authorized_tokens: Arc<DashMap<String, AuthorizedToken>>,
-    require_auth_token: bool,
+    source: Arc<SourceState>,
     transfers: Arc<Transfers>,
     accept_task: tokio::task::JoinHandle<()>,
     relay_probe: Arc<relay_probe::RelayProbe>,
@@ -151,31 +211,28 @@ impl P2pNode {
                 .await?
         };
 
-        let shared_files = Arc::new(DashMap::new());
-        let authorized_tokens = Arc::new(DashMap::new());
+        let source = Arc::new(SourceState {
+            shared_files: DashMap::new(),
+            authorized_tokens: DashMap::new(),
+            token_added: Notify::new(),
+            hash_permits: Semaphore::new(MAX_CONCURRENT_HASHES),
+            require_auth_token,
+        });
         let transfers = Arc::new(Transfers::default());
         let incoming_transfers = transfers.clone();
 
         let ep_clone = endpoint.clone();
-        let files_clone = shared_files.clone();
-        let tokens_clone = authorized_tokens.clone();
+        let source_clone = source.clone();
         let relay_probe = Arc::new(relay_probe::RelayProbe::new(endpoint.clone()));
         let accept_task = tokio::spawn(async move {
             while let Some(incoming) = ep_clone.accept().await {
-                let files = files_clone.clone();
+                let source = source_clone.clone();
                 let transfers = incoming_transfers.clone();
-                let tokens = tokens_clone.clone();
                 tokio::spawn(async move {
                     match incoming.await {
                         Ok(conn) => {
-                            if let Err(err) = handle_incoming_connection(
-                                conn,
-                                files,
-                                transfers,
-                                tokens,
-                                require_auth_token,
-                            )
-                            .await
+                            if let Err(err) =
+                                handle_incoming_connection(conn, source, transfers).await
                             {
                                 tracing::warn!("incoming P2P connection error: {err}");
                             }
@@ -191,9 +248,7 @@ impl P2pNode {
         Ok(Arc::new(Self {
             endpoint,
             partial_paths: DashSet::new(),
-            shared_files,
-            authorized_tokens,
-            require_auth_token,
+            source,
             transfers,
             accept_task,
             relay_probe,
@@ -218,37 +273,79 @@ impl P2pNode {
         item_id: String,
         path: impl AsRef<Path>,
     ) -> anyhow::Result<RegisteredFileInfo> {
+        let mut info = self.register_file_deferred(item_id, path)?;
+        let (size, blake3_hash) = self.ensure_hashed(&info.item_id).await?;
+        info.size = size;
+        info.blake3_hash = blake3_hash;
+        Ok(info)
+    }
+
+    /// Registers a local file without reading it. The BLAKE3 hash is computed later by
+    /// [`Self::ensure_hashed`] or by the first incoming pull; `blake3_hash` is empty here.
+    pub fn register_file_deferred(
+        &self,
+        item_id: String,
+        path: impl AsRef<Path>,
+    ) -> anyhow::Result<RegisteredFileInfo> {
         let path = path.as_ref().to_path_buf();
-        let (size, blake3_hash) = compute_file_blake3(&path).await?;
-        self.shared_files.insert(
+        let meta = std::fs::metadata(&path)?;
+        anyhow::ensure!(meta.is_file(), "not a regular file: {}", path.display());
+        self.source.shared_files.insert(
             item_id.clone(),
             SharedFileEntry {
                 path: path.clone(),
-                size,
-                blake3_hash: blake3_hash.clone(),
+                digest: Arc::new(OnceCell::new()),
             },
         );
         Ok(RegisteredFileInfo {
             item_id,
             path: path.to_string_lossy().to_string(),
-            size,
-            blake3_hash,
+            size: meta.len(),
+            blake3_hash: String::new(),
         })
     }
 
-    pub fn unregister_file(&self, item_id: &str) {
-        self.shared_files.remove(item_id);
+    /// Computes (once) and returns the registered file's size and BLAKE3 hash.
+    pub async fn ensure_hashed(&self, item_id: &str) -> anyhow::Result<(u64, String)> {
+        let entry = self
+            .source
+            .shared_files
+            .get(item_id)
+            .map(|e| e.clone())
+            .ok_or_else(|| anyhow::anyhow!("file not registered: {item_id}"))?;
+        self.source.digest(&entry).await
     }
 
-    /// Authorizes an incoming one-time/short-lived pull token pushed by the control server.
+    pub fn unregister_file(&self, item_id: &str) {
+        self.source.shared_files.remove(item_id);
+    }
+
+    /// Authorizes a single-use, short-lived pull token pushed by the control server.
     pub fn authorize_token(&self, item_id: String, token: String, expires_at: DateTime<Utc>) {
-        self.authorized_tokens.insert(
+        self.authorize_token_for(item_id, token, expires_at, None);
+    }
+
+    /// Like [`Self::authorize_token`], optionally restricted to one requesting peer.
+    pub fn authorize_token_for(
+        &self,
+        item_id: String,
+        token: String,
+        expires_at: DateTime<Utc>,
+        requester_node_id: Option<String>,
+    ) {
+        let now = Utc::now();
+        self.source
+            .authorized_tokens
+            .retain(|_, t| t.expires_at > now);
+        self.source.authorized_tokens.insert(
             token,
             AuthorizedToken {
                 item_id,
                 expires_at,
+                requester_node_id: requester_node_id.filter(|id| !id.is_empty()),
             },
         );
+        self.source.token_added.notify_waiters();
     }
 
     pub fn drain_events(&self) -> Vec<P2pTransferProgress> {
@@ -322,6 +419,7 @@ impl P2pNode {
         progress.path_kind = detect_path_kind(&conn);
         self.relay_probe.schedule(&conn, Some(remote_addr));
         let part_path = part_path_for(&dest_path);
+        let owner_path = part_owner_path_for(&part_path);
         let _destination = PartialLease::acquire(&self.partial_paths, &part_path)
             .ok_or_else(|| anyhow::anyhow!("download destination is already in use"))?;
         let legacy = dest_path.with_extension("dropdrawer.part");
@@ -339,6 +437,13 @@ impl P2pNode {
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
                 Err(e) => return Err(e.into()),
             };
+            // Another item saved under the same file name may have left this partial.
+            // Resuming it would append this item's bytes to that item's prefix.
+            if existing_offset > 0 && !partial_belongs_to(&owner_path, &progress.item_id).await {
+                tokio::fs::remove_file(&part_path).await?;
+                existing_offset = 0;
+            }
+            tokio::fs::write(&owner_path, progress.item_id.as_bytes()).await?;
             let legacy_lease = if !req.skip_legacy_resume
                 && existing_offset == 0
                 && legacy != part_path
@@ -440,6 +545,10 @@ impl P2pNode {
 
                 match read? {
                     Some(n) if n > 0 => {
+                        anyhow::ensure!(
+                            offset + n as u64 <= total_bytes,
+                            "peer sent more data than the announced {total_bytes} bytes"
+                        );
                         file.write_all(&buf[..n]).await?;
                         offset += n as u64;
                         bytes_since_report += n as u64;
@@ -490,6 +599,7 @@ impl P2pNode {
         }
         if actual_size != total_bytes || actual_hash != resp_header.blake3_hash {
             let _ = tokio::fs::remove_file(&part_path).await;
+            let _ = tokio::fs::remove_file(&owner_path).await;
             anyhow::bail!(
                 "BLAKE3 integrity mismatch (expected {} bytes / {}, got {} bytes / {})",
                 total_bytes,
@@ -500,6 +610,7 @@ impl P2pNode {
         }
 
         tokio::fs::rename(&part_path, &dest_path).await?;
+        let _ = tokio::fs::remove_file(&owner_path).await;
         if resp_header.supports_receipt {
             conn.close(DELIVERED_CODE.into(), b"file verified and saved");
         }
@@ -515,16 +626,14 @@ impl P2pNode {
     }
 
     pub fn requires_auth_token(&self) -> bool {
-        self.require_auth_token
+        self.source.require_auth_token
     }
 }
 
 async fn handle_incoming_connection(
     conn: Connection,
-    shared_files: Arc<DashMap<String, SharedFileEntry>>,
+    source: Arc<SourceState>,
     transfers: Arc<Transfers>,
-    authorized_tokens: Arc<DashMap<String, AuthorizedToken>>,
-    require_auth_token: bool,
 ) -> anyhow::Result<()> {
     let (mut send, mut recv) = match conn.accept_bi().await {
         Ok(streams) => streams,
@@ -538,72 +647,46 @@ async fn handle_incoming_connection(
     let req_bytes = read_frame(&mut recv).await?;
     let req: PullRequestHeader = serde_json::from_slice(&req_bytes)?;
 
-    if require_auth_token {
-        let valid = match authorized_tokens.get(&req.token) {
-            Some(entry) => entry.item_id == req.item_id && entry.expires_at > Utc::now(),
-            None => false,
-        };
-        if !valid {
-            let resp = PullResponseHeader {
-                resumed_legacy: false,
-                supports_receipt: false,
-                ok: false,
-                error: Some("unauthorized or expired P2P transfer token".to_string()),
-                size: 0,
-                blake3_hash: String::new(),
-            };
-            write_frame(&mut send, &serde_json::to_vec(&resp)?).await?;
-            send.finish()?;
-            return Ok(());
+    if source.require_auth_token {
+        let remote = conn.remote_id().to_string();
+        if !source.redeem_token(&req.token, &req.item_id, &remote).await {
+            return reject_pull(&conn, &mut send, "unauthorized or expired P2P transfer token").await;
         }
     }
 
-    let Some(entry) = shared_files.get(&req.item_id).map(|e| e.clone()) else {
-        let resp = PullResponseHeader {
-            resumed_legacy: false,
-            supports_receipt: false,
-            ok: false,
-            error: Some("file not found on source device".to_string()),
-            size: 0,
-            blake3_hash: String::new(),
-        };
-        write_frame(&mut send, &serde_json::to_vec(&resp)?).await?;
-        send.finish()?;
-        return Ok(());
+    let Some(entry) = source.shared_files.get(&req.item_id).map(|e| e.clone()) else {
+        return reject_pull(&conn, &mut send, "file not found on source device").await;
     };
 
-    let mut file = match tokio::fs::File::open(&entry.path).await {
-        Ok(f) => f,
+    let opened = match source.digest(&entry).await {
+        Ok(digest) => tokio::fs::File::open(&entry.path)
+            .await
+            .map(|f| (f, digest))
+            .map_err(anyhow::Error::from),
+        Err(err) => Err(err),
+    };
+    let (mut file, (entry_size, entry_hash)) = match opened {
+        Ok(opened) => opened,
         Err(err) => {
-            let resp = PullResponseHeader {
-                resumed_legacy: false,
-                supports_receipt: false,
-                ok: false,
-                error: Some(format!("source file unreadable: {err}")),
-                size: 0,
-                blake3_hash: String::new(),
-            };
-            write_frame(&mut send, &serde_json::to_vec(&resp)?).await?;
-            send.finish()?;
-            return Ok(());
+            return reject_pull(&conn, &mut send, &format!("source file unreadable: {err}")).await;
         }
     };
 
     let mut transfer = transfers.begin(req.item_id, Some(conn.remote_id().to_string()));
     let progress = &mut transfer.progress;
-    progress.total_bytes = entry.size;
+    progress.total_bytes = entry_size;
     progress.path_kind = detect_path_kind(&conn);
-    progress.bytes_transferred = req.offset.min(entry.size);
+    progress.bytes_transferred = req.offset.min(entry_size);
     transfers.report(progress);
     let send_file = async {
-        let mut start_offset = if req.offset <= entry.size {
+        let mut start_offset = if req.offset <= entry_size {
             req.offset
         } else {
             0
         };
         let mut resumed_legacy = false;
         if let Some(prefix) = req.legacy_prefix {
-            if req.offset == 0 && prefix.size > 0 && prefix.size <= entry.size {
+            if req.offset == 0 && prefix.size > 0 && prefix.size <= entry_size {
                 let mut reader = (&mut file).take(prefix.size);
                 let mut hasher = blake3::Hasher::new();
                 let mut buf = vec![0; CHUNK_SIZE];
@@ -624,8 +707,8 @@ async fn handle_incoming_connection(
         let resp = PullResponseHeader {
             ok: true,
             error: None,
-            size: entry.size,
-            blake3_hash: entry.blake3_hash,
+            size: entry_size,
+            blake3_hash: entry_hash,
             resumed_legacy,
             supports_receipt: req.wants_receipt,
         };
@@ -656,7 +739,7 @@ async fn handle_incoming_connection(
             }
         }
         anyhow::ensure!(
-            progress.bytes_transferred == entry.size,
+            progress.bytes_transferred == entry_size,
             "source size changed while sending"
         );
         send.finish()?;
@@ -673,6 +756,29 @@ async fn handle_incoming_connection(
 }
 
 const DELIVERED_CODE: u32 = 0x4444;
+/// How long a rejecting source keeps the connection open for the requester to read why.
+const REJECTION_LINGER: Duration = Duration::from_secs(10);
+
+/// Sends a failed `PullResponseHeader`. Returning straight away would drop the
+/// connection and could discard the response, so wait for the requester to close it.
+async fn reject_pull(
+    conn: &Connection,
+    send: &mut iroh::endpoint::SendStream,
+    error: &str,
+) -> anyhow::Result<()> {
+    let resp = PullResponseHeader {
+        resumed_legacy: false,
+        supports_receipt: false,
+        ok: false,
+        error: Some(error.to_string()),
+        size: 0,
+        blake3_hash: String::new(),
+    };
+    write_frame(send, &serde_json::to_vec(&resp)?).await?;
+    send.finish()?;
+    let _ = tokio::time::timeout(REJECTION_LINGER, conn.closed()).await;
+    Ok(())
+}
 
 fn confirm_sent(result: Result<Option<VarInt>, StoppedError>) -> anyhow::Result<()> {
     match result {
@@ -716,6 +822,22 @@ fn part_path_for(dest_path: &Path) -> PathBuf {
     PathBuf::from(os)
 }
 
+/// Records which drawer item a `.dropdrawer.part` file belongs to.
+fn part_owner_path_for(part_path: &Path) -> PathBuf {
+    let mut os = OsString::from(part_path.as_os_str());
+    os.push(".owner");
+    PathBuf::from(os)
+}
+
+/// Partials written before owners were recorded have no owner file; keep resuming
+/// those as before. Otherwise the partial must belong to `item_id`.
+async fn partial_belongs_to(owner_path: &Path, item_id: &str) -> bool {
+    match tokio::fs::read_to_string(owner_path).await {
+        Ok(owner) => owner.trim() == item_id,
+        Err(_) => true,
+    }
+}
+
 fn detect_path_kind(conn: &Connection) -> P2pPathKind {
     for p in conn.paths().iter() {
         if p.is_selected() {
@@ -736,11 +858,14 @@ async fn write_frame<W: AsyncWriteExt + Unpin>(w: &mut W, data: &[u8]) -> anyhow
     Ok(())
 }
 
+const MAX_FRAME_LEN: usize = 64 * 1024;
+
 async fn read_frame<R: AsyncReadExt + Unpin>(r: &mut R) -> anyhow::Result<Vec<u8>> {
     let mut len_buf = [0u8; 4];
     r.read_exact(&mut len_buf).await?;
     let len = u32::from_be_bytes(len_buf) as usize;
-    if len > 4 * 1024 * 1024 {
+    // Headers are small JSON documents; this is read before the token is checked.
+    if len > MAX_FRAME_LEN {
         anyhow::bail!("protocol frame too large: {len}");
     }
     let mut buf = vec![0u8; len];
@@ -780,7 +905,18 @@ async fn load_or_create_secret_key(path: &Path) -> anyhow::Result<SecretKey> {
     raw[..16].copy_from_slice(Uuid::new_v4().as_bytes());
     raw[16..].copy_from_slice(Uuid::new_v4().as_bytes());
     let key = SecretKey::from_bytes(&raw);
-    tokio::fs::write(path, key.to_bytes()).await?;
+    let bytes = key.to_bytes();
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        use std::io::Write;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        // The node identity key must not be readable by other local users.
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        options.open(&path)?.write_all(&bytes)
+    })
+    .await??;
     Ok(key)
 }
 
@@ -813,12 +949,14 @@ mod tests {
                 .set_len(32 * 1024 * 1024)
                 .unwrap();
             let source = sender.register_file("item".into(), &src).await.unwrap();
-            sender.authorize_token(
-                "item".into(),
-                "token".into(),
-                Utc::now() + chrono::Duration::minutes(1),
-            );
+            // Tokens are single-use: every retry gets a fresh one from the server.
             let pull = |transfer| {
+                let token = Uuid::new_v4().to_string();
+                sender.authorize_token(
+                    "item".into(),
+                    token.clone(),
+                    Utc::now() + chrono::Duration::minutes(1),
+                );
                 let info = sender.node_info();
                 let dest = dest.clone();
                 let receiver = receiver.clone();
@@ -831,7 +969,7 @@ mod tests {
                                 remote_node_id: info.node_id,
                                 remote_relay_url: info.relay_url,
                                 remote_direct_addrs: info.direct_addrs,
-                                transfer_token: "token".into(),
+                                transfer_token: token,
                                 dest_path: dest,
                                 skip_legacy_resume: false,
                             },
@@ -945,14 +1083,6 @@ mod tests {
             .unwrap();
         assert_eq!(info.size, payload.len() as u64);
 
-        // Authorize pull token on node A
-        let token = "secret-transfer-token".to_string();
-        node_a.authorize_token(
-            "item-42".to_string(),
-            token.clone(),
-            Utc::now() + chrono::Duration::minutes(5),
-        );
-
         let dest_file = dir_b.path().join("received.bin");
         let legacy = dest_file.with_extension("dropdrawer.part");
         for matches in [false, true] {
@@ -962,6 +1092,13 @@ mod tests {
                 b"another file"
             };
             tokio::fs::write(&legacy, prefix).await.unwrap();
+            // Authorize a single-use pull token on node A.
+            let token = format!("secret-transfer-token-{matches}");
+            node_a.authorize_token(
+                "item-42".to_string(),
+                token.clone(),
+                Utc::now() + chrono::Duration::minutes(5),
+            );
             let info_a = node_a.node_info();
             let progress = node_b
                 .download_file(
@@ -992,6 +1129,144 @@ mod tests {
 
         node_a.shutdown().await;
         node_b.shutdown().await;
+    }
+
+    async fn lan_node(dir: &Path, name: &str) -> Arc<P2pNode> {
+        P2pNode::start(
+            P2pConfig {
+                data_dir: dir.join(name).display().to_string(),
+                custom_relay_url: None,
+                disable_relay: true,
+            },
+            true,
+        )
+        .await
+        .unwrap()
+    }
+
+    async fn pull(
+        receiver: &Arc<P2pNode>,
+        sender: &Arc<P2pNode>,
+        item_id: &str,
+        token: &str,
+        dest: &Path,
+    ) -> anyhow::Result<P2pTransferProgress> {
+        let info = sender.node_info();
+        receiver
+            .download_file(
+                item_id.into(),
+                info.node_id,
+                info.relay_url,
+                info.direct_addrs,
+                token.into(),
+                dest.to_path_buf(),
+            )
+            .await
+    }
+
+    #[tokio::test]
+    async fn tokens_are_single_use_bound_to_peer_and_tolerate_late_push() {
+        tokio::time::timeout(Duration::from_secs(60), async {
+            let dir = TempDir::new().unwrap();
+            let sender = lan_node(dir.path(), "sender").await;
+            let receiver = lan_node(dir.path(), "receiver").await;
+            let other = lan_node(dir.path(), "other").await;
+            let src = dir.path().join("src.bin");
+            std::fs::write(&src, vec![7u8; 300 * 1024]).unwrap();
+
+            // Registration does not read the file; the first pull hashes it.
+            let info = sender.register_file_deferred("item".into(), &src).unwrap();
+            assert_eq!(info.size, 300 * 1024);
+            assert!(info.blake3_hash.is_empty());
+
+            // The pull may reach the source before the control server's token push.
+            let late = {
+                let sender = sender.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    sender.authorize_token(
+                        "item".into(),
+                        "late".into(),
+                        Utc::now() + chrono::Duration::minutes(1),
+                    );
+                })
+            };
+            let dest = dir.path().join("a.bin");
+            pull(&receiver, &sender, "item", "late", &dest).await.unwrap();
+            late.await.unwrap();
+            assert_eq!(std::fs::read(&dest).unwrap(), vec![7u8; 300 * 1024]);
+
+            // A redeemed token cannot be replayed.
+            let replay = pull(&receiver, &sender, "item", "late", &dir.path().join("b.bin")).await;
+            assert!(replay.unwrap_err().to_string().contains("unauthorized"));
+
+            // A token issued for one peer is useless to another.
+            sender.authorize_token_for(
+                "item".into(),
+                "bound".into(),
+                Utc::now() + chrono::Duration::minutes(1),
+                Some(receiver.node_info().node_id),
+            );
+            let stolen = pull(&other, &sender, "item", "bound", &dir.path().join("c.bin")).await;
+            assert!(stolen.unwrap_err().to_string().contains("unauthorized"));
+            pull(&receiver, &sender, "item", "bound", &dir.path().join("d.bin"))
+                .await
+                .unwrap();
+
+            // Expired tokens are rejected and pruned when new ones arrive.
+            sender.authorize_token(
+                "item".into(),
+                "expired".into(),
+                Utc::now() - chrono::Duration::seconds(1),
+            );
+            let expired = pull(&receiver, &sender, "item", "expired", &dir.path().join("e.bin")).await;
+            assert!(expired.is_err());
+            sender.authorize_token(
+                "item".into(),
+                "fresh".into(),
+                Utc::now() + chrono::Duration::minutes(1),
+            );
+            assert!(!sender.source.authorized_tokens.contains_key("expired"));
+
+            for node in [sender, receiver, other] {
+                node.shutdown().await;
+            }
+        })
+        .await
+        .expect("token test must not hang");
+    }
+
+    #[tokio::test]
+    async fn partial_left_by_a_same_named_item_is_not_resumed() {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            let dir = TempDir::new().unwrap();
+            let sender = lan_node(dir.path(), "sender").await;
+            let receiver = lan_node(dir.path(), "receiver").await;
+            let src = dir.path().join("src.bin");
+            let payload: Vec<u8> = (0..(400 * 1024)).map(|i| (i % 253) as u8).collect();
+            std::fs::write(&src, &payload).unwrap();
+            sender.register_file("item-b".into(), &src).await.unwrap();
+
+            let dest = dir.path().join("photo.png");
+            let part = part_path_for(&dest);
+            let owner = part_owner_path_for(&part);
+            std::fs::write(&part, vec![0xAAu8; 100 * 1024]).unwrap();
+            std::fs::write(&owner, "item-a").unwrap();
+
+            sender.authorize_token(
+                "item-b".into(),
+                "t".into(),
+                Utc::now() + chrono::Duration::minutes(1),
+            );
+            pull(&receiver, &sender, "item-b", "t", &dest).await.unwrap();
+            assert_eq!(std::fs::read(&dest).unwrap(), payload);
+            assert!(!part.exists() && !owner.exists());
+
+            sender.shutdown().await;
+            receiver.shutdown().await;
+        })
+        .await
+        .expect("transfer must finish");
     }
 
     #[test]

@@ -74,6 +74,14 @@ pub unsafe extern "C" fn dropdrawer_p2p_start(config_json: *const c_char) -> *mu
     let res = (|| -> Result<_, String> {
         let raw = unsafe { parse_c_str(config_json)? };
         let cfg: P2pConfig = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+        // Restarting must not leave the previous endpoint running and bound.
+        let previous = node_slot()
+            .lock()
+            .map_err(|_| "mutex poisoned".to_string())?
+            .take();
+        if let Some(previous) = previous {
+            runtime().block_on(previous.shutdown());
+        }
         let node = runtime()
             .block_on(P2pNode::start(cfg, true))
             .map_err(|e| e.to_string())?;
@@ -104,9 +112,18 @@ pub unsafe extern "C" fn dropdrawer_p2p_register_file(req_json: *const c_char) -
         let node = current_node()?;
         let raw = unsafe { parse_c_str(req_json)? };
         let req: RegisterFileReq = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
-        runtime()
-            .block_on(node.register_file(req.item_id, req.path))
-            .map_err(|e| e.to_string())
+        // Never hash on the caller's (UI) thread: register by reference now and
+        // let the hash be computed in the background, or by the first pull.
+        let info = node
+            .register_file_deferred(req.item_id, req.path)
+            .map_err(|e| e.to_string())?;
+        let item_id = info.item_id.clone();
+        runtime().spawn(async move {
+            if let Err(err) = node.ensure_hashed(&item_id).await {
+                tracing::warn!("hashing shared file {item_id} failed: {err}");
+            }
+        });
+        Ok(info)
     })();
     to_c_json(res)
 }
@@ -116,6 +133,8 @@ struct AuthorizeTokenReq {
     item_id: String,
     token: String,
     expires_at: DateTime<Utc>,
+    #[serde(default)]
+    requester_node_id: Option<String>,
 }
 
 #[unsafe(no_mangle)]
@@ -124,7 +143,7 @@ pub unsafe extern "C" fn dropdrawer_p2p_authorize_token(req_json: *const c_char)
         let node = current_node()?;
         let raw = unsafe { parse_c_str(req_json)? };
         let req: AuthorizeTokenReq = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
-        node.authorize_token(req.item_id, req.token, req.expires_at);
+        node.authorize_token_for(req.item_id, req.token, req.expires_at, req.requester_node_id);
         Ok(true)
     })();
     to_c_json(res)

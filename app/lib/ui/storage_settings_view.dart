@@ -94,7 +94,6 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
           break;
         case 'local':
           _nameCtrl.text = '服务器本地盘';
-          _pathCtrl.text = './data/blobs';
           break;
       }
     });
@@ -202,9 +201,11 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
           };
           break;
         default:
+          // The server always places local storage in this account's own
+          // directory under DROPDRAWER_LOCAL_STORAGE and ignores root_dir.
           cfg = {
             'kind': 'local',
-            'root_dir': _pathCtrl.text.trim(),
+            'root_dir': '',
           };
       }
 
@@ -577,7 +578,13 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
               ],
               if (_selectedKind == 'local') ...[
                 const Divider(height: 0.5, thickness: 0.5, indent: 12),
-                MacFormField(controller: _pathCtrl, label: '目录'),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  child: Text(
+                    '文件保存在服务器数据目录中属于当前账号的文件夹（由服务端 DROPDRAWER_LOCAL_STORAGE 决定）。',
+                    style: TextStyle(fontSize: 11, color: MacPalette.textSecondary),
+                  ),
+                ),
               ],
             ],
           ),

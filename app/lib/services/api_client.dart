@@ -530,11 +530,13 @@ class ApiClient {
     final wsBase = _cleanBase
         .replaceFirst(RegExp(r'^https://'), 'wss://')
         .replaceFirst(RegExp(r'^http://'), 'ws://');
+    // The JWT goes in a header, not the URL, so proxies do not log it.
     final uri = Uri.parse(
-      '$wsBase/ws?token=${Uri.encodeQueryComponent(token ?? '')}&device_id=${Uri.encodeQueryComponent(deviceId)}',
+      '$wsBase/ws?device_id=${Uri.encodeQueryComponent(deviceId)}',
     );
     return IOWebSocketChannel.connect(
       uri,
+      headers: {'Authorization': 'Bearer ${token ?? ''}'},
       pingInterval: const Duration(seconds: 20),
       connectTimeout: const Duration(seconds: 10),
     );

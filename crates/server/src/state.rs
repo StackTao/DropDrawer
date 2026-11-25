@@ -1,12 +1,14 @@
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use protocol::{DeviceInfo, DrawerItem, StorageBackendConfig, WsEvent};
 use tokio::sync::{mpsc, Mutex};
 
 use crate::db::{hydrate_drawer_item, Database, StorageBackendRecord};
-use crate::storage::{build_provider, StorageProvider};
+use crate::storage::{build_provider, local::LocalProvider, StorageProvider};
 
 #[derive(Clone)]
 pub struct ConnectionHandle {
@@ -37,6 +39,56 @@ pub struct AppState {
     pub(crate) presence_changes: Mutex<()>,
     /// Short-lived Google OAuth2 authorization flows keyed by `state` nonce.
     pub pending_google_oauth: DashMap<String, PendingGoogleOAuth>,
+    /// Whether `POST /api/auth/register` accepts new accounts (`DROPDRAWER_ALLOW_REGISTRATION`).
+    registration_open: AtomicBool,
+    /// Failed logins per username.
+    pub failed_logins: AttemptLimiter,
+    /// Failed passcode attempts per share code.
+    pub failed_passcodes: AttemptLimiter,
+}
+
+/// Fixed-window counter of failed attempts per key (username, share code, ...).
+/// Keys over the limit are refused before any password hash is computed, which
+/// bounds both guessing and Argon2 CPU cost.
+pub struct AttemptLimiter {
+    attempts: DashMap<String, (u32, Instant)>,
+    max_failures: u32,
+    window: Duration,
+}
+
+impl AttemptLimiter {
+    pub fn new(max_failures: u32, window: Duration) -> Self {
+        Self {
+            attempts: DashMap::new(),
+            max_failures,
+            window,
+        }
+    }
+
+    pub fn is_blocked(&self, key: &str) -> bool {
+        self.attempts
+            .get(key)
+            .is_some_and(|e| e.1.elapsed() < self.window && e.0 >= self.max_failures)
+    }
+
+    pub fn record_failure(&self, key: &str) {
+        if self.attempts.len() > 10_000 {
+            let window = self.window;
+            self.attempts.retain(|_, e| e.1.elapsed() < window);
+        }
+        let mut entry = self
+            .attempts
+            .entry(key.to_string())
+            .or_insert((0, Instant::now()));
+        if entry.1.elapsed() >= self.window {
+            *entry = (0, Instant::now());
+        }
+        entry.0 += 1;
+    }
+
+    pub fn reset(&self, key: &str) {
+        self.attempts.remove(key);
+    }
 }
 
 impl AppState {
@@ -53,7 +105,23 @@ impl AppState {
             connections: DashMap::new(),
             presence_changes: Mutex::new(()),
             pending_google_oauth: DashMap::new(),
+            registration_open: AtomicBool::new(true),
+            failed_logins: AttemptLimiter::new(10, Duration::from_secs(15 * 60)),
+            failed_passcodes: AttemptLimiter::new(10, Duration::from_secs(15 * 60)),
         })
+    }
+
+    pub fn registration_open(&self) -> bool {
+        self.registration_open.load(Ordering::Relaxed)
+    }
+
+    pub fn set_registration_open(&self, open: bool) {
+        self.registration_open.store(open, Ordering::Relaxed);
+    }
+
+    /// The only directory a user's server-local storage may live in.
+    pub fn user_local_storage_dir(&self, user_id: &str) -> PathBuf {
+        self.default_local_storage_dir.join(user_id)
     }
 
     pub fn is_device_online(&self, user_id: &str, device_id: &str) -> bool {
@@ -126,7 +194,7 @@ impl AppState {
             return Ok(rec);
         }
         // Auto-provision a default local storage backend for the user if none is configured yet.
-        let user_dir = self.default_local_storage_dir.join(user_id);
+        let user_dir = self.user_local_storage_dir(user_id);
         let cfg = StorageBackendConfig::Local {
             root_dir: user_dir.to_string_lossy().to_string(),
             max_bytes: None,
@@ -140,6 +208,79 @@ impl AppState {
         &self,
         record: &StorageBackendRecord,
     ) -> anyhow::Result<Box<dyn StorageProvider>> {
+        if let StorageBackendConfig::Local {
+            root_dir,
+            max_bytes,
+        } = &record.config
+        {
+            // Users must never point server-local storage at arbitrary server paths.
+            // Older clients could store `root_dir` as the shared storage root itself,
+            // so accept that or anything inside the owner's own directory, and pin
+            // every key to the owner's namespace either way.
+            let root = normalize_path(Path::new(root_dir));
+            let shared = normalize_path(&self.default_local_storage_dir);
+            let own = normalize_path(&self.user_local_storage_dir(&record.user_id));
+            if root != shared && !root.starts_with(&own) {
+                anyhow::bail!("local storage directory is outside the server storage area");
+            }
+            return Ok(Box::new(
+                LocalProvider::new(root, *max_bytes)?.restrict_keys_to(record.user_id.clone()),
+            ));
+        }
         build_provider(&record.config, self.http.clone())
+    }
+}
+
+/// Absolute, lexically normalized form of `path` (`.`/`..` resolved without touching the filesystem).
+fn normalize_path(path: &Path) -> PathBuf {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("/"))
+            .join(path)
+    };
+    let mut out = PathBuf::new();
+    for comp in absolute.components() {
+        match comp {
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn limiter_blocks_after_max_failures_until_reset() {
+        let limiter = AttemptLimiter::new(3, Duration::from_secs(60));
+        for _ in 0..3 {
+            assert!(!limiter.is_blocked("k"));
+            limiter.record_failure("k");
+        }
+        assert!(limiter.is_blocked("k"));
+        assert!(!limiter.is_blocked("other"));
+        limiter.reset("k");
+        assert!(!limiter.is_blocked("k"));
+
+        let short = AttemptLimiter::new(1, Duration::from_millis(1));
+        short.record_failure("k");
+        std::thread::sleep(Duration::from_millis(5));
+        assert!(!short.is_blocked("k"));
+    }
+
+    #[test]
+    fn normalize_resolves_dot_segments() {
+        assert_eq!(
+            normalize_path(Path::new("/data/blobs/../blobs/./u1")),
+            PathBuf::from("/data/blobs/u1")
+        );
+        assert_eq!(normalize_path(Path::new("/data/../../etc")), PathBuf::from("/etc"));
     }
 }
