@@ -1175,41 +1175,54 @@ class DropDrawerController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Batch deletes specific item IDs from drawer & cloud storage.
   Future<void> batchDeleteItems(List<String> ids) async {
-    if (_api == null || ids.isEmpty) return;
-    final count = await _api!.batchDeleteItems(itemIds: ids);
-    for (final id in ids) {
-      items.removeWhere((e) => e.id == id);
-      localFilePaths.remove(id);
-      activeTransfers.remove(id);
-      if (p2pReady) {
-        try {
-          p2p.unregisterFile(id);
-        } catch (_) {}
-      }
-    }
-    unawaited(_persistLocalFilePaths());
-    statusBanner = '已移出 $count 个条目';
-    notifyListeners();
+    if (ids.isEmpty) return;
+    await _batchDeleteDrawerItems(itemIds: ids);
   }
 
   /// Clears the entire cross-device drawer and deletes associated cloud blobs.
   Future<void> clearDrawer() async {
-    if (_api == null || items.isEmpty) return;
-    final count = await _api!.batchDeleteItems(clearAll: true);
-    for (final it in items) {
-      if (p2pReady) {
-        try {
-          p2p.unregisterFile(it.id);
-        } catch (_) {}
+    if (items.isEmpty) return;
+    await _batchDeleteDrawerItems(clearAll: true);
+  }
+
+  Future<void> _batchDeleteDrawerItems({
+    List<String> itemIds = const [],
+    bool clearAll = false,
+  }) async {
+    final api = _api;
+    if (api == null) return;
+    try {
+      final result = await api.batchDeleteItems(
+        itemIds: itemIds,
+        clearAll: clearAll,
+      );
+      if (!identical(api, _api)) return;
+      final deletedIds = result.deletedIds.toSet();
+      items.removeWhere((item) => deletedIds.contains(item.id));
+      for (final id in deletedIds) {
+        localFilePaths.remove(id);
+        activeTransfers.remove(id);
+        if (p2pReady) {
+          try {
+            p2p.unregisterFile(id);
+          } catch (_) {}
+        }
       }
+      unawaited(_persistLocalFilePaths());
+      final deleted = deletedIds.length;
+      final failed = result.failedIds.length;
+      if (failed > 0) {
+        statusBanner = '已清理 $deleted 项，$failed 项资源删除失败，条目已保留，可重试。';
+      } else if (clearAll && items.isEmpty) {
+        statusBanner = '已清空抽屉（共清理 $deleted 项）';
+      } else {
+        statusBanner = '已移出 $deleted 个条目';
+      }
+    } catch (_) {
+      if (!identical(api, _api)) return;
+      statusBanner = '清理结果未确认，请稍后重试。';
     }
-    items.clear();
-    localFilePaths.clear();
-    activeTransfers.clear();
-    unawaited(_persistLocalFilePaths());
-    statusBanner = '已清空抽屉（共清理 $count 项）';
     notifyListeners();
   }
 

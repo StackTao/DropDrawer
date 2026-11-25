@@ -171,7 +171,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
     final confirmed = await showAdaptiveConfirm(
       context,
       title: '清空抽屉',
-      message: '确定要移出当前抽屉中的全部 ${c.items.length} 项内容吗？',
+      message: '将清理抽屉中的 ${c.items.length} 项内容及其在服务器或网盘的副本。本机原文件会保留。',
       confirmLabel: '清空',
       destructive: true,
     );
@@ -2420,7 +2420,13 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                       icon: CupertinoIcons.xmark,
                       tooltip: '移出抽屉',
                       size: 13,
-                      onPressed: () => c.deleteItem(item.id),
+                      onPressed: () async {
+                        try {
+                          await c.deleteItem(item.id);
+                        } catch (e) {
+                          c.setBanner('移出失败：$e');
+                        }
+                      },
                     ),
                 ],
               ],

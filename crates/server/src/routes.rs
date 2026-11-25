@@ -487,29 +487,19 @@ async fn delete_drawer_item(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    let Some(item) = state
-        .db
-        .get_drawer_item(&id, &auth.user_id)
-        .map_err(internal_err)?
-    else {
+    let deleted = state
+        .delete_drawer_item(&auth.user_id, &id)
+        .await
+        .map_err(|_| {
+            tracing::warn!(item_id = %id, "drawer resource deletion failed");
+            (
+                StatusCode::BAD_GATEWAY,
+                "could not delete drawer resource; retry later".to_string(),
+            )
+        })?;
+    if !deleted {
         return Err((StatusCode::NOT_FOUND, "item not found".to_string()));
-    };
-
-    if let (Some(backend_id), Some(storage_path)) =
-        (item.storage_backend_id.as_deref(), item.storage_path.as_deref())
-    {
-        if let Ok(Some(backend)) = state.db.get_storage_backend(backend_id, &auth.user_id) {
-            if let Ok(provider) = state.build_storage_provider(&backend) {
-                let _ = provider.delete(storage_path).await;
-            }
-        }
     }
-
-    state
-        .db
-        .delete_drawer_item(&id, &auth.user_id)
-        .map_err(internal_err)?;
-    state.broadcast_user(&auth.user_id, WsEvent::ItemDeleted { item_id: id });
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -526,54 +516,37 @@ async fn batch_delete_drawer_items(
     State(state): State<Arc<AppState>>,
     Json(req): Json<BatchDeleteRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let targets = if req.clear_all {
+    let mut targets = if req.clear_all {
         state
             .db
             .list_drawer_items(&auth.user_id)
             .map_err(internal_err)?
+            .into_iter()
+            .map(|item| item.id)
+            .collect()
     } else {
-        let mut rows = Vec::new();
-        for id in &req.item_ids {
-            if let Some(row) = state
-                .db
-                .get_drawer_item(id, &auth.user_id)
-                .map_err(internal_err)?
-            {
-                rows.push(row);
-            }
-        }
-        rows
+        req.item_ids
     };
+    let mut seen = std::collections::HashSet::with_capacity(targets.len());
+    targets.retain(|id| seen.insert(id.clone()));
 
     let mut deleted_ids = Vec::with_capacity(targets.len());
-    for item in targets {
-        if let (Some(backend_id), Some(storage_path)) =
-            (item.storage_backend_id.as_deref(), item.storage_path.as_deref())
-        {
-            if let Ok(Some(backend)) = state.db.get_storage_backend(backend_id, &auth.user_id) {
-                if let Ok(provider) = state.build_storage_provider(&backend) {
-                    let _ = provider.delete(storage_path).await;
-                }
+    let mut failed_ids = Vec::new();
+    for id in targets {
+        match state.delete_drawer_item(&auth.user_id, &id).await {
+            Ok(true) => deleted_ids.push(id),
+            Ok(false) => {}
+            Err(_) => {
+                tracing::warn!(item_id = %id, "drawer resource deletion failed");
+                failed_ids.push(id);
             }
-        }
-        if state
-            .db
-            .delete_drawer_item(&item.id, &auth.user_id)
-            .map_err(internal_err)?
-        {
-            state.broadcast_user(
-                &auth.user_id,
-                WsEvent::ItemDeleted {
-                    item_id: item.id.clone(),
-                },
-            );
-            deleted_ids.push(item.id);
         }
     }
 
     Ok(Json(serde_json::json!({
         "deleted": deleted_ids.len(),
         "item_ids": deleted_ids,
+        "failed_item_ids": failed_ids,
     })))
 }
 
@@ -638,6 +611,7 @@ async fn stream_upload_item(
     headers: axum::http::HeaderMap,
     body: Body,
 ) -> Result<Json<DrawerItem>, (StatusCode, String)> {
+    let _item_lock = state.lock_drawer_item(&id).await;
     let item = state
         .db
         .get_drawer_item(&id, &auth.user_id)
@@ -714,6 +688,7 @@ async fn confirm_direct_upload(
     Path(id): Path<String>,
     Json(req): Json<ConfirmUploadRequest>,
 ) -> Result<Json<DrawerItem>, (StatusCode, String)> {
+    let _item_lock = state.lock_drawer_item(&id).await;
     let item = state
         .db
         .get_drawer_item(&id, &auth.user_id)

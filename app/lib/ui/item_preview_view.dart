@@ -102,7 +102,11 @@ class ItemPreviewView extends StatelessWidget {
                   size: 14,
                   color: MacPalette.red,
                   onPressed: () async {
-                    await c.deleteItem(item.id);
+                    try {
+                      await c.deleteItem(item.id);
+                    } catch (e) {
+                      c.setBanner('移出失败：$e');
+                    }
                     onBack();
                   },
                 ),

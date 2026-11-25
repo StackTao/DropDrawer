@@ -9,7 +9,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
-use protocol::WsEvent;
 
 use crate::state::AppState;
 
@@ -30,25 +29,10 @@ pub async fn run_ttl_cleanup_once(state: &Arc<AppState>) -> anyhow::Result<usize
     let expired = state.db.list_expired_items(Utc::now())?;
     let mut cleaned = 0usize;
     for item in expired {
-        if let (Some(backend_id), Some(storage_path)) =
-            (item.storage_backend_id.as_deref(), item.storage_path.as_deref())
-        {
-            if let Ok(Some(backend)) = state.db.get_storage_backend(backend_id, &item.user_id) {
-                if let Ok(provider) = state.build_storage_provider(&backend) {
-                    if let Err(err) = provider.delete(storage_path).await {
-                        tracing::warn!("failed deleting expired blob {}: {err}", storage_path);
-                    }
-                }
-            }
-        }
-        if state.db.delete_drawer_item(&item.id, &item.user_id)? {
-            state.broadcast_user(
-                &item.user_id,
-                WsEvent::ItemDeleted {
-                    item_id: item.id.clone(),
-                },
-            );
-            cleaned += 1;
+        match state.delete_drawer_item(&item.user_id, &item.id).await {
+            Ok(true) => cleaned += 1,
+            Ok(false) => {}
+            Err(_) => tracing::warn!(item_id = %item.id, "expired drawer resource deletion failed"),
         }
     }
     Ok(cleaned)

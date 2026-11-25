@@ -217,7 +217,7 @@ class ApiClient {
     _check(resp);
   }
 
-  Future<int> batchDeleteItems({
+  Future<({List<String> deletedIds, List<String> failedIds})> batchDeleteItems({
     List<String> itemIds = const [],
     bool clearAll = false,
   }) async {
@@ -231,7 +231,11 @@ class ApiClient {
     );
     _check(resp);
     final data = jsonDecode(resp.body) as Map<String, dynamic>;
-    return (data['deleted'] as num?)?.toInt() ?? 0;
+    return (
+      deletedIds: (data['item_ids'] as List<dynamic>).cast<String>(),
+      failedIds:
+          (data['failed_item_ids'] as List<dynamic>?)?.cast<String>() ?? const [],
+    );
   }
 
   Future<DrawerItem> uploadItemFile({

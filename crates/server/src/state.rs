@@ -1,11 +1,11 @@
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use protocol::{DeviceInfo, DrawerItem, StorageBackendConfig, WsEvent};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, Mutex, OwnedMutexGuard};
 
 use crate::db::{hydrate_drawer_item, Database, StorageBackendRecord};
 use crate::google_login::{GoogleLogin, GoogleLoginConfig};
@@ -38,6 +38,7 @@ pub struct AppState {
     pub connections: DashMap<(String, String), mpsc::UnboundedSender<WsEvent>>,
     // Order connection replacement, removal and the corresponding presence events.
     pub(crate) presence_changes: Mutex<()>,
+    item_mutations: DashMap<String, Weak<Mutex<()>>>,
     pub(crate) google_login: Option<GoogleLogin>,
     /// Short-lived Google OAuth2 authorization flows keyed by `state` nonce.
     pub pending_google_oauth: DashMap<String, PendingGoogleOAuth>,
@@ -115,6 +116,7 @@ impl AppState {
             default_local_storage_dir,
             connections: DashMap::new(),
             presence_changes: Mutex::new(()),
+            item_mutations: DashMap::new(),
             google_login: google_config.map(GoogleLogin::new),
             pending_google_oauth: DashMap::new(),
             registration_open: AtomicBool::new(true),
@@ -129,6 +131,55 @@ impl AppState {
 
     pub fn set_registration_open(&self, open: bool) {
         self.registration_open.store(open, Ordering::Relaxed);
+    }
+
+    // Serialize storage changes for one item without holding a map guard across an await.
+    pub(crate) async fn lock_drawer_item(&self, item_id: &str) -> OwnedMutexGuard<()> {
+        if self.item_mutations.len() > 1024 {
+            self.item_mutations
+                .retain(|_, lock| lock.strong_count() != 0);
+        }
+        let lock = {
+            let mut entry = self.item_mutations.entry(item_id.to_owned()).or_default();
+            match entry.upgrade() {
+                Some(lock) => lock,
+                None => {
+                    let lock = Arc::new(Mutex::new(()));
+                    *entry = Arc::downgrade(&lock);
+                    lock
+                }
+            }
+        };
+        lock.lock_owned().await
+    }
+
+    pub(crate) async fn delete_drawer_item(
+        &self,
+        user_id: &str,
+        item_id: &str,
+    ) -> anyhow::Result<bool> {
+        let _item_lock = self.lock_drawer_item(item_id).await;
+        let Some(item) = self.db.get_drawer_item(item_id, user_id)? else {
+            return Ok(false);
+        };
+        if let Some(storage_path) = item.storage_path.as_deref() {
+            let backend_id = item
+                .storage_backend_id
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("missing storage backend for drawer file"))?;
+            let backend = self.resolve_backend(user_id, Some(backend_id))?;
+            self.build_storage_provider(&backend)?
+                .delete(storage_path)
+                .await?;
+        }
+        self.db.delete_drawer_item(item_id, user_id)?;
+        self.broadcast_user(
+            user_id,
+            WsEvent::ItemDeleted {
+                item_id: item_id.to_owned(),
+            },
+        );
+        Ok(true)
     }
 
     /// The only directory a user's server-local storage may live in.

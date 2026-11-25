@@ -134,10 +134,11 @@ impl StorageProvider for LocalProvider {
 
     async fn delete(&self, remote_key: &str) -> anyhow::Result<()> {
         let target = self.safe_path(remote_key)?;
-        if target.exists() {
-            tokio::fs::remove_file(target).await?;
+        match tokio::fs::remove_file(target).await {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err.into()),
         }
-        Ok(())
     }
 
     async fn health_check(&self) -> anyhow::Result<String> {

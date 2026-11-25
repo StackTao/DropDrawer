@@ -401,6 +401,116 @@ async fn test_auth_device_local_storage_and_ttl_cleanup() {
 }
 
 #[tokio::test]
+async fn test_clear_drawer_removes_owned_files_and_retries_failed_deletions() {
+    let (app, state, _tmp) = spawn_test_server().await;
+    let owner = state.db.create_user("owner", "owner", "").unwrap();
+    let other = state.db.create_user("other", "other", "").unwrap();
+    let token =
+        dropdrawer_server::auth::create_jwt(&owner.id, &owner.username, &state.jwt_secret).unwrap();
+
+    let create_file = |user_id: &str, id: &str, expired: bool| {
+        let backend = state.resolve_backend(user_id, None).unwrap();
+        let storage_key = format!("{user_id}/{id}.txt");
+        let path = state.user_local_storage_dir(user_id).join(&storage_key);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"uploaded file").unwrap();
+        state
+            .db
+            .create_drawer_item(&DrawerItemRow {
+                id: id.to_owned(),
+                user_id: user_id.to_owned(),
+                owner_device_id: "device".into(),
+                kind: DrawerItemKind::File,
+                name: format!("{id}.txt"),
+                size: 13,
+                mime_type: None,
+                blake3_hash: None,
+                text_content: None,
+                thumbnail_base64: None,
+                transfer_mode: TransferMode::CloudCached,
+                storage_backend_id: Some(backend.id),
+                storage_path: Some(storage_key),
+                cloud_ready: true,
+                expires_at: expired.then(|| Utc::now() - Duration::minutes(1)),
+                created_at: Utc::now(),
+            })
+            .unwrap();
+        path
+    };
+
+    let clean = create_file(&owner.id, "clean", false);
+    let blocked = create_file(&owner.id, "blocked", true);
+    let unrelated = create_file(&other.id, "unrelated", false);
+    let saved = blocked.with_extension("saved");
+    std::fs::rename(&blocked, &saved).unwrap();
+    std::fs::create_dir(&blocked).unwrap();
+
+    let clear = || {
+        send_json::<serde_json::Value>(
+            &app,
+            "POST",
+            "/api/drawer/items/batch-delete",
+            Some(&token),
+            Some(json!({"clear_all": true})),
+        )
+    };
+    let (status, first) = clear().await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        first,
+        json!({"deleted": 1, "item_ids": ["clean"], "failed_item_ids": ["blocked"]})
+    );
+    assert!(!clean.exists());
+    assert!(
+        state
+            .db
+            .get_drawer_item("clean", &owner.id)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        state
+            .db
+            .get_drawer_item("blocked", &owner.id)
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(run_ttl_cleanup_once(&state).await.unwrap(), 0);
+    assert!(
+        state
+            .db
+            .get_drawer_item("blocked", &owner.id)
+            .unwrap()
+            .is_some()
+    );
+
+    std::fs::remove_dir(&blocked).unwrap();
+    std::fs::rename(&saved, &blocked).unwrap();
+    let (status, retry) = clear().await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        retry,
+        json!({"deleted": 1, "item_ids": ["blocked"], "failed_item_ids": []})
+    );
+    assert!(!blocked.exists());
+    assert!(state.db.list_drawer_items(&owner.id).unwrap().is_empty());
+    assert!(
+        state
+            .db
+            .get_drawer_item("unrelated", &other.id)
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(std::fs::read(unrelated).unwrap(), b"uploaded file");
+
+    let (_, empty) = clear().await;
+    assert_eq!(
+        empty,
+        json!({"deleted": 0, "item_ids": [], "failed_item_ids": []})
+    );
+}
+
+#[tokio::test]
 async fn test_native_google_drive_resumable_upload_download_delete_and_s3() {
     // In-process mock Google OAuth2 + Google Drive API v3 server.
     let files: Arc<Mutex<HashMap<String, Vec<u8>>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -1089,8 +1199,12 @@ async fn test_local_storage_cannot_escape_server_storage_area() {
         None,
     )
     .await;
-    assert!(status.is_success());
-    assert!(secret.exists(), "deleting an item must not delete files outside storage");
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert_eq!(std::fs::read(&secret).unwrap(), b"top secret");
+    assert!(
+        state.db.get_drawer_item(&item.id, &mallory.user.id).unwrap().is_some(),
+        "retain the drawer record when its storage path is rejected"
+    );
 
     state.set_registration_open(false);
     let (status, _) = send_raw(
