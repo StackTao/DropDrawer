@@ -213,6 +213,54 @@ section { position: relative; padding-block: clamp(84px, 9.5vw, 136px); }
   background: linear-gradient(180deg, transparent 0%, var(--bg) 100%);
 }
 .hero-spacer { height: 1px; }
+.nobr { white-space: nowrap; }
+
+/* The product's own gesture on the first screen: a file glides to the
+   screen edge, the guide pill appears, the handle lights up. Wide screens
+   only, so it never crosses the headline. */
+.hero-edge { position: absolute; inset: 0; z-index: 1; pointer-events: none; display: none; }
+@media (min-width: 1100px) { .hero-edge { display: block; } }
+.he-handle {
+  position: absolute; right: 0; top: 52%; width: 7px; height: 96px; transform: translateY(-50%);
+  border-radius: 7px 0 0 7px; background: linear-gradient(180deg, #7cf5ff, #38bdf8 50%, #2f6bff);
+  box-shadow: 0 0 22px rgba(56, 189, 248, 0.85), 0 0 70px rgba(56, 189, 248, 0.45);
+  animation: he-handle 7s ease-in-out infinite;
+}
+.he-pill {
+  position: absolute; right: 22px; top: 52%; display: flex; align-items: center; gap: 9px; height: 44px; padding: 0 16px 0 8px;
+  border-radius: 13px; font-size: 13px; font-weight: 500; color: #f3f5f8; white-space: nowrap;
+  background: rgba(12, 14, 20, 0.88); backdrop-filter: blur(14px);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16), 0 0 46px -8px rgba(56, 189, 248, 0.75);
+  transform: translateY(-50%) scale(0.92); transform-origin: right center; opacity: 0;
+  animation: he-pill 7s ease-in-out infinite;
+}
+.he-ico { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; color: #04121c; background: linear-gradient(135deg, #7cf5ff, #38bdf8 45%, #2f6bff); }
+.he-file {
+  position: absolute; left: 74%; top: 64%; display: flex; align-items: center; gap: 10px; padding: 9px 14px 9px 9px;
+  border-radius: 12px; color: #f3f5f8; font-size: 12.5px; font-weight: 500;
+  background: rgba(255, 255, 255, 0.08); backdrop-filter: blur(12px);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16), 0 18px 40px -14px rgba(0, 0, 0, 0.8);
+  animation: he-file 7s cubic-bezier(0.45, 0, 0.25, 1) infinite;
+}
+.he-name small { display: block; font: 400 11px/1.3 var(--font-mono); color: rgba(255, 255, 255, 0.5); }
+.he-doc { width: 30px; height: 36px; border-radius: 6px; display: grid; place-items: end center; padding-bottom: 5px; font: 700 8px/1 var(--font-mono); color: #fff; background: #ef4444; box-shadow: 0 8px 18px -6px #ef4444; }
+@keyframes he-file {
+  0%, 8% { opacity: 0; transform: translate(-30px, 18px) rotate(-3deg); }
+  16% { opacity: 1; transform: translate(0, 0) rotate(-3deg); }
+  52% { opacity: 1; transform: translate(min(17vw, 240px), -10vh) rotate(4deg); }
+  62% { opacity: 0; transform: translate(min(20vw, 280px), -11vh) rotate(4deg) scale(0.6); }
+  100% { opacity: 0; transform: translate(min(20vw, 280px), -11vh) scale(0.6); }
+}
+@keyframes he-pill {
+  0%, 30% { opacity: 0; transform: translateY(-50%) scale(0.92); }
+  40%, 60% { opacity: 1; transform: translateY(-50%) scale(1); }
+  70%, 100% { opacity: 0; transform: translateY(-50%) scale(0.96); }
+}
+@keyframes he-handle {
+  0%, 55% { opacity: 0.55; }
+  62% { opacity: 1; box-shadow: 0 0 30px rgba(124, 245, 255, 1), 0 0 110px rgba(56, 189, 248, 0.8); }
+  80%, 100% { opacity: 0.55; }
+}
 .hero-center {
   position: relative;
   z-index: 2;
@@ -436,6 +484,13 @@ section { position: relative; padding-block: clamp(84px, 9.5vw, 136px); }
   .stage-controls { margin-top: 18px; }
 }
 @media (max-width: 620px) {
+  /* A full-height hero on a tall phone leaves a gap between headline and button. */
+  .hero { height: auto; min-height: 0; max-height: none; padding: 132px 0 64px; justify-content: center; gap: 40px; }
+  .hero-spacer { display: none; }
+  .md-drop small, .md-subbar, .md-foot span:first-child { display: none; }
+  .md-drop b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .md-drop > div { min-width: 0; }
+  .md-foot { justify-content: flex-end; }
   .desk { aspect-ratio: 4 / 3.4; }
   .mac-bar span, .mac-dock { display: none; }
   .finder-win { left: 3%; top: 36px; width: 47%; }
@@ -994,9 +1049,14 @@ footer { border-top: 1px solid var(--line); padding-block: 30px calc(30px + env(
   <section class="hero">
     <canvas id="hero-canvas" aria-hidden="true"></canvas>
     <div class="hero-spacer" aria-hidden="true"></div>
+    <div class="hero-edge" aria-hidden="true">
+      <div class="he-file"><span class="he-doc">PDF</span><span class="he-name">Q4-Proposal.pdf<small>2.4 MB</small></span></div>
+      <div class="he-pill"><span class="he-ico"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M5 13h3l2.2 2.4a2.5 2.5 0 0 0 3.6 0L16 13h3l1.6 6.2A2 2 0 0 1 18.7 21H5.3a2 2 0 0 1-1.9-1.8ZM11 3h2v7.6l2.3-2.3 1.4 1.4L12 14.4 7.3 9.7l1.4-1.4 2.3 2.3Z"/></svg></span>拖到这儿，放入跨端抽屉</div>
+      <div class="he-handle"></div>
+    </div>
 
     <div class="hero-center">
-      <h1>文件拖进边缘<br>全端即刻取走。</h1>
+      <h1>文件拖进边缘<br>全端即刻取走</h1>
       <p class="hero-sub">贴边隐身的开源跨端文件抽屉。<br>在线 P2P 直连，离线自有云盘兜底。</p>
     </div>
 
@@ -1155,7 +1215,7 @@ footer { border-top: 1px solid var(--line); padding-block: 30px calc(30px + env(
     <div class="wrap">
       <div class="sec-head reveal">
         <span class="eyebrow"><i></i>CRAFTED FOR FLOW</span>
-        <h2><span class="t-grad">不是网盘，也不是</span><span class="t-dim">聊天窗口</span></h2>
+        <h2><span class="t-grad">不是网盘，</span><span class="nobr"><span class="t-grad">也不是</span><span class="t-dim">聊天窗口</span></span></h2>
         <p>每一个交互细节都为高频跨端传文件而设计。</p>
       </div>
 
@@ -1212,7 +1272,7 @@ footer { border-top: 1px solid var(--line); padding-block: 30px calc(30px + env(
           </div>
           <div class="bcard-body">
             <h3>iOS &amp; Android 原生集成</h3>
-            <p>支持原生系统相册、微信/相册直接分享入屉，收到照片一键存相册。</p>
+            <p>Android 可从微信、相册等任意 App「分享 → DropDrawer」；iOS 支持「用 DropDrawer 打开」。收到的照片一键存相册。</p>
           </div>
         </article>
 
@@ -1347,7 +1407,7 @@ footer { border-top: 1px solid var(--line); padding-block: 30px calc(30px + env(
 
             <!-- Receiver Device -->
             <rect class="dg-dev" x="580" y="92" width="160" height="80" rx="16"/>
-            <text class="dg-title" x="660" y="128" text-anchor="middle">iPhone / Win</text>
+            <text class="dg-title" x="660" y="128" text-anchor="middle">iPhone</text>
             <text class="dg-sub" x="660" y="149" text-anchor="middle">RECEIVER · BLAKE3</text>
 
             <!-- Relay -->
@@ -1454,7 +1514,7 @@ footer { border-top: 1px solid var(--line); padding-block: 30px calc(30px + env(
         <article class="dl-card" data-plat="windows">
           <div class="dl-medallion" aria-hidden="true"><svg width="21" height="21" viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.5 10.4 4.5v7H3ZM11.4 4.4 21 3v8.5h-9.6ZM3 12.5h7.4v7L3 18.5ZM11.4 12.5H21V21l-9.6-1.4Z"/></svg></div>
           <div class="dl-head"><h3>Windows</h3><span class="dl-tag">x64 Setup</span></div>
-          <p>Win32 贴边抽屉、Win11 亚克力毛玻璃与静默升级。</p>
+          <p>Win32 贴边抽屉、托盘常驻，软件内一键静默升级。</p>
           <a class="btn btn-ghost btn-sm" href="https://github.com/StackTao/DropDrawer/releases/latest/download/DropDrawer-Windows-x64-Setup.exe">下载安装程序</a>
         </article>
         <article class="dl-card" data-plat="android">
@@ -1659,16 +1719,25 @@ footer { border-top: 1px solid var(--line); padding-block: 30px calc(30px + env(
         addEventListener('resize', resize, { passive: true });
 
         const start = performance.now();
+        let visible = true, frame = 0;
         const draw = (now) => {
+          frame = 0;
           mx += (tx - mx) * 0.06;
           my += (ty - my) * 0.06;
           gl.uniform2f(uRes, canvas.width, canvas.height);
           gl.uniform1f(uTime, reduce ? 1.8 : (now - start) * 0.001 + 1.4);
           gl.uniform2f(uMouse, mx, my);
           gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-          if (!reduce) requestAnimationFrame(draw);
+          if (!reduce && visible) frame = requestAnimationFrame(draw);
         };
-        requestAnimationFrame(draw);
+        frame = requestAnimationFrame(draw);
+        // A full-screen shader keeps the GPU busy; pause it while the hero is off screen.
+        if ('IntersectionObserver' in window) {
+          new IntersectionObserver(([entry]) => {
+            visible = entry.isIntersecting;
+            if (visible && !reduce && !frame) frame = requestAnimationFrame(draw);
+          }).observe(canvas);
+        }
         return;
       }
     }
