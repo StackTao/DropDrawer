@@ -39,6 +39,8 @@ jobs:
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
 
       - name: Build native Android P2P libraries (.so)
         run: |
@@ -57,14 +59,11 @@ jobs:
 
       - name: Analyze, test, and build Android Release APK
         working-directory: app
-        env:
-          # Work around super_native_extensions 0.9.1 LTO + panic=abort issue on modern Rust.
-          CARGO_PROFILE_RELEASE_LTO: "false"
-          CARGO_PROFILE_RELEASE_PANIC: "unwind"
         run: |
           flutter pub get --enforce-lockfile
 
-          # Patch cargokit plugin.gradle for Gradle 9 (Project.exec removed in favor of ExecOperations).
+          # Patch pub-cache plugins for Gradle 9 (Project.exec -> ExecOperations) and
+          # super_native_extensions LTO+panic=abort on modern Rust without affecting no_std crates.
           python3 - <<'PY'
           import glob, os
           pub_cache = os.environ.get("PUB_CACHE", os.path.expanduser("~/.pub-cache"))
@@ -83,6 +82,15 @@ jobs:
               with open(path, "w", encoding="utf-8") as f:
                   f.write(src)
               print("Patched cargokit for Gradle 9:", path)
+
+          for path in glob.glob(os.path.join(pub_cache, "hosted", "pub.dev", "super_native_extensions-*", "rust", "Cargo.toml")):
+              with open(path, "r", encoding="utf-8") as f:
+                  src = f.read()
+              patched = src.replace("lto = true", "lto = false").replace('panic = "abort"', 'panic = "unwind"')
+              if patched != src:
+                  with open(path, "w", encoding="utf-8") as f:
+                      f.write(patched)
+                  print("Patched super_native_extensions Cargo.toml:", path)
           PY
 
           flutter analyze --no-pub
