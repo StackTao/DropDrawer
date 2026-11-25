@@ -11,8 +11,9 @@
   - Rust P2P 核心（`crates/p2p-core`：`iroh` QUIC、断点续传、BLAKE3、实时路径、中继打洞重试、送达回执、双向取消）
   - Flutter **macOS 桌面端**（原生贴边抽屉、展开态/折叠态可拖拽停靠、`NSMenu`、`CGEventTap` 全局热键、签名与 DMG 打包）
   - Flutter **Windows 桌面端**（Win32 贴边抽屉、展开态/折叠态可拖拽停靠、托盘单实例、Inno Setup 覆盖升级/卸载清理、GitHub Actions 端到端烟测）
-- **下一阶段**：
-  - 移动端（`app/ios`、`app/android`）：触控 UI 适配、系统分享入口（iOS Share Extension / Android Intent）、移动端 `p2p-core` 交叉编译与打包。
+  - Flutter **移动端（iOS / Android）**：触控 UI 适配（`SafeArea`、快捷选文件/相册/粘贴、下拉刷新、系统分享与存相册）、Android `ACTION_SEND` + `FileProvider` + `MediaStore` + `android-apk.yml` CI、iOS `DropDrawerMobileBridge` + `DropDrawerP2P.xcframework`（`scripts/build_ios_p2p.sh`）
+- **后续增强方向**：
+  - iOS 独立 Share Extension target（需配置 Apple Developer App Group 签名）与真机 TestFlight / Android 正式 Release 签名密钥配置。
 
 ---
 

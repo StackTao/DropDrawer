@@ -3,7 +3,6 @@ mod transfers;
 
 use transfers::{CANCEL_CODE, Cancelled, PROBE_CODE, Transfer, Transfers, while_connected};
 
-#[cfg(any(target_os = "windows", target_os = "macos"))]
 mod relay_probe;
 
 use std::ffi::OsString;
@@ -118,7 +117,6 @@ pub struct P2pNode {
     require_auth_token: bool,
     transfers: Arc<Transfers>,
     accept_task: tokio::task::JoinHandle<()>,
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
     relay_probe: Arc<relay_probe::RelayProbe>,
 }
 
@@ -161,7 +159,6 @@ impl P2pNode {
         let ep_clone = endpoint.clone();
         let files_clone = shared_files.clone();
         let tokens_clone = authorized_tokens.clone();
-        #[cfg(any(target_os = "windows", target_os = "macos"))]
         let relay_probe = Arc::new(relay_probe::RelayProbe::new(endpoint.clone()));
         let accept_task = tokio::spawn(async move {
             while let Some(incoming) = ep_clone.accept().await {
@@ -199,7 +196,6 @@ impl P2pNode {
             require_auth_token,
             transfers,
             accept_task,
-            #[cfg(any(target_os = "windows", target_os = "macos"))]
             relay_probe,
         }))
     }
@@ -324,7 +320,6 @@ impl P2pNode {
 
         let progress = &mut transfer.progress;
         progress.path_kind = detect_path_kind(&conn);
-        #[cfg(any(target_os = "windows", target_os = "macos"))]
         self.relay_probe.schedule(&conn, Some(remote_addr));
         let part_path = part_path_for(&dest_path);
         let _destination = PartialLease::acquire(&self.partial_paths, &part_path)
@@ -419,19 +414,14 @@ impl P2pNode {
             let report_interval = Duration::from_millis(200);
             progress.bytes_transferred = offset;
             progress.total_bytes = total_bytes;
-            #[cfg(any(target_os = "windows", target_os = "macos"))]
-            {
-                progress.path_kind = detect_path_kind(&conn);
-                self.transfers.report(progress);
-            }
-            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            progress.path_kind = detect_path_kind(&conn);
+            self.transfers.report(progress);
             let mut path_poll = tokio::time::interval_at(
                 tokio::time::Instant::now() + report_interval,
                 report_interval,
             );
 
             loop {
-                #[cfg(any(target_os = "windows", target_os = "macos"))]
                 let read = tokio::select! {
                     biased;
                     // A route can change while the receive stream is waiting for data.
@@ -447,8 +437,6 @@ impl P2pNode {
                     // QUIC's read future is cancel-safe.
                     read = recv.read(&mut buf) => read,
                 };
-                #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-                let read = recv.read(&mut buf).await;
 
                 match read? {
                     Some(n) if n > 0 => {
@@ -471,12 +459,9 @@ impl P2pNode {
                 }
             }
 
-            #[cfg(any(target_os = "windows", target_os = "macos"))]
-            {
-                let path = detect_path_kind(&conn);
-                if path != P2pPathKind::Unknown {
-                    progress.path_kind = path;
-                }
+            let path = detect_path_kind(&conn);
+            if path != P2pPathKind::Unknown {
+                progress.path_kind = path;
             }
             Ok(resp_header)
         };
@@ -991,7 +976,6 @@ mod tests {
                 .unwrap();
             assert!(progress.finished);
             assert_eq!(progress.total_bytes, payload.len() as u64);
-            #[cfg(any(target_os = "windows", target_os = "macos"))]
             assert!(
                 node_b
                     .drain_events()

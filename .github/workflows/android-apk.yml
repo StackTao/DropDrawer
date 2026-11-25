@@ -1,0 +1,75 @@
+name: Android APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: "2"
+      FLUTTER_VERSION: "3.44.0"
+
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Install Android Rust targets & cargo-ndk
+        run: |
+          rustup target add aarch64-linux-android armv7-linux-androideabi
+          cargo install cargo-ndk --locked
+
+      - name: Build native Android P2P libraries (.so)
+        run: |
+          NDK_HOME="${ANDROID_NDK_HOME:-${ANDROID_NDK_LATEST_HOME:-}}"
+          if [ -z "$NDK_HOME" ]; then
+            NDK_HOME="$(ls -d "$ANDROID_HOME"/ndk/* 2>/dev/null | sort -V | tail -n 1)"
+          fi
+          echo "Using NDK: $NDK_HOME"
+          export ANDROID_NDK_HOME="$NDK_HOME"
+          cargo ndk -t arm64-v8a -t armeabi-v7a -o app/android/app/src/main/jniLibs \
+            build --locked --release -p p2p-core
+          ls -lh app/android/app/src/main/jniLibs/arm64-v8a/libdropdrawer_p2p.so
+          ls -lh app/android/app/src/main/jniLibs/armeabi-v7a/libdropdrawer_p2p.so
+          nm -D app/android/app/src/main/jniLibs/arm64-v8a/libdropdrawer_p2p.so | grep -q dropdrawer_p2p_start
+          nm -D app/android/app/src/main/jniLibs/arm64-v8a/libdropdrawer_p2p.so | grep -q dropdrawer_p2p_cancel_transfer
+
+      - name: Analyze, test, and build Android Release APK
+        working-directory: app
+        run: |
+          flutter pub get --enforce-lockfile
+          flutter analyze --no-pub
+          flutter test --no-pub
+          flutter build apk --release --no-pub --split-per-abi
+          flutter build apk --release --no-pub
+          mkdir -p ../dist
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk ../dist/DropDrawer-Android-arm64.apk
+          cp build/app/outputs/flutter-apk/app-release.apk ../dist/DropDrawer-Android-universal.apk
+          ls -lh ../dist/*.apk
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: DropDrawer-Android-APK
+          path: |
+            dist/DropDrawer-Android-arm64.apk
+            dist/DropDrawer-Android-universal.apk
+          if-no-files-found: error
+          retention-days: 30

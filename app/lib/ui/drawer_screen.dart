@@ -44,6 +44,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
   final TextEditingController _searchCtrl = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
   AppLifecycleListener? _windowsMenuLifecycle;
+  AppLifecycleListener? _mobileLifecycle;
 
   @override
   void initState() {
@@ -51,12 +52,20 @@ class _DrawerScreenState extends State<DrawerScreen> {
     widget.controller.windowService.onPasteShortcut = _pasteFromClipboard;
     widget.controller.windowService.setMainDrawerActive(true);
     _searchFocusNode.addListener(_syncMainDrawerShortcutState);
+    if (widget.controller.windowService.isMobile) {
+      _mobileLifecycle = AppLifecycleListener(
+        onResume: () => unawaited(widget.controller.refreshOnResume()),
+      );
+      unawaited(widget.controller.checkPendingMobileShares());
+    }
   }
 
   @override
   void dispose() {
     _searchFocusNode.removeListener(_syncMainDrawerShortcutState);
     _closeWindowsMoreMenu(widget.controller);
+    _mobileLifecycle?.dispose();
+    _mobileLifecycle = null;
     widget.controller.windowService.onPasteShortcut = null;
     widget.controller.windowService.setMainDrawerActive(false);
     _shortcutFocusNode.dispose();
@@ -156,6 +165,17 @@ class _DrawerScreenState extends State<DrawerScreen> {
     }
   }
 
+  Future<void> _pickMedia() async {
+    try {
+      final paths = await widget.controller.windowService.pickMediaNative();
+      if (paths.isNotEmpty) {
+        await widget.controller.addFilesToDrawer(paths);
+      }
+    } catch (e) {
+      widget.controller.setBanner('打开相册失败: $e');
+    }
+  }
+
   Future<void> _pasteFromClipboard() async {
     try {
       final data = await widget.controller.windowService.readClipboardSmart();
@@ -205,39 +225,47 @@ class _DrawerScreenState extends State<DrawerScreen> {
         }
 
         // 2. Quiet minimal right-center edge handle (click-only to open, zero hover misfires).
-        if ((c.windowService.edgeMode && mode == 'collapsed') ||
-            constraints.maxWidth < 180) {
+        if (c.windowService.supportsEdgeDrawer &&
+            ((c.windowService.edgeMode && mode == 'collapsed') ||
+                constraints.maxWidth < 180)) {
           return _buildCollapsedHandle(c);
         }
 
+        final isMobile = c.windowService.isMobile;
         return Scaffold(
-          backgroundColor: Colors.transparent,
+          backgroundColor: isMobile ? const Color(0xFF141417) : Colors.transparent,
           body: AnimatedContainer(
             duration: const Duration(milliseconds: 140),
             decoration: BoxDecoration(
-              color: MacPalette.surfaceTint,
+              color: isMobile ? const Color(0xFF141417) : MacPalette.surfaceTint,
               borderRadius: BorderRadius.circular(c.windowService.edgeMode ? 16 : 0),
-              border: Border.all(
-                color: _isDragHovering
-                    ? MacPalette.accent
-                    : MacPalette.hairline,
-                width: _isDragHovering ? 1.5 : 0.8,
-              ),
+              border: isMobile
+                  ? null
+                  : Border.all(
+                      color: _isDragHovering
+                          ? MacPalette.accent
+                          : MacPalette.hairline,
+                      width: _isDragHovering ? 1.5 : 0.8,
+                    ),
             ),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(c.windowService.edgeMode ? 16 : 0),
-              child: Stack(
-                alignment: Alignment.topCenter,
-                fit: StackFit.expand,
-                children: [
-                  _buildActivePage(context, c),
-                  if (c.windowService.edgeMode &&
-                      c.windowService.supportsEdgeDrawer)
-                    Positioned(
-                      top: 0,
-                      child: _buildDrawerDragGrip(c.windowService),
-                    ),
-                ],
+              child: SafeArea(
+                top: isMobile,
+                bottom: isMobile,
+                child: Stack(
+                  alignment: Alignment.topCenter,
+                  fit: StackFit.expand,
+                  children: [
+                    _buildActivePage(context, c),
+                    if (c.windowService.edgeMode &&
+                        c.windowService.supportsEdgeDrawer)
+                      Positioned(
+                        top: 0,
+                        child: _buildDrawerDragGrip(c.windowService),
+                      ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -797,6 +825,57 @@ class _DrawerScreenState extends State<DrawerScreen> {
   }
 
   Widget _buildDropHeader(DropDrawerController c) {
+    if (c.windowService.isMobile) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: _mobileQuickActionBtn(
+                    icon: CupertinoIcons.doc_fill,
+                    label: '选文件',
+                    onTap: _pickFiles,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _mobileQuickActionBtn(
+                    icon: CupertinoIcons.photo_fill,
+                    label: '选相册',
+                    onTap: _pickMedia,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _mobileQuickActionBtn(
+                    icon: CupertinoIcons.doc_on_clipboard_fill,
+                    label: '粘贴',
+                    onTap: _pasteFromClipboard,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              c.defaultDropPolicy == 'p2p_only'
+                  ? '仅本机 P2P 端到端直连 · 不占服务器与云盘'
+                  : (c.defaultDropPolicy == 'cloud_cached'
+                      ? '直接上传至「${c.defaultStorageBackendName}」· 离线可下'
+                      : '小于 ${c.autoCloudThresholdBytes ~/ (1024 * 1024)}MB 自动云存 · 大文件优先 P2P 直连'),
+              style: const TextStyle(
+                fontSize: 10.5,
+                color: MacPalette.textTertiary,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      );
+    }
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
       child: Column(
@@ -1136,6 +1215,43 @@ class _DrawerScreenState extends State<DrawerScreen> {
     );
   }
 
+  Widget _mobileQuickActionBtn({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.white.withValues(alpha: 0.06),
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          height: 40,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: MacPalette.hairline, width: 0.7),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 15, color: MacPalette.textPrimary),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w500,
+                  color: MacPalette.textPrimary,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _miniTextAction({
     required String label,
     required VoidCallback onTap,
@@ -1198,10 +1314,18 @@ class _DrawerScreenState extends State<DrawerScreen> {
             },
           ),
           _batchFooterBtn(
-            icon: CupertinoIcons.doc_on_doc,
-            label: '复制',
+            icon: c.windowService.isMobile
+                ? CupertinoIcons.share
+                : CupertinoIcons.doc_on_doc,
+            label: c.windowService.isMobile ? '分享' : '复制',
             enabled: localSelectedPaths.isNotEmpty,
             onTap: () async {
+              if (c.windowService.isMobile) {
+                final ok = await c.windowService
+                    .shareFilesNative(localSelectedPaths);
+                if (!ok) c.setBanner('打开系统分享失败');
+                return;
+              }
               final ok = await c.windowService
                   .copyFilesToClipboard(localSelectedPaths);
               c.setBanner(
@@ -1315,10 +1439,12 @@ class _DrawerScreenState extends State<DrawerScreen> {
                 ),
               ),
               const SizedBox(height: 5),
-              const Text(
-                '拖起文件或文本靠近悬浮引导条\n点击边缘手柄展开 · 拖动可调整上下或左右停靠',
+              Text(
+                c.windowService.isMobile
+                    ? '点击上方「选文件」「选相册」或「粘贴」\n也可在其他 App 中点「分享 → DropDrawer」直接发送'
+                    : '拖起文件或文本靠近悬浮引导条\n点击边缘手柄展开 · 拖动可调整上下或左右停靠',
                 textAlign: TextAlign.center,
-                style: TextStyle(
+                style: const TextStyle(
                   fontSize: 11,
                   height: 1.5,
                   color: MacPalette.textTertiary,
@@ -1339,7 +1465,10 @@ class _DrawerScreenState extends State<DrawerScreen> {
       );
     }
 
-    return ListView.separated(
+    final listView = ListView.separated(
+      physics: c.windowService.isMobile
+          ? const AlwaysScrollableScrollPhysics()
+          : null,
       padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
       itemCount: visibleItems.length,
       separatorBuilder: (_, _) => const SizedBox(height: 6),
@@ -1369,7 +1498,10 @@ class _DrawerScreenState extends State<DrawerScreen> {
           },
         );
 
-        if (!_selectionMode && localPath != null && item.kind == 'file') {
+        if (!c.windowService.isMobile &&
+            !_selectionMode &&
+            localPath != null &&
+            item.kind == 'file') {
           return DragItemWidget(
             dragItemProvider: (_) async {
               final dragItem = DragItem(suggestedName: item.name);
@@ -1383,6 +1515,15 @@ class _DrawerScreenState extends State<DrawerScreen> {
         return tile;
       },
     );
+    if (c.windowService.isMobile) {
+      return RefreshIndicator(
+        onRefresh: c.manualRefresh,
+        color: MacPalette.textPrimary,
+        backgroundColor: MacPalette.elevatedBg,
+        child: listView,
+      );
+    }
+    return listView;
   }
 
   Widget _buildDevicesView(DropDrawerController c) {
@@ -1771,6 +1912,17 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                             : '在访达中显示 (也可直接按住卡片拖出)',
                         size: 14.5,
                         onPressed: () => c.windowService.revealInFinder(localPath),
+                      ),
+                    ] else if (localPath != null && c.windowService.isMobile) ...[
+                      MacIconButton(
+                        icon: CupertinoIcons.share,
+                        tooltip: '系统分享 / 其他应用打开',
+                        size: 15,
+                        onPressed: () async {
+                          final ok = await c.windowService
+                              .shareFilesNative([localPath]);
+                          if (!ok) c.setBanner('打开系统分享失败');
+                        },
                       ),
                     ] else
                       MacIconButton(

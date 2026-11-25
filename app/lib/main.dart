@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'state/drawer_controller.dart';
 import 'ui/drawer_screen.dart';
@@ -7,6 +10,16 @@ import 'ui/theme.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  if (Platform.isIOS || Platform.isAndroid) {
+    SystemChrome.setSystemUIOverlayStyle(
+      const SystemUiOverlayStyle(
+        statusBarBrightness: Brightness.dark,
+        statusBarIconBrightness: Brightness.light,
+        systemNavigationBarColor: Color(0xFF141417),
+        systemNavigationBarIconBrightness: Brightness.light,
+      ),
+    );
+  }
   runApp(const DropDrawerApp());
 }
 
@@ -34,12 +47,14 @@ class _DropDrawerAppState extends State<DropDrawerApp> {
 
   @override
   Widget build(BuildContext context) {
+    final isMobile = Platform.isIOS || Platform.isAndroid;
     return MaterialApp(
       title: 'DropDrawer',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark(useMaterial3: true).copyWith(
-        scaffoldBackgroundColor: Colors.transparent,
-        canvasColor: Colors.transparent,
+        scaffoldBackgroundColor:
+            isMobile ? const Color(0xFF141417) : Colors.transparent,
+        canvasColor: isMobile ? const Color(0xFF141417) : Colors.transparent,
         colorScheme: const ColorScheme.dark(
           primary: MacPalette.textPrimary,
           secondary: MacPalette.accent,

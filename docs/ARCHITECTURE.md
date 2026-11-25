@@ -95,13 +95,15 @@ Dart 侧通过 [drawer_window_service.dart](../app/lib/services/drawer_window_se
 
 ---
 
-## 5. 移动端后续规划（iOS / Android）
+## 5. 移动端原生层 (`com.dropdrawer/mobile`)
 
-1. **触控与页面适配**：`SafeArea` 布局、单手底部操作栏、去掉桌面端悬停/边缘手柄逻辑，下载后接入系统 Share Sheet / 保存到相册 / 外部打开。
-2. **系统级「分享到 DropDrawer」**：
-   - Android：`ACTION_SEND` / `ACTION_SEND_MULTIPLE` Intent 接入。
-   - iOS：Share Extension + App Group 共享登录态与入队。
-3. **原生 P2P 库交叉编译**：
-   - Android：`cargo-ndk` 编译 `arm64-v8a` `libdropdrawer_p2p.so` 打包进 `jniLibs`。
-   - iOS：编译 `aarch64-apple-ios` 静态库 / `XCFramework` 链接至 Runner（复用 `p2p_ffi.dart` 中预留的 `__PROCESS__` 符号查找）。
-4. **权限与分发**：Android `FileProvider` + GitHub Actions Release APK；iOS `NSLocalNetworkUsageDescription` + 真机签名/TestFlight 归档。
+Dart 侧通过 [drawer_window_service.dart](../app/lib/services/drawer_window_service.dart) 在 iOS / Android 上接入 `com.dropdrawer/mobile` MethodChannel：
+
+- **Android (`app/android/`)**：
+  - `AndroidManifest.xml` 注册 `ACTION_SEND` / `ACTION_SEND_MULTIPLE` Intent 接收其他 App 分享的文件、图片、视频与文本，并配置 `FileProvider`（`res/xml/file_paths.xml`）和网络/局域网组播权限。
+  - `MainActivity.kt` 实现 `consumePendingShares` / `onSharedPayload`、`shareFiles` / `shareText`、`saveToGallery`（Android 10+ `MediaStore` 零存储权限写入 `Pictures/DropDrawer` 或 `Movies/DropDrawer`）、`openExternalUrl`（支持 Google Drive OAuth）与 `readClipboard`（支持图片 URI 与文本）。
+  - `.github/workflows/android-apk.yml` 使用 `cargo-ndk` 编译 `arm64-v8a` & `armeabi-v7a` 的 `libdropdrawer_p2p.so` 打包进 APK。
+- **iOS (`app/ios/`)**：
+  - `Info.plist` 配置 `CFBundleDocumentTypes`（支持其他 App「用 DropDrawer 打开」）、`dropdrawer://` URL Scheme、`UIFileSharingEnabled`（下载文件在 iOS「文件」App 可见）以及局域网与相册权限说明。
+  - `AppDelegate.swift` + `SceneDelegate.swift` 实现 `DropDrawerMobileBridge`（`UIActivityViewController` 分享、`PHPhotoLibrary` 存相册、`UIPasteboard` 图片/文本粘贴、`Documents/Inbox` + App Group `group.com.dropdrawer.shared` 分享队列）。
+  - `scripts/build_ios_p2p.sh` 交叉编译 `aarch64-apple-ios` 与 `aarch64-apple-ios-sim` 静态库并打包 `DropDrawerP2P.xcframework`，经本地 CocoaPod `app/ios/DropDrawerP2P/DropDrawerP2P.podspec` 使用 `-Wl,-u,_dropdrawer_p2p_*` 强制保留全部 10 个 C-ABI 符号供 `DynamicLibrary.process()` 调用。

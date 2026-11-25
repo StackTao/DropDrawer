@@ -15,7 +15,8 @@ import '../services/drawer_window_service.dart';
 import '../services/p2p_ffi.dart';
 
 class DropDrawerController extends ChangeNotifier {
-  static final bool _tracksLiveP2pPath = Platform.isWindows || Platform.isMacOS;
+  static final bool _tracksLiveP2pPath =
+      Platform.isWindows || Platform.isMacOS || Platform.isIOS || Platform.isAndroid;
 
   final DrawerWindowService windowService = DrawerWindowService();
   final P2pFfiBridge p2p = P2pFfiBridge();
@@ -58,10 +59,15 @@ class DropDrawerController extends ChangeNotifier {
   final Set<String> _cancellingSends = {};
   final Map<String, String> _p2pDownloadIds = {};
   final Map<String, TransferCancelToken> _activeCancelTokens = {};
+  final List<String> _pendingSharedFiles = [];
+  final List<String> _pendingSharedTexts = [];
   String? statusBanner;
 
   DropDrawerController() {
     windowService.onStateChanged = notifyListeners;
+    windowService.onSharedPayload = (files, texts) {
+      unawaited(handleIncomingSharePayload(files, texts));
+    };
   }
 
   bool get isLoggedIn => token != null && user != null;
@@ -215,6 +221,78 @@ class DropDrawerController extends ChangeNotifier {
     if (windowService.supportsEdgeDrawer) {
       await windowService.setEdgeDrawerMode(true);
     }
+    if (windowService.isMobile) {
+      await checkPendingMobileShares();
+    }
+  }
+
+  Future<void> handleIncomingSharePayload(
+    List<String> files,
+    List<String> texts,
+  ) async {
+    if (files.isEmpty && texts.isEmpty) return;
+    if (!isLoggedIn || _api == null || deviceId == null) {
+      _pendingSharedFiles.addAll(files);
+      _pendingSharedTexts.addAll(texts);
+      statusBanner = '已接收外部分享内容，登录后将自动同步到抽屉';
+      notifyListeners();
+      return;
+    }
+    if (files.isNotEmpty) {
+      await addFilesToDrawer(files);
+    }
+    for (final text in texts) {
+      if (text.trim().isNotEmpty) {
+        await addTextToDrawer(text);
+      }
+    }
+  }
+
+  Future<void> checkPendingMobileShares() async {
+    if (!windowService.isMobile) return;
+    final payload = await windowService.consumePendingShares();
+    final files = <String>[
+      ..._pendingSharedFiles,
+      ...(payload['files'] ?? const []),
+    ];
+    final texts = <String>[
+      ..._pendingSharedTexts,
+      ...(payload['texts'] ?? const []),
+    ];
+    _pendingSharedFiles.clear();
+    _pendingSharedTexts.clear();
+    if (files.isNotEmpty || texts.isNotEmpty) {
+      await handleIncomingSharePayload(files, texts);
+    }
+  }
+
+  Future<void> refreshOnResume() async {
+    if (!isLoggedIn || _api == null || deviceId == null) {
+      if (windowService.isMobile) {
+        await checkPendingMobileShares();
+      }
+      return;
+    }
+    if (!wsConnected) {
+      _connectWs();
+    }
+    await manualRefresh();
+    if (windowService.isMobile) {
+      await checkPendingMobileShares();
+    }
+  }
+
+  Future<void> manualRefresh() async {
+    if (_api == null || !isLoggedIn) return;
+    try {
+      final fetched = await _api!.listItems();
+      items = fetched;
+      await refreshStorageBackends();
+      if (!wsConnected) {
+        _connectWs();
+      }
+      notifyListeners();
+    } catch (_) {}
   }
 
   Future<void> _startLocalP2pNode() async {
@@ -1258,6 +1336,16 @@ class DropDrawerController extends ChangeNotifier {
   Future<String> _resolveDownloadDir() async {
     if (customDownloadDir != null && customDownloadDir!.trim().isNotEmpty) {
       return customDownloadDir!;
+    }
+    if (Platform.isIOS) {
+      final doc = await getApplicationDocumentsDirectory();
+      return p.join(doc.path, 'DropDrawer');
+    }
+    if (Platform.isAndroid) {
+      final ext = await getExternalStorageDirectory();
+      if (ext != null) {
+        return p.join(ext.path, 'DropDrawer');
+      }
     }
     final dl = await getDownloadsDirectory();
     if (dl != null) {

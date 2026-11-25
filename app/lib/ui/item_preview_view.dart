@@ -37,6 +37,20 @@ class ItemPreviewView extends StatelessWidget {
         lower.endsWith('.gif');
   }
 
+  bool get _isVideo {
+    if (item.kind != 'file') return false;
+    final mime = (item.mimeType ?? '').toLowerCase();
+    final lower = item.name.toLowerCase();
+    return mime.startsWith('video/') ||
+        lower.endsWith('.mp4') ||
+        lower.endsWith('.mov') ||
+        lower.endsWith('.m4v') ||
+        lower.endsWith('.mkv') ||
+        lower.endsWith('.webm');
+  }
+
+  bool get _canSaveToGallery => _isImage || _isVideo;
+
   @override
   Widget build(BuildContext context) {
     final c = controller;
@@ -450,6 +464,24 @@ class ItemPreviewView extends StatelessWidget {
             label: c.windowService.isWindows ? '在资源管理器中显示' : '访达中显示',
             onTap: () => c.windowService.revealInFinder(localPath),
           ),
+        ] else if (localPath != null && c.windowService.isMobile) ...[
+          _primaryButton(
+            icon: CupertinoIcons.share,
+            label: '系统分享',
+            onTap: () async {
+              final ok = await c.windowService.shareFilesNative([localPath]);
+              if (!ok) c.setBanner('打开系统分享失败');
+            },
+          ),
+          if (_canSaveToGallery)
+            _secondaryButton(
+              icon: CupertinoIcons.photo_on_rectangle,
+              label: '存到相册',
+              onTap: () async {
+                final ok = await c.windowService.saveToGalleryNative(localPath);
+                c.setBanner(ok ? '已保存到系统相册' : '保存相册失败（请检查相册权限）');
+              },
+            ),
         ] else
           _primaryButton(
             icon: CupertinoIcons.arrow_down_circle,

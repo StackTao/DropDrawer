@@ -21,6 +21,10 @@ app/ios/Flutter/ephemeral/
 app/windows/flutter/ephemeral/
 app/linux/flutter/ephemeral/
 app/android/.gradle/
+app/android/app/src/main/jniLibs/
+app/ios/DropDrawerP2P/Frameworks/
+app/ios/Podfile.lock
+app/ios/Runner.xcworkspace/xcshareddata/swiftpm/
 
 # OS / IDE
 .DS_Store

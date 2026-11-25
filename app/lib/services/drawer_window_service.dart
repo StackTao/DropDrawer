@@ -11,6 +11,7 @@ enum DrawerDragPhase { start, update, end }
 
 class DrawerWindowService {
   static const _channel = MethodChannel('com.dropdrawer/drawer_window');
+  static const _mobileChannel = MethodChannel('com.dropdrawer/mobile');
 
   bool edgeMode = false;
   bool expanded = true;
@@ -27,6 +28,7 @@ class DrawerWindowService {
   bool showDockIcon = false;
   void Function()? onStateChanged;
   void Function()? onPasteShortcut;
+  void Function(List<String> files, List<String> texts)? onSharedPayload;
   bool _dragGuidePending = false;
   bool _handleMovePending = false;
   bool _drawerDragUpdatePending = false;
@@ -55,9 +57,32 @@ class DrawerWindowService {
         }
       });
     }
+    if (isMobile) {
+      _mobileChannel.setMethodCallHandler((call) async {
+        if (call.method == 'onSharedPayload') {
+          final args = call.arguments is Map
+              ? Map<String, dynamic>.from(call.arguments as Map)
+              : const <String, dynamic>{};
+          final files = (args['files'] as List<dynamic>? ?? const [])
+              .map((e) => e.toString())
+              .where((e) => e.isNotEmpty)
+              .toList();
+          final texts = (args['texts'] as List<dynamic>? ?? const [])
+              .map((e) => e.toString())
+              .where((e) => e.trim().isNotEmpty)
+              .toList();
+          if (files.isNotEmpty || texts.isNotEmpty) {
+            onSharedPayload?.call(files, texts);
+          }
+        }
+      });
+    }
   }
 
   bool get isWindows => Platform.isWindows;
+  bool get isIOS => Platform.isIOS;
+  bool get isAndroid => Platform.isAndroid;
+  bool get isMobile => isIOS || isAndroid;
   bool get supportsEdgeDrawer => Platform.isMacOS || isWindows;
   bool get needsMacTrafficLightPadding => Platform.isMacOS && !edgeMode;
   String get pasteShortcutLabel => isWindows ? 'Ctrl+V' : '⌘V';
@@ -152,13 +177,83 @@ class DrawerWindowService {
   }
 
   Future<List<String>> pickFilesNative() async {
-    if (isWindows) {
+    if (isWindows || isMobile) {
       final files = await FilePicker.platform.pickFiles(allowMultiple: true);
       return files?.paths.whereType<String>().toList() ?? const [];
     }
     if (!supportsEdgeDrawer) return const [];
     final raw = await _channel.invokeMethod<List<dynamic>>('pickFiles');
     return (raw ?? const []).map((e) => e.toString()).toList();
+  }
+
+  Future<List<String>> pickMediaNative() async {
+    final files = await FilePicker.platform.pickFiles(
+      type: FileType.media,
+      allowMultiple: true,
+    );
+    return files?.paths.whereType<String>().toList() ?? const [];
+  }
+
+  Future<Map<String, List<String>>> consumePendingShares() async {
+    if (!isMobile) return const {'files': [], 'texts': []};
+    try {
+      final raw = await _mobileChannel.invokeMethod<Map<dynamic, dynamic>>(
+        'consumePendingShares',
+      );
+      if (raw == null) return const {'files': [], 'texts': []};
+      final map = Map<String, dynamic>.from(raw);
+      return {
+        'files': (map['files'] as List<dynamic>? ?? const [])
+            .map((e) => e.toString())
+            .where((e) => e.isNotEmpty)
+            .toList(),
+        'texts': (map['texts'] as List<dynamic>? ?? const [])
+            .map((e) => e.toString())
+            .where((e) => e.trim().isNotEmpty)
+            .toList(),
+      };
+    } catch (_) {
+      return const {'files': [], 'texts': []};
+    }
+  }
+
+  Future<bool> shareFilesNative(List<String> paths) async {
+    if (!isMobile || paths.isEmpty) return false;
+    try {
+      final ok = await _mobileChannel.invokeMethod<bool>(
+        'shareFiles',
+        {'paths': paths},
+      );
+      return ok ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> shareTextNative(String text) async {
+    if (!isMobile || text.trim().isEmpty) return false;
+    try {
+      final ok = await _mobileChannel.invokeMethod<bool>(
+        'shareText',
+        {'text': text},
+      );
+      return ok ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> saveToGalleryNative(String path) async {
+    if (!isMobile || path.isEmpty) return false;
+    try {
+      final ok = await _mobileChannel.invokeMethod<bool>(
+        'saveToGallery',
+        {'path': path},
+      );
+      return ok ?? false;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// Reads files, screenshots/images, or text from system clipboard.
@@ -176,6 +271,23 @@ class DrawerWindowService {
         arguments,
       );
       return raw != null ? Map<String, dynamic>.from(raw) : {'kind': 'empty'};
+    }
+    if (isMobile) {
+      try {
+        final dir = await getApplicationSupportDirectory();
+        final clipDir = Directory(p.join(dir.path, 'clipboard'));
+        final name = 'Screenshot-${DateTime.now().microsecondsSinceEpoch}.png';
+        final raw = await _mobileChannel.invokeMethod<Map<dynamic, dynamic>>(
+          'readClipboard',
+          {'imagePath': p.join(clipDir.path, name)},
+        );
+        if (raw != null) {
+          final map = Map<String, dynamic>.from(raw);
+          if (map['kind'] != null && map['kind'] != 'empty') {
+            return map;
+          }
+        }
+      } catch (_) {}
     }
     final clip = await Clipboard.getData(Clipboard.kTextPlain);
     if (clip?.text != null && clip!.text!.trim().isNotEmpty) {
@@ -199,6 +311,17 @@ class DrawerWindowService {
 
   /// Opens an OAuth authorization URL in the system default browser.
   Future<bool> openExternalUrl(String url) async {
+    if (isMobile) {
+      try {
+        final ok = await _mobileChannel.invokeMethod<bool>(
+          'openExternalUrl',
+          {'url': url},
+        );
+        return ok ?? false;
+      } catch (_) {
+        return false;
+      }
+    }
     if (!supportsEdgeDrawer) return false;
     final ok = await _channel.invokeMethod<bool>('openExternalUrl', {'url': url});
     return ok ?? false;
@@ -217,9 +340,9 @@ class DrawerWindowService {
   }
 
   Future<String?> generateThumbnailBase64(String path) async {
-    if (!supportsEdgeDrawer) return null;
+    if (!supportsEdgeDrawer && !isMobile) return null;
     try {
-      if (isWindows) {
+      if (isWindows || isMobile) {
         final buffer = await ui.ImmutableBuffer.fromFilePath(path);
         final codec = await ui.instantiateImageCodecWithSize(
           buffer,
@@ -291,7 +414,7 @@ class DrawerWindowService {
   }
 
   Future<void> pruneClipboardFiles(Iterable<String> retainedPaths) async {
-    if (!isWindows) return;
+    if (!isWindows && !isMobile) return;
     try {
       final support = await getApplicationSupportDirectory();
       final dir = Directory(p.join(support.path, 'clipboard'));

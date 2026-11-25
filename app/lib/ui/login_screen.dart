@@ -55,18 +55,29 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isMobile = widget.controller.windowService.isMobile;
     return Scaffold(
-      backgroundColor: Colors.transparent,
+      backgroundColor: isMobile ? const Color(0xFF141417) : Colors.transparent,
       body: Container(
         decoration: BoxDecoration(
-          color: MacPalette.surfaceTint,
-          border: Border.all(color: MacPalette.hairline, width: 0.8),
+          color: isMobile ? const Color(0xFF141417) : MacPalette.surfaceTint,
+          border: isMobile
+              ? null
+              : Border.all(color: MacPalette.hairline, width: 0.8),
         ),
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(32, 44, 32, 28),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 300),
+        child: SafeArea(
+          top: isMobile,
+          bottom: isMobile,
+          child: Center(
+            child: SingleChildScrollView(
+              padding: EdgeInsets.fromLTRB(
+                isMobile ? 24 : 32,
+                isMobile ? 28 : 44,
+                isMobile ? 24 : 32,
+                28,
+              ),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: isMobile ? 360 : 300),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -200,6 +211,7 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
         ),
       ),
+    ),
     );
   }
 }

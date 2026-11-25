@@ -15,7 +15,7 @@ DropDrawer 是一款跨平台文件传输与暂存助手，采用 **Rust（Axum 
 | **P2P 内核 (`crates/p2p-core`)** | 已完成 | 基于 `iroh` QUIC（局域网直连 → 公网打洞 → 加密中继）、实时传输路径显示、中继自动打洞重试（`RelayProbe`）、断点续传（`.dropdrawer.part` + `PartialLease`）、BLAKE3 完整性校验、送达回执确认、收发双向独立取消 |
 | **macOS 桌面端** | 第一版完成 | 贴边悬浮抽屉与常规窗口切换、折叠手柄与展开态抽屉均可拖拽停靠（左右切边/跨屏）、拖入文件自动弹出引导条、卡片直接拖出到其他应用、原生 `NSMenu`、状态栏常驻、`CGEventTap` 全局快捷键与录制、图片缩略图与抽屉内快捷预览、剪贴板智能粘贴（文件/截图/文本）与复制文件、搜索筛选、开机自启、Apple Development 签名与 DMG 打包 |
 | **Windows 桌面端** | 第一版完成 | Win32 原生边缘抽屉与常规窗口切换、折叠手柄与展开态拖拽移动/跨屏切边、资源管理器/桌面文件拖动自动弹引导条、单实例互斥与系统托盘常驻、全局热键与录制、剪贴板文件/截图/文本读写、文件夹 UTF-8 ZIP 打包、Inno Setup 静默安装/托盘态自动覆盖升级/卸载清理、GitHub Actions 自动构建与端到端烟测 |
-| **移动端（iOS / Android）** | 规划中 | 当前为 Flutter 初始骨架（已更新应用图标），待补移动端触控 UI、系统分享入口（iOS Share Extension / Android Intent）、原生 P2P 交叉编译与相册/系统分享闭环 |
+| **移动端（iOS / Android）** | 第一版完成 | 移动端触控 UI（`SafeArea`、快捷选文件/选相册/粘贴、下拉刷新、系统分享与存相册）、Android `ACTION_SEND`/`ACTION_SEND_MULTIPLE` 分享接入 + `FileProvider` + `MediaStore`、iOS `Open in DropDrawer` / `dropdrawer://` / App Group 分享队列 + `UIActivityViewController` + `PHPhotoLibrary`、全平台原生 `iroh` P2P（Android `.so` CI 自动编译 + iOS `DropDrawerP2P.xcframework` 脚本） |
 
 ---
 
@@ -41,8 +41,8 @@ DropDrawer 是一款跨平台文件传输与暂存助手，采用 **Rust（Axum 
 │   ├── lib/                    # 共享状态管理、API 客户端、P2P FFI 桥与 UI
 │   ├── macos/Runner/           # macOS 原生窗口、状态栏、热键、NSMenu、缩略图
 │   ├── windows/runner/         # Windows Win32 抽屉窗口、托盘、热键、剪贴板/文件操作
-│   ├── ios/ & android/         # 移动端工程骨架（待完善）
-│   └── test/                   # Flutter 单元测试与传输/拖拽回归测试
+│   ├── ios/ & android/         # iOS (Swift + DropDrawerP2P XCFramework) 与 Android (Kotlin + FileProvider)
+│   └── test/                   # Flutter 单元测试与传输/拖拽/移动端回归测试
 ├── deploy/
 │   ├── Dockerfile              # 服务端多阶段构建镜像（非 root 运行）
 │   ├── docker-compose.yml      # 本地/通用 Docker 部署模板
@@ -50,9 +50,11 @@ DropDrawer 是一款跨平台文件传输与暂存助手，采用 **Rust（Axum 
 │   └── windows/DropDrawer.iss  # Windows Inno Setup 安装包脚本
 ├── scripts/
 │   ├── build_macos_p2p.sh      # 编译 macOS 本地调试用 libdropdrawer_p2p.dylib
-│   └── build_macos_release.sh  # 一键编译、签名、打 DMG 并可选安装 macOS Release
+│   ├── build_macos_release.sh  # 一键编译、签名、打 DMG 并可选安装 macOS Release
+│   └── build_ios_p2p.sh        # 交叉编译 iOS 真机 + 模拟器 DropDrawerP2P.xcframework
 ├── .github/workflows/
-│   └── windows-installer.yml   # Windows Release 构建、单测、Inno Setup 打包与升级/卸载烟测
+│   ├── windows-installer.yml   # Windows Release 构建、单测、Inno Setup 打包与升级/卸载烟测
+│   └── android-apk.yml         # Android NDK 编译 P2P .so + Flutter 单测 + Release APK 打包
 ├── docs/ARCHITECTURE.md        # 详细架构、协议、原生桥与部署说明
 └── AGENTS.md                   # AI 编程智能体协作与工程约束手册
 ```
@@ -94,7 +96,19 @@ cd app && flutter run -d macos
 3. 打包 MSVC CRT + `dropdrawer_p2p.dll` 生成 `dist/DropDrawer-Windows-x64-Setup.exe`
 4. 端到端烟测：托盘驻留态静默覆盖升级 → 验证 DLL 导出与单实例 → 托盘驻留态静默卸载并验证自启清理
 
-### 4. 运行全量自动化测试
+### 4. 构建与运行移动端（iOS / Android）
+
+- **iOS（macOS + Xcode 本地构建）**：
+  ```bash
+  # 编译真机 + 模拟器 Rust P2P XCFramework
+  ./scripts/build_ios_p2p.sh
+  # 模拟器构建/运行（或连接 iPhone 后用 Xcode / flutter run -d <iphone>）
+  cd app && flutter build ios --simulator --no-codesign
+  ```
+- **Android（GitHub Actions 自动产出 APK）**：
+  手动触发 [.github/workflows/android-apk.yml](.github/workflows/android-apk.yml)，自动用 `cargo-ndk` 编译 `arm64-v8a` / `armeabi-v7a` 的 `libdropdrawer_p2p.so` 并产出 `DropDrawer-Android-arm64.apk` 与 `DropDrawer-Android-universal.apk`。
+
+### 5. 运行全量自动化测试
 
 ```bash
 # Rust 服务端集成测试 + P2P 单元测试
