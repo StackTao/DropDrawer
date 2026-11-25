@@ -240,7 +240,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
               ? const EdgeInsets.fromLTRB(78, 1, 10, 3)
               : const EdgeInsets.fromLTRB(10, 10, 12, 9),
           child: SizedBox(
-            height: 26,
+            height: UiDensity.headerHeight(context),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
@@ -302,7 +302,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
   Widget _buildBackendList() {
     final list = widget.controller.storageBackends;
     if (list.isEmpty) {
-      return const Padding(
+      return Padding(
         padding: EdgeInsets.symmetric(vertical: 36),
         child: Text(
           '暂无存储策略，点击上方「添加原生云盘」直连配置',
@@ -317,7 +317,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
       children: [
         Container(
           decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: 0.22),
+            color: MacPalette.group(0.22),
             borderRadius: BorderRadius.circular(10),
             border: Border.all(color: MacPalette.hairline, width: 0.7),
           ),
@@ -347,7 +347,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
                                 ),
                                 if (list[i].isDefault) ...[
                                   const SizedBox(width: 6),
-                                  const Text(
+                                  Text(
                                     '默认',
                                     style: TextStyle(
                                       fontSize: 10.5,
@@ -361,7 +361,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
                             const SizedBox(height: 3),
                             Text(
                               '${_kindLabel(list[i].kind)} · ${list[i].displayTarget}',
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 11,
                                 color: MacPalette.textTertiary,
                               ),
@@ -401,7 +401,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
           ),
         ),
         const SizedBox(height: 12),
-        const Text(
+        Text(
           '全部云盘均由服务端原生直连，无需额外安装或部署 OpenList 等任何第三方服务。',
           style: TextStyle(
             fontSize: 11,
@@ -440,8 +440,8 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                   decoration: BoxDecoration(
                     color: selected
-                        ? Colors.white.withValues(alpha: 0.18)
-                        : Colors.black.withValues(alpha: 0.24),
+                        ? MacPalette.fill(0.18)
+                        : MacPalette.group(0.24),
                     borderRadius: BorderRadius.circular(7),
                     border: Border.all(
                       color: selected
@@ -468,7 +468,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
         const SizedBox(height: 10),
         Container(
           decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: 0.24),
+            color: MacPalette.group(0.24),
             borderRadius: BorderRadius.circular(10),
             border: Border.all(color: MacPalette.hairline, width: 0.7),
           ),
@@ -578,7 +578,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
               ],
               if (_selectedKind == 'local') ...[
                 const Divider(height: 0.5, thickness: 0.5, indent: 12),
-                const Padding(
+                Padding(
                   padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   child: Text(
                     '文件保存在服务器数据目录中属于当前账号的文件夹（由服务端 DROPDRAWER_LOCAL_STORAGE 决定）。',
@@ -592,19 +592,17 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
         const SizedBox(height: 8),
         Row(
           children: [
-            const Expanded(
+            Expanded(
               child: Text(
                 '设为默认中转存储',
                 style: TextStyle(fontSize: 12, color: MacPalette.textSecondary),
               ),
             ),
-            Transform.scale(
-              scale: 0.72,
-              child: CupertinoSwitch(
-                value: _isDefault,
-                activeTrackColor: MacPalette.green,
-                onChanged: (v) => setState(() => _isDefault = v),
-              ),
+            AdaptiveSwitch(
+              value: _isDefault,
+              activeColor: MacPalette.green,
+              compactScale: 0.72,
+              onChanged: (v) => setState(() => _isDefault = v),
             ),
           ],
         ),
@@ -618,7 +616,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
               label: const Text('浏览器一键授权 Google Drive'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: MacPalette.textPrimary,
-                foregroundColor: const Color(0xFF111113),
+                foregroundColor: MacPalette.onTextPrimary,
                 elevation: 0,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(9),
@@ -633,7 +631,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
           const SizedBox(height: 6),
           Text(
             '回调地址请填：${widget.controller.serverUrl}/api/oauth/google/callback',
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 10,
               color: MacPalette.textTertiary,
             ),
@@ -645,7 +643,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
               onPressed: _saving ? null : _addBackend,
               style: OutlinedButton.styleFrom(
                 foregroundColor: MacPalette.textSecondary,
-                side: const BorderSide(color: MacPalette.hairline, width: 0.8),
+                side: BorderSide(color: MacPalette.hairline, width: 0.8),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8),
                 ),
@@ -662,7 +660,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
               onPressed: _saving ? null : _addBackend,
               style: ElevatedButton.styleFrom(
                 backgroundColor: MacPalette.textPrimary,
-                foregroundColor: const Color(0xFF111113),
+                foregroundColor: MacPalette.onTextPrimary,
                 elevation: 0,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(9),
@@ -673,12 +671,12 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
                 ),
               ),
               child: _saving
-                  ? const SizedBox(
+                  ? SizedBox(
                       width: 14,
                       height: 14,
                       child: CircularProgressIndicator(
                         strokeWidth: 1.8,
-                        color: Color(0xFF111113),
+                        color: MacPalette.onTextPrimary,
                       ),
                     )
                   : const Text('保存原生云盘配置'),

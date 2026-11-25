@@ -45,12 +45,16 @@ class _DrawerScreenState extends State<DrawerScreen> {
   final FocusNode _searchFocusNode = FocusNode();
   AppLifecycleListener? _windowsMenuLifecycle;
   AppLifecycleListener? _mobileLifecycle;
+  int _shownBannerSerial = 0;
+  // Swiped-away items waiting out their undo window before being deleted.
+  final Map<String, Timer> _pendingDeletes = {};
 
   @override
   void initState() {
     super.initState();
     widget.controller.windowService.onPasteShortcut = _pasteFromClipboard;
     widget.controller.windowService.setMainDrawerActive(true);
+    _shownBannerSerial = widget.controller.bannerSerial;
     _searchFocusNode.addListener(_syncMainDrawerShortcutState);
     if (widget.controller.windowService.isMobile) {
       _mobileLifecycle = AppLifecycleListener(
@@ -71,7 +75,41 @@ class _DrawerScreenState extends State<DrawerScreen> {
     _shortcutFocusNode.dispose();
     _searchCtrl.dispose();
     _searchFocusNode.dispose();
+    // Leaving the screen ends the undo window: carry out pending deletions.
+    final controller = widget.controller;
+    for (final id in _pendingDeletes.keys.toList()) {
+      _pendingDeletes.remove(id)?.cancel();
+      unawaited(() async {
+        try {
+          await controller.deleteItem(id);
+        } catch (_) {}
+      }());
+    }
     super.dispose();
+  }
+
+  /// Windows surface: translucent over Mica/Acrylic when DWM applied it,
+  /// otherwise the opaque Windows 11 dark base.
+  static Color _windowsSurface(DrawerWindowService window) =>
+      window.windowsBackdrop ? const Color(0x99202020) : const Color(0xFF202020);
+
+  void _handleBack() {
+    if (_page != _DrawerPage.drawer) {
+      _switchPage(_DrawerPage.drawer);
+    } else if (_selectionMode) {
+      setState(() {
+        _selectionMode = false;
+        _selectedIds.clear();
+      });
+    } else if (_searchOpen) {
+      setState(() {
+        _searchOpen = false;
+        _searchCtrl.clear();
+        _filterKind = 'all';
+        _searchFocusNode.unfocus();
+      });
+      _syncMainDrawerShortcutState();
+    }
   }
 
   void _syncMainDrawerShortcutState() {
@@ -97,6 +135,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
   List<DrawerItem> _filteredItems(DropDrawerController c) {
     final q = _searchCtrl.text.trim().toLowerCase();
     return c.items.where((it) {
+      if (_pendingDeletes.containsKey(it.id)) return false;
       if (_filterKind != 'all' && it.kind != _filterKind) return false;
       if (q.isEmpty) return true;
       if (it.name.toLowerCase().contains(q)) return true;
@@ -129,25 +168,14 @@ class _DrawerScreenState extends State<DrawerScreen> {
 
   Future<void> _confirmAndClearDrawer(DropDrawerController c) async {
     if (c.items.isEmpty) return;
-    final confirmed = await showCupertinoDialog<bool>(
-      context: context,
-      builder: (ctx) => CupertinoAlertDialog(
-        title: const Text('清空抽屉'),
-        content: Text('确定要移出当前抽屉中的全部 ${c.items.length} 项内容吗？'),
-        actions: [
-          CupertinoDialogAction(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('取消'),
-          ),
-          CupertinoDialogAction(
-            isDestructiveAction: true,
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('清空'),
-          ),
-        ],
-      ),
+    final confirmed = await showAdaptiveConfirm(
+      context,
+      title: '清空抽屉',
+      message: '确定要移出当前抽屉中的全部 ${c.items.length} 项内容吗？',
+      confirmLabel: '清空',
+      destructive: true,
     );
-    if (confirmed == true) {
+    if (confirmed) {
       await c.clearDrawer();
     }
   }
@@ -259,39 +287,67 @@ class _DrawerScreenState extends State<DrawerScreen> {
         }
 
         final isMobile = c.windowService.isMobile;
-        return Scaffold(
-          backgroundColor: isMobile ? const Color(0xFF141417) : Colors.transparent,
-          body: AnimatedContainer(
-            duration: const Duration(milliseconds: 140),
-            decoration: BoxDecoration(
-              color: isMobile ? const Color(0xFF141417) : MacPalette.surfaceTint,
-              borderRadius: BorderRadius.circular(c.windowService.edgeMode ? 16 : 0),
-              border: isMobile
-                  ? null
-                  : Border.all(
-                      color: _isDragHovering
-                          ? MacPalette.accent
-                          : MacPalette.hairline,
-                      width: _isDragHovering ? 1.5 : 0.8,
+        final isWindows = c.windowService.isWindows;
+        // Windows 11 rounds edge windows by 8px; macOS uses its own 16px panel.
+        final radius =
+            c.windowService.edgeMode ? (isWindows ? 8.0 : 16.0) : 0.0;
+        if (isMobile) _showNewBannerAsToast(c);
+        // Android's back button/gesture steps out of secondary pages, multi-
+        // select and search before leaving the app.
+        final canPop = _page == _DrawerPage.drawer &&
+            !_selectionMode &&
+            !_searchOpen;
+        return PopScope(
+          canPop: canPop,
+          onPopInvokedWithResult: (didPop, _) {
+            if (!didPop) _handleBack();
+          },
+          child: UiDensity(
+            touch: isMobile,
+            child: Scaffold(
+              backgroundColor: isMobile ? MacPalette.background : Colors.transparent,
+              body: AnimatedContainer(
+                duration: const Duration(milliseconds: 140),
+                decoration: BoxDecoration(
+                  // macOS draws a vibrancy view behind this tint. Windows only
+                  // has a backdrop when Mica/Acrylic is on; otherwise use an
+                  // opaque surface rather than a tint over black.
+                  color: isMobile
+                      ? MacPalette.background
+                      : (isWindows
+                          ? _windowsSurface(c.windowService)
+                          : MacPalette.surfaceTint),
+                  borderRadius: BorderRadius.circular(radius),
+                  // A constant width keeps the content from shifting when a drag
+                  // hovers; only the color changes.
+                  border: isMobile
+                      ? null
+                      : Border.all(
+                          color: _isDragHovering
+                              ? MacPalette.accent
+                              : MacPalette.hairline,
+                          width: 1.0,
+                        ),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(radius),
+                  child: SafeArea(
+                    top: isMobile,
+                    bottom: isMobile,
+                    child: Stack(
+                      alignment: Alignment.topCenter,
+                      fit: StackFit.expand,
+                      children: [
+                        _buildActivePage(context, c),
+                        if (c.windowService.edgeMode &&
+                            c.windowService.supportsEdgeDrawer)
+                          Positioned(
+                            top: 0,
+                            child: _buildDrawerDragGrip(c.windowService),
+                          ),
+                      ],
                     ),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(c.windowService.edgeMode ? 16 : 0),
-              child: SafeArea(
-                top: isMobile,
-                bottom: isMobile,
-                child: Stack(
-                  alignment: Alignment.topCenter,
-                  fit: StackFit.expand,
-                  children: [
-                    _buildActivePage(context, c),
-                    if (c.windowService.edgeMode &&
-                        c.windowService.supportsEdgeDrawer)
-                      Positioned(
-                        top: 0,
-                        child: _buildDrawerDragGrip(c.windowService),
-                      ),
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -337,6 +393,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
 
   /// Stage 1 drag guide pill docked at the drawer's exact right-center position.
   Widget _buildDragGuidePill(DropDrawerController c) {
+    final isWindows = c.windowService.isWindows;
     return DropRegion(
       formats: const [Formats.fileUri, Formats.plainText],
       hitTestBehavior: HitTestBehavior.opaque,
@@ -347,10 +404,14 @@ class _DrawerScreenState extends State<DrawerScreen> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 14),
           decoration: BoxDecoration(
-            color: const Color(0xEC1C1C20),
-            borderRadius: BorderRadius.circular(13),
+            color: isWindows
+                ? (c.windowService.windowsBackdrop
+                    ? const Color(0xB32B2B2B)
+                    : const Color(0xFF2B2B2B))
+                : const Color(0xEC1C1C20),
+            borderRadius: BorderRadius.circular(isWindows ? 8 : 13),
             border: Border.all(
-              color: Colors.white.withValues(alpha: 0.2),
+              color: Colors.white.withValues(alpha: isWindows ? 0.12 : 0.2),
               width: 0.8,
             ),
           ),
@@ -375,17 +436,22 @@ class _DrawerScreenState extends State<DrawerScreen> {
                 ),
               ),
               const SizedBox(width: 9),
-              const Flexible(
-                child: Text(
-                  '拖到这儿，放入跨端抽屉',
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w500,
-                    color: MacPalette.textPrimary,
-                    decoration: TextDecoration.none,
+              // Shrink rather than truncate when the system font or text
+              // scaling is wider than expected.
+              Flexible(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    '拖到这儿，放入跨端抽屉',
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w500,
+                      color: MacPalette.textPrimary,
+                      decoration: TextDecoration.none,
+                    ),
+                    maxLines: 1,
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                 ),
               ),
             ],
@@ -401,6 +467,8 @@ class _DrawerScreenState extends State<DrawerScreen> {
     bool expandAfterDrop = false,
   }) async {
     setState(() => _isDragHovering = false);
+    // Open the drawer right away instead of after reading the dropped data.
+    final expanding = expandAfterDrop ? c.windowService.expandDrawer() : null;
     final filePaths = <String>[];
     final texts = <String>[];
 
@@ -442,9 +510,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
       }
     }
 
-    if (expandAfterDrop && (filePaths.isNotEmpty || texts.isNotEmpty)) {
-      await c.windowService.expandDrawer();
-    }
+    if (expanding != null) await expanding;
     if (filePaths.isNotEmpty) {
       await c.addFilesToDrawer(filePaths);
     }
@@ -502,7 +568,9 @@ class _DrawerScreenState extends State<DrawerScreen> {
       formats: const [Formats.fileUri, Formats.plainText],
       hitTestBehavior: HitTestBehavior.opaque,
       onDropOver: (event) {
-        if (event.session.items.any((item) => item.canProvide(Formats.fileUri))) {
+        if (event.session.items.any((item) =>
+            item.canProvide(Formats.fileUri) ||
+            item.canProvide(Formats.plainText))) {
           unawaited(c.windowService.showDragGuide());
         }
         return DropOperation.copy;
@@ -512,41 +580,66 @@ class _DrawerScreenState extends State<DrawerScreen> {
     );
   }
 
+  /// Secondary pages were laid out for the compact desktop drawer. On phones
+  /// their text is scaled up on top of the system text size.
+  Widget _touchPage(DropDrawerController c, Widget page) {
+    if (!c.windowService.isMobile) return page;
+    final media = MediaQuery.of(context);
+    final systemScale = media.textScaler.scale(14) / 14;
+    return MediaQuery(
+      data: media.copyWith(textScaler: TextScaler.linear(systemScale * 1.15)),
+      child: page,
+    );
+  }
+
   Widget _buildActivePage(BuildContext context, DropDrawerController c) {
     if (_page == _DrawerPage.storage) {
-      return StorageSettingsView(
-        controller: c,
-        onBack: () => _switchPage(_DrawerPage.drawer),
+      return _touchPage(
+        c,
+        StorageSettingsView(
+          controller: c,
+          onBack: () => _switchPage(_DrawerPage.drawer),
+        ),
       );
     }
     if (_page == _DrawerPage.devices) {
-      return _buildDevicesView(c);
+      return _touchPage(c, _buildDevicesView(c));
     }
     if (_page == _DrawerPage.share) {
-      return ShareView(
-        controller: c,
-        targetItems: _shareTargetItems,
-        onBack: () => _switchPage(_DrawerPage.drawer),
+      return _touchPage(
+        c,
+        ShareView(
+          controller: c,
+          targetItems: _shareTargetItems,
+          onBack: () => _switchPage(_DrawerPage.drawer),
+        ),
       );
     }
     if (_page == _DrawerPage.preferences) {
-      return PreferencesView(
-        controller: c,
-        onBack: () => _switchPage(_DrawerPage.drawer),
+      return _touchPage(
+        c,
+        PreferencesView(
+          controller: c,
+          onBack: () => _switchPage(_DrawerPage.drawer),
+        ),
       );
     }
     if (_page == _DrawerPage.preview && _previewItemId != null) {
       final found = c.items.where((e) => e.id == _previewItemId).toList();
       if (found.isNotEmpty) {
         final item = found.first;
-        return ItemPreviewView(
-          controller: c,
-          item: item,
-          onBack: () => _switchPage(_DrawerPage.drawer),
-          onShare: () => _switchPage(_DrawerPage.share, shareItems: [item]),
+        return _touchPage(
+          c,
+          ItemPreviewView(
+            controller: c,
+            item: item,
+            onBack: () => _switchPage(_DrawerPage.drawer),
+            onShare: () => _switchPage(_DrawerPage.share, shareItems: [item]),
+          ),
         );
       }
     }
+    final isMobile = c.windowService.isMobile;
 
     final visibleItems = _filteredItems(c);
 
@@ -578,11 +671,19 @@ class _DrawerScreenState extends State<DrawerScreen> {
               children: [
                 _buildToolbar(context, c),
                 const Divider(height: 0.5, thickness: 0.5),
-                _buildDropHeader(c),
+                // Phones put the add actions in a bottom bar within thumb reach.
+                if (!isMobile) _buildDropHeader(c),
                 if (c.items.isNotEmpty) _buildBatchActionStrip(c, visibleItems),
-                if (c.items.isNotEmpty && _searchOpen) _buildSearchFilterBar(),
+                if (c.items.isNotEmpty && _searchOpen)
+                  _buildSearchFilterBar(isMobile),
                 Expanded(child: _buildItemList(context, c, visibleItems)),
-                _selectionMode ? _buildBatchFooter(c) : _buildFooter(c),
+                if (_selectionMode)
+                  _buildBatchFooter(c)
+                // Phones show status messages as toasts instead of a footer.
+                else if (isMobile)
+                  _buildMobileActionBar()
+                else
+                  _buildFooter(c),
               ],
             ),
           ),
@@ -616,39 +717,54 @@ class _DrawerScreenState extends State<DrawerScreen> {
               ),
             ),
             const SizedBox(width: 8),
-            Text(
-              'DropDrawer',
-              style: TextStyle(
-                fontSize: isMobile ? 16 : 13,
-                fontWeight: FontWeight.w600,
-                letterSpacing: -0.2,
-              ),
-            ),
-            const SizedBox(width: 8),
-            GestureDetector(
-              onTap: () => _switchPage(_DrawerPage.devices),
-              child: MouseRegion(
-                cursor: SystemMouseCursors.click,
-                child: Container(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: isMobile ? 8 : 6,
-                    vertical: isMobile ? 3.5 : 2,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(isMobile ? 6 : 5),
-                  ),
-                  child: Text(
-                    '${c.onlineDeviceCount} 设备在线',
-                    style: TextStyle(
-                      fontSize: isMobile ? 11.5 : 10.5,
-                      color: MacPalette.textSecondary,
+            // Title and device badge give way (ellipsis) before the buttons do,
+            // e.g. with a large system text size on a phone.
+            Expanded(
+              child: Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      'DropDrawer',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: isMobile ? 16 : 13,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: -0.2,
+                      ),
                     ),
                   ),
-                ),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: GestureDetector(
+                      onTap: () => _switchPage(_DrawerPage.devices),
+                      child: MouseRegion(
+                        cursor: SystemMouseCursors.click,
+                        child: Container(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: isMobile ? 8 : 6,
+                            vertical: isMobile ? 3.5 : 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: MacPalette.fill(0.08),
+                            borderRadius: BorderRadius.circular(isMobile ? 6 : 5),
+                          ),
+                          child: Text(
+                            '${c.onlineDeviceCount} 设备在线',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: isMobile ? 11.5 : 10.5,
+                              color: MacPalette.textSecondary,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-            const Spacer(),
             if (isEdge) ...[
               MacIconButton(
                 icon: c.windowService.pinned
@@ -715,7 +831,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
                 elevation: 10,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
-                  side: const BorderSide(color: MacPalette.strongHairline, width: 0.8),
+                  side: BorderSide(color: MacPalette.strongHairline, width: 0.8),
                 ),
                 onSelected: (val) => _handleMoreMenuAction(c, val),
                 itemBuilder: (_) => [
@@ -758,7 +874,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
                       value: 'clear_drawer',
                       height: 40,
                       child: Row(
-                        children: const [
+                        children: [
                           Icon(CupertinoIcons.trash, size: 16, color: MacPalette.red),
                           SizedBox(width: 10),
                           Text('清空抽屉', style: TextStyle(fontSize: 14, color: MacPalette.red)),
@@ -852,7 +968,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
       constraints: const BoxConstraints.tightFor(width: 168),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(10),
-        side: const BorderSide(color: MacPalette.strongHairline, width: 0.8),
+        side: BorderSide(color: MacPalette.strongHairline, width: 0.8),
       ),
       clipBehavior: Clip.antiAlias,
       onOpened: () {
@@ -876,7 +992,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
           dockLeft ? '停靠右侧' : '停靠左侧',
           dockLeft ? CupertinoIcons.sidebar_right : CupertinoIcons.sidebar_left,
         ),
-        const PopupMenuDivider(
+        PopupMenuDivider(
           height: 8,
           indent: 12,
           endIndent: 12,
@@ -897,57 +1013,6 @@ class _DrawerScreenState extends State<DrawerScreen> {
   }
 
   Widget _buildDropHeader(DropDrawerController c) {
-    if (c.windowService.isMobile) {
-      return Padding(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: _mobileQuickActionBtn(
-                    icon: CupertinoIcons.doc_fill,
-                    label: '选文件',
-                    onTap: _pickFiles,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _mobileQuickActionBtn(
-                    icon: CupertinoIcons.photo_fill,
-                    label: '选相册',
-                    onTap: _pickMedia,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _mobileQuickActionBtn(
-                    icon: CupertinoIcons.doc_on_clipboard_fill,
-                    label: '粘贴',
-                    onTap: _pasteFromClipboard,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Text(
-              c.defaultDropPolicy == 'p2p_only'
-                  ? '仅本机 P2P 端到端直连 · 不占服务器与云盘'
-                  : (c.defaultDropPolicy == 'cloud_cached'
-                      ? '直接上传至「${c.defaultStorageBackendName}」· 离线可下'
-                      : '小于 ${c.autoCloudThresholdBytes ~/ (1024 * 1024)}MB 自动云存 · 大文件优先 P2P 直连'),
-              style: const TextStyle(
-                fontSize: 10.5,
-                color: MacPalette.textTertiary,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ],
-        ),
-      );
-    }
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
       child: Column(
@@ -961,14 +1026,14 @@ class _DrawerScreenState extends State<DrawerScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
                 decoration: BoxDecoration(
                   color: _isDragHovering
-                      ? Colors.white.withValues(alpha: 0.14)
-                      : Colors.white.withValues(alpha: 0.05),
+                      ? MacPalette.fill(0.14)
+                      : MacPalette.fill(0.05),
                   borderRadius: BorderRadius.circular(11),
                   border: Border.all(
                     color: _isDragHovering
-                        ? Colors.white.withValues(alpha: 0.45)
+                        ? MacPalette.fill(0.45)
                         : MacPalette.hairline,
-                    width: _isDragHovering ? 1.2 : 0.7,
+                    width: 1.0,
                   ),
                 ),
                 child: Row(
@@ -977,7 +1042,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
                       width: 32,
                       height: 32,
                       decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.08),
+                        color: MacPalette.fill(0.08),
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Icon(
@@ -995,7 +1060,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
                         children: [
                           Text(
                             _isDragHovering ? '松开以放进抽屉' : '拖入、选取或 ${c.windowService.pasteShortcutLabel} 粘贴',
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 12.5,
                               fontWeight: FontWeight.w500,
                               color: MacPalette.textPrimary,
@@ -1008,7 +1073,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
                                 : (c.defaultDropPolicy == 'cloud_cached'
                                     ? '直接上传至「${c.defaultStorageBackendName}」· 离线可下'
                                     : '小于 ${c.autoCloudThresholdBytes ~/ (1024 * 1024)}MB 自动云存 · 大文件纯 P2P 直连'),
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 10.5,
                               color: MacPalette.textTertiary,
                             ),
@@ -1102,7 +1167,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
                   ? '筛选结果 · ${visibleItems.length}/${c.items.length}'
                   : '抽屉内容 · ${c.items.length} 项',
               style: TextStyle(
-                fontSize: isMobile ? 12 : 10.5,
+                fontSize: isMobile ? 13.5 : 10.5,
                 color: MacPalette.textTertiary,
               ),
             ),
@@ -1128,12 +1193,12 @@ class _DrawerScreenState extends State<DrawerScreen> {
                 cursor: SystemMouseCursors.click,
                 child: Padding(
                   padding: EdgeInsets.symmetric(
-                    horizontal: isMobile ? 8 : 4,
-                    vertical: isMobile ? 6 : 2,
+                    horizontal: isMobile ? 10 : 4,
+                    vertical: isMobile ? 10 : 2,
                   ),
                   child: Icon(
                     CupertinoIcons.search,
-                    size: isMobile ? 16 : 12.5,
+                    size: isMobile ? 19 : 12.5,
                     color: (_searchOpen || isFiltering)
                         ? MacPalette.textPrimary
                         : MacPalette.textSecondary,
@@ -1141,22 +1206,22 @@ class _DrawerScreenState extends State<DrawerScreen> {
                 ),
               ),
             ),
-            SizedBox(width: isMobile ? 8 : 8),
-            _miniTextAction(
-              label: '多选',
-              isMobile: isMobile,
-              onTap: () => setState(() {
-                _selectionMode = true;
-                _confirmingClear = false;
-                _selectedIds.clear();
-              }),
-            ),
-            SizedBox(width: isMobile ? 10 : 10),
-            _miniTextAction(
-              label: '全部下载',
-              isMobile: isMobile,
-              onTap: () => c.batchDownloadItems(visibleItems),
-            ),
+            if (isMobile)
+              // Long-press an item also starts selecting; less frequent list
+              // actions sit in a menu rather than a row of small text buttons.
+              _buildMobileListMenu(c, visibleItems)
+            else ...[
+              const SizedBox(width: 8),
+              _miniTextAction(
+                label: '多选',
+                onTap: () => _enterSelectionMode(),
+              ),
+              const SizedBox(width: 10),
+              _miniTextAction(
+                label: '全部下载',
+                onTap: () => c.batchDownloadItems(visibleItems),
+              ),
+            ],
             if (!isMobile) ...[
               const SizedBox(width: 10),
               if (_confirmingClear) ...[
@@ -1193,25 +1258,28 @@ class _DrawerScreenState extends State<DrawerScreen> {
     );
   }
 
-  Widget _buildSearchFilterBar() {
+  Widget _buildSearchFilterBar(bool isMobile) {
+    final fontSize = isMobile ? 15.0 : 11.5;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 2, 12, 6),
+      padding: isMobile
+          ? const EdgeInsets.fromLTRB(14, 2, 14, 8)
+          : const EdgeInsets.fromLTRB(12, 2, 12, 6),
       child: Row(
         children: [
           Expanded(
             child: Container(
-              height: 28,
-              padding: const EdgeInsets.symmetric(horizontal: 8),
+              height: isMobile ? 38 : 28,
+              padding: EdgeInsets.symmetric(horizontal: isMobile ? 10 : 8),
               decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.28),
-                borderRadius: BorderRadius.circular(7),
+                color: MacPalette.shade(0.28),
+                borderRadius: BorderRadius.circular(isMobile ? 10 : 7),
                 border: Border.all(color: MacPalette.hairline, width: 0.6),
               ),
               child: Row(
                 children: [
-                  const Icon(
+                  Icon(
                     CupertinoIcons.search,
-                    size: 12.5,
+                    size: isMobile ? 16 : 12.5,
                     color: MacPalette.textTertiary,
                   ),
                   const SizedBox(width: 6),
@@ -1220,19 +1288,19 @@ class _DrawerScreenState extends State<DrawerScreen> {
                       controller: _searchCtrl,
                       focusNode: _searchFocusNode,
                       onChanged: (_) => setState(() {}),
-                      style: const TextStyle(
-                        fontSize: 11.5,
+                      style: TextStyle(
+                        fontSize: fontSize,
                         color: MacPalette.textPrimary,
                       ),
                       cursorColor: MacPalette.textPrimary,
                       cursorWidth: 1.4,
-                      decoration: const InputDecoration(
+                      decoration: InputDecoration(
                         isDense: true,
                         contentPadding: EdgeInsets.zero,
                         border: InputBorder.none,
                         hintText: '搜索文件名或文本...',
                         hintStyle: TextStyle(
-                          fontSize: 11.5,
+                          fontSize: fontSize,
                           color: MacPalette.textTertiary,
                         ),
                       ),
@@ -1244,7 +1312,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
                         _searchCtrl.clear();
                         setState(() {});
                       },
-                      child: const Icon(
+                      child: Icon(
                         CupertinoIcons.xmark_circle_fill,
                         size: 13,
                         color: MacPalette.textTertiary,
@@ -1278,8 +1346,8 @@ class _DrawerScreenState extends State<DrawerScreen> {
           alignment: Alignment.center,
           decoration: BoxDecoration(
             color: active
-                ? Colors.white.withValues(alpha: 0.16)
-                : Colors.black.withValues(alpha: 0.22),
+                ? MacPalette.fill(0.16)
+                : MacPalette.group(0.22),
             borderRadius: BorderRadius.circular(7),
             border: Border.all(
               color: active ? MacPalette.strongHairline : MacPalette.hairline,
@@ -1305,28 +1373,40 @@ class _DrawerScreenState extends State<DrawerScreen> {
     required VoidCallback onTap,
   }) {
     return Material(
-      color: Colors.white.withValues(alpha: 0.06),
-      borderRadius: BorderRadius.circular(11),
+      color: MacPalette.fill(0.07),
+      borderRadius: BorderRadius.circular(12),
       child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(11),
+        onTap: () {
+          HapticFeedback.selectionClick();
+          onTap();
+        },
+        borderRadius: BorderRadius.circular(12),
+        // The app theme turns splashes off for the desktop look; phones need
+        // visible press feedback.
+        splashFactory: InkRipple.splashFactory,
+        splashColor: MacPalette.fill(0.08),
+        highlightColor: MacPalette.fill(0.10),
         child: Container(
-          height: 44,
+          height: 50,
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(11),
+            borderRadius: BorderRadius.circular(12),
             border: Border.all(color: MacPalette.hairline, width: 0.7),
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 16, color: MacPalette.textPrimary),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                  color: MacPalette.textPrimary,
+              Icon(icon, size: 18, color: MacPalette.textPrimary),
+              const SizedBox(width: 7),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w500,
+                    color: MacPalette.textPrimary,
+                  ),
                 ),
               ),
             ],
@@ -1336,12 +1416,175 @@ class _DrawerScreenState extends State<DrawerScreen> {
     );
   }
 
+  Widget _buildMobileActionBar() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: MacPalette.hairline, width: 0.5)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _mobileQuickActionBtn(
+              icon: CupertinoIcons.doc_fill,
+              label: '选文件',
+              onTap: _pickFiles,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _mobileQuickActionBtn(
+              icon: CupertinoIcons.photo_fill,
+              label: '选相册',
+              onTap: _pickMedia,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _mobileQuickActionBtn(
+              icon: CupertinoIcons.doc_on_clipboard_fill,
+              label: '粘贴',
+              onTap: _pasteFromClipboard,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMobileListMenu(
+    DropDrawerController c,
+    List<DrawerItem> visibleItems,
+  ) {
+    PopupMenuItem<String> entry(String value, IconData icon, String label) =>
+        PopupMenuItem(
+          value: value,
+          height: 46,
+          child: Row(
+            children: [
+              Icon(icon, size: 18, color: MacPalette.textSecondary),
+              const SizedBox(width: 12),
+              Text(label, style: const TextStyle(fontSize: 15)),
+            ],
+          ),
+        );
+    return PopupMenuButton<String>(
+      tooltip: '更多操作',
+      padding: EdgeInsets.zero,
+      offset: const Offset(0, 44),
+      color: MacPalette.elevatedBg,
+      elevation: 10,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: MacPalette.strongHairline, width: 0.8),
+      ),
+      onSelected: (value) {
+        if (value == 'select') _enterSelectionMode();
+        if (value == 'download_all') c.batchDownloadItems(visibleItems);
+      },
+      itemBuilder: (_) => [
+        entry('select', CupertinoIcons.checkmark_circle, '多选'),
+        entry('download_all', CupertinoIcons.arrow_down_circle, '全部下载'),
+      ],
+      child: SizedBox(
+        width: 44,
+        height: 40,
+        child: Icon(
+          CupertinoIcons.ellipsis_circle,
+          size: 21,
+          color: MacPalette.textSecondary,
+        ),
+      ),
+    );
+  }
+
+  void _enterSelectionMode([String? firstId]) {
+    setState(() {
+      _selectionMode = true;
+      _confirmingClear = false;
+      _selectedIds.clear();
+      if (firstId != null) _selectedIds.add(firstId);
+    });
+  }
+
+  void _showNewBannerAsToast(DropDrawerController c) {
+    final serial = c.bannerSerial;
+    final message = c.statusBanner;
+    if (serial == _shownBannerSerial || message == null) return;
+    _shownBannerSerial = serial;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _showToast(message);
+    });
+  }
+
+  void _showToast(
+    String message, {
+    SnackBarAction? action,
+    Duration duration = const Duration(milliseconds: 2600),
+  }) {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          message,
+          maxLines: 3,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(fontSize: 14, color: MacPalette.toastText),
+        ),
+        action: action,
+        duration: duration,
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: MacPalette.toastBackground,
+        // Sit above the bottom action bar.
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 78),
+        elevation: 6,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+    );
+  }
+
+  /// Hides a swiped item at once and deletes it after the undo window.
+  void _deleteWithUndo(DropDrawerController c, DrawerItem item) {
+    HapticFeedback.lightImpact();
+    setState(() {
+      _pendingDeletes[item.id] = Timer(
+        const Duration(seconds: 4),
+        () => unawaited(_commitDelete(c, item.id)),
+      );
+    });
+    _showToast(
+      '已移出「${item.name}」',
+      duration: const Duration(seconds: 4),
+      action: SnackBarAction(
+        label: '撤销',
+        textColor: MacPalette.accent,
+        onPressed: () {
+          _pendingDeletes.remove(item.id)?.cancel();
+          if (mounted) setState(() {});
+        },
+      ),
+    );
+  }
+
+  Future<void> _commitDelete(DropDrawerController c, String id) async {
+    if (_pendingDeletes.remove(id) == null) return;
+    try {
+      await c.deleteItem(id);
+    } catch (e) {
+      c.setBanner('移出失败：$e');
+    }
+    if (mounted) setState(() {});
+  }
+
   Widget _miniTextAction({
     required String label,
     required VoidCallback onTap,
-    Color color = MacPalette.textSecondary,
+    Color? color,
     bool isMobile = false,
   }) {
+    final textColor = color ?? MacPalette.textSecondary;
     return GestureDetector(
       onTap: onTap,
       behavior: HitTestBehavior.opaque,
@@ -1357,7 +1600,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
             style: TextStyle(
               fontSize: isMobile ? 12.5 : 11,
               fontWeight: FontWeight.w500,
-              color: color,
+              color: textColor,
             ),
           ),
         ),
@@ -1375,12 +1618,13 @@ class _DrawerScreenState extends State<DrawerScreen> {
         .whereType<String>()
         .toList();
 
+    final isMobile = c.windowService.isMobile;
     return Container(
-      height: 38,
+      height: isMobile ? 62 : 38,
       padding: const EdgeInsets.symmetric(horizontal: 10),
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.28),
-        border: const Border(
+        color: MacPalette.shade(0.28),
+        border: Border(
           top: BorderSide(color: MacPalette.hairline, width: 0.6),
         ),
       ),
@@ -1388,6 +1632,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
           _batchFooterBtn(
+            isMobile: isMobile,
             icon: CupertinoIcons.arrow_down_circle,
             label: '下载',
             enabled: hasSelection,
@@ -1402,6 +1647,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
             },
           ),
           _batchFooterBtn(
+            isMobile: isMobile,
             icon: c.windowService.isMobile
                 ? CupertinoIcons.share
                 : CupertinoIcons.doc_on_doc,
@@ -1424,6 +1670,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
             },
           ),
           _batchFooterBtn(
+            isMobile: isMobile,
             icon: CupertinoIcons.link,
             label: '外链',
             enabled: hasSelection,
@@ -1437,6 +1684,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
             },
           ),
           _batchFooterBtn(
+            isMobile: isMobile,
             icon: CupertinoIcons.cloud_upload,
             label: '存云盘',
             enabled: hasSelection,
@@ -1445,6 +1693,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
             },
           ),
           _batchFooterBtn(
+            isMobile: isMobile,
             icon: CupertinoIcons.trash,
             label: hasSelection ? '删除(${selectedItems.length})' : '删除',
             enabled: hasSelection,
@@ -1470,9 +1719,42 @@ class _DrawerScreenState extends State<DrawerScreen> {
     required String label,
     required bool enabled,
     required VoidCallback onTap,
-    Color color = MacPalette.textPrimary,
+    bool isMobile = false,
+    Color? color,
   }) {
-    final effectiveColor = enabled ? color : MacPalette.textTertiary;
+    final effectiveColor =
+        enabled ? (color ?? MacPalette.textPrimary) : MacPalette.textTertiary;
+    if (isMobile) {
+      // Icon over label, like an iOS toolbar, with a full-height tap target.
+      return Expanded(
+        child: GestureDetector(
+          onTap: enabled
+              ? () {
+                  HapticFeedback.selectionClick();
+                  onTap();
+                }
+              : null,
+          behavior: HitTestBehavior.opaque,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 21, color: effectiveColor),
+              const SizedBox(height: 3),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w500,
+                  color: effectiveColor,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     return GestureDetector(
       onTap: enabled ? onTap : null,
       behavior: HitTestBehavior.opaque,
@@ -1505,7 +1787,9 @@ class _DrawerScreenState extends State<DrawerScreen> {
     DropDrawerController c,
     List<DrawerItem> visibleItems,
   ) {
-    if (c.items.isEmpty) {
+    final isMobile = c.windowService.isMobile;
+    final pending = c.pendingDrops;
+    if (c.items.isEmpty && pending.isEmpty) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 28),
@@ -1514,26 +1798,26 @@ class _DrawerScreenState extends State<DrawerScreen> {
             children: [
               Icon(
                 CupertinoIcons.tray,
-                size: 30,
-                color: Colors.white.withValues(alpha: 0.16),
+                size: isMobile ? 44 : 30,
+                color: MacPalette.fill(0.16),
               ),
-              const SizedBox(height: 10),
-              const Text(
+              SizedBox(height: isMobile ? 14 : 10),
+              Text(
                 '抽屉是空的',
                 style: TextStyle(
-                  fontSize: 13,
+                  fontSize: isMobile ? 17 : 13,
                   fontWeight: FontWeight.w500,
                   color: MacPalette.textSecondary,
                 ),
               ),
-              const SizedBox(height: 5),
+              SizedBox(height: isMobile ? 8 : 5),
               Text(
-                c.windowService.isMobile
-                    ? '点击上方「选文件」「选相册」或「粘贴」\n也可在其他 App 中点「分享 → DropDrawer」直接发送'
+                isMobile
+                    ? '点击下方「选文件」「选相册」或「粘贴」\n也可在其他 App 中点「分享 → DropDrawer」直接发送'
                     : '拖起文件或文本靠近悬浮引导条\n点击边缘手柄展开 · 拖动可调整上下或左右停靠',
                 textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontSize: 11,
+                style: TextStyle(
+                  fontSize: isMobile ? 14 : 11,
                   height: 1.5,
                   color: MacPalette.textTertiary,
                 ),
@@ -1544,16 +1828,18 @@ class _DrawerScreenState extends State<DrawerScreen> {
       );
     }
 
-    if (visibleItems.isEmpty) {
-      return const Center(
+    if (visibleItems.isEmpty && pending.isEmpty) {
+      return Center(
         child: Text(
           '没有匹配的抽屉条目',
-          style: TextStyle(fontSize: 12, color: MacPalette.textTertiary),
+          style: TextStyle(
+            fontSize: isMobile ? 15 : 12,
+            color: MacPalette.textTertiary,
+          ),
         ),
       );
     }
 
-    final isMobile = c.windowService.isMobile;
     final listView = ListView.separated(
       physics: isMobile ? const AlwaysScrollableScrollPhysics() : null,
       padding: EdgeInsets.fromLTRB(
@@ -1562,23 +1848,30 @@ class _DrawerScreenState extends State<DrawerScreen> {
         isMobile ? 14 : 12,
         isMobile ? 12 : 8,
       ),
-      itemCount: visibleItems.length,
+      itemCount: pending.length + visibleItems.length,
       separatorBuilder: (_, _) => SizedBox(height: isMobile ? 8 : 6),
       itemBuilder: (context, index) {
-        final item = visibleItems[index];
+        if (index < pending.length) {
+          return _PendingDropTile(drop: pending[index], isMobile: isMobile);
+        }
+        final item = visibleItems[index - pending.length];
         final localPath = c.localFilePaths[item.id];
-        final progress = c.activeTransfers[item.id];
         final isSelected = _selectedIds.contains(item.id);
         final tile = _DrawerItemTile(
           controller: c,
           item: item,
           localPath: localPath,
-          progress: progress,
           selectionMode: _selectionMode,
           selected: isSelected,
           onOpenPreview: () =>
               _switchPage(_DrawerPage.preview, previewItemId: item.id),
           onShare: () => _switchPage(_DrawerPage.share, shareItems: [item]),
+          onLongPress: isMobile && !_selectionMode
+              ? () {
+                  HapticFeedback.mediumImpact();
+                  _enterSelectionMode(item.id);
+                }
+              : null,
           onToggleSelect: () {
             setState(() {
               if (isSelected) {
@@ -1617,7 +1910,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
                 ],
               ),
             ),
-            onDismissed: (_) => unawaited(c.deleteItem(item.id)),
+            onDismissed: (_) => _deleteWithUndo(c, item),
             child: tile,
           );
         }
@@ -1677,7 +1970,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
               ? const EdgeInsets.fromLTRB(78, 1, 10, 3)
               : const EdgeInsets.fromLTRB(10, 10, 12, 9),
           child: SizedBox(
-            height: 26,
+            height: UiDensity.headerHeight(context),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
@@ -1704,7 +1997,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.22),
+                  color: MacPalette.group(0.22),
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(color: MacPalette.hairline, width: 0.7),
                 ),
@@ -1732,7 +2025,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
                       const SizedBox(height: 6),
                       SelectableText(
                         'Node ID: ${c.localNodeInfo!.nodeId}',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 10.5,
                           color: MacPalette.textTertiary,
                           fontFamily: 'Menlo',
@@ -1743,7 +2036,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
                 ),
               ),
               const SizedBox(height: 14),
-              const Text(
+              Text(
                 '同账号设备',
                 style: TextStyle(fontSize: 11.5, color: MacPalette.textSecondary),
               ),
@@ -1768,7 +2061,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
   Widget _buildDeviceRows(List<DeviceInfo> devices, String? localDeviceId) =>
       Container(
         decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.22),
+          color: MacPalette.group(0.22),
           borderRadius: BorderRadius.circular(10),
           border: Border.all(color: MacPalette.hairline, width: 0.7),
         ),
@@ -1808,7 +2101,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
                           const SizedBox(height: 2),
                           Text(
                             '${device.platform} · ${device.online ? '在线' : '离线'}',
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 10.5,
                               color: MacPalette.textTertiary,
                             ),
@@ -1833,7 +2126,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
     return Container(
       height: 30,
       padding: const EdgeInsets.symmetric(horizontal: 14),
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         border: Border(top: BorderSide(color: MacPalette.hairline, width: 0.5)),
       ),
       child: Row(
@@ -1841,7 +2134,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
           Expanded(
             child: Text(
               text,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 10.5,
                 color: MacPalette.textTertiary,
               ),
@@ -1851,7 +2144,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
           ),
           Text(
             '${c.items.length} 项',
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 10.5,
               color: MacPalette.textTertiary,
             ),
@@ -1866,23 +2159,23 @@ class _DrawerItemTile extends StatefulWidget {
   final DropDrawerController controller;
   final DrawerItem item;
   final String? localPath;
-  final TransferProgress? progress;
   final bool selectionMode;
   final bool selected;
   final VoidCallback onOpenPreview;
   final VoidCallback onShare;
   final VoidCallback onToggleSelect;
+  final VoidCallback? onLongPress;
 
   const _DrawerItemTile({
     required this.controller,
     required this.item,
     this.localPath,
-    this.progress,
     required this.selectionMode,
     required this.selected,
     required this.onOpenPreview,
     required this.onShare,
     required this.onToggleSelect,
+    this.onLongPress,
   });
 
   @override
@@ -1897,31 +2190,40 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
     final c = widget.controller;
     final item = widget.item;
     final localPath = widget.localPath;
-    final progress = widget.progress;
     final isMine = item.ownerDeviceId == c.deviceId;
-    final isTransferring = progress != null && !progress.finished;
-    final hasTransferError =
-        progress != null && progress.finished && progress.error != null;
-
     final cleanDeviceName = item.ownerDeviceName?.replaceAll(
       RegExp(r'\.local$', caseSensitive: false),
       '',
     );
-    final metaParts = <String>[
-      formatBytes(item.size),
-      if (item.canP2p && item.cloudReady)
-        'P2P · 云端'
-      else if (item.canP2p)
-        'P2P 直连'
-      else if (item.cloudReady)
-        item.storageBackendName ?? '已存云盘'
-      else
-        '来源离线',
-      if (cleanDeviceName != null && cleanDeviceName.isNotEmpty)
-        cleanDeviceName,
-    ];
-
     final isMobile = c.windowService.isMobile;
+    final hasDevice = cleanDeviceName != null && cleanDeviceName.isNotEmpty;
+    // Phones show when and where an item came from; the status dot already
+    // shows availability, so only an unreachable item gets a label.
+    final metaParts = isMobile
+        ? <String>[
+            // Size and time first: a long device name is what gets truncated.
+            formatBytes(item.size),
+            relativeTimeLabel(item.createdAt),
+            if (hasDevice) '来自 $cleanDeviceName',
+            // Text lives on the server, so it never depends on the source device.
+            if (item.kind == 'file' && !item.canP2p && !item.cloudReady)
+              '来源离线',
+          ]
+        : <String>[
+            formatBytes(item.size),
+            if (item.canP2p && item.cloudReady)
+              'P2P · 云端'
+            else if (item.canP2p)
+              'P2P 直连'
+            else if (item.cloudReady)
+              item.storageBackendName ?? '已存云盘'
+            else
+              '来源离线',
+            if (hasDevice) cleanDeviceName,
+          ];
+    final textPreview = isMobile && item.kind == 'text'
+        ? (item.textContent ?? '').trim()
+        : '';
     final actionBox = isMobile ? 34.0 : 26.0;
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
@@ -1930,6 +2232,7 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
       child: GestureDetector(
         onTap:
             widget.selectionMode ? widget.onToggleSelect : widget.onOpenPreview,
+        onLongPress: widget.onLongPress,
         behavior: HitTestBehavior.opaque,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 120),
@@ -1969,6 +2272,7 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                     item: item,
                     localPath: localPath,
                     draggable: localPath != null,
+                    size: isMobile ? 44 : 34,
                   ),
                 const SizedBox(width: 10),
                 Expanded(
@@ -1978,7 +2282,7 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                       Text(
                         item.name,
                         style: TextStyle(
-                          fontSize: isMobile ? 13.5 : 12.5,
+                          fontSize: isMobile ? 15 : 12.5,
                           fontWeight: FontWeight.w500,
                           color: MacPalette.textPrimary,
                         ),
@@ -1989,9 +2293,9 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                       Row(
                         children: [
                           Container(
-                            width: 5,
-                            height: 5,
-                            margin: const EdgeInsets.only(right: 5),
+                            width: isMobile ? 7 : 5,
+                            height: isMobile ? 7 : 5,
+                            margin: EdgeInsets.only(right: isMobile ? 6 : 5),
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
                               color: item.canP2p
@@ -2005,7 +2309,7 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                             child: Text(
                               metaParts.join(' · '),
                               style: TextStyle(
-                                fontSize: isMobile ? 11.5 : 10.5,
+                                fontSize: isMobile ? 12.5 : 10.5,
                                 color: MacPalette.textSecondary,
                               ),
                               maxLines: 1,
@@ -2014,6 +2318,19 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                           ),
                         ],
                       ),
+                      if (textPreview.isNotEmpty && textPreview != item.name) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          textPreview,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 13.5,
+                            height: 1.35,
+                            color: MacPalette.textSecondary,
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -2108,115 +2425,137 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                 ],
               ],
             ),
-            if (isTransferring) ...[
-              const SizedBox(height: 7),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(2),
-                child: LinearProgressIndicator(
-                  value: progress.fraction > 0 ? progress.fraction : null,
-                  minHeight: 2.5,
-                  backgroundColor: Colors.white.withValues(alpha: 0.1),
-                  valueColor: const AlwaysStoppedAnimation<Color>(
-                    MacPalette.textPrimary,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 3),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    switch (progress.channel) {
-                      'preparing' => '正在准备下载',
-                      'upload' => '正在上传到云盘',
-                      'p2p_connecting' => '正在建立 P2P 连接',
-                      'p2p_direct' => 'P2P 端到端直连',
-                      'p2p_relay' => 'P2P 加密中继',
-                      _ => '云端高速下载',
-                    },
-                    style: const TextStyle(
-                      fontSize: 10,
-                      color: MacPalette.textTertiary,
-                    ),
-                  ),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        '${(progress.fraction * 100).toStringAsFixed(0)}%'
-                        '${progress.speedBps > 0 ? ' · ${formatBytes(progress.speedBps)}/s' : ''}',
-                        style: const TextStyle(
-                          fontSize: 10,
-                          color: MacPalette.textSecondary,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      CupertinoButton(
-                        padding: const EdgeInsets.symmetric(horizontal: 4),
-                        minimumSize: const Size(0, 24),
-                        onPressed: c.isCancelling(item.id) ? null : () => c.cancelTransfer(item.id),
-                        child: Text(
-                          c.isCancelling(item.id) ? '正在取消' : (progress.channel == 'upload' ? '取消上传' : '取消下载'),
-                          style: const TextStyle(fontSize: 10, color: MacPalette.red),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ],
-            for (final entry in c.outgoingTransfers.entries.where((e) => e.value.itemId == item.id))
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      '正在发送给 ${c.recipientName(entry.value.sendingTo!)} · ${(entry.value.fraction * 100).floor()}%',
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 10, color: MacPalette.textSecondary),
-                    ),
-                  ),
-                  CupertinoButton(
-                    minimumSize: const Size(0, 24),
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    onPressed: c.isCancellingSend(entry.key) ? null : () => c.cancelOutgoingTransfer(entry.key),
-                    child: Text(c.isCancellingSend(entry.key) ? '正在取消' : '取消发送', style: const TextStyle(fontSize: 10, color: MacPalette.red)),
-                  ),
-                ],
-              ),
-            if (hasTransferError) ...[
-              const SizedBox(height: 6),
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      '传输失败：${progress.error}',
-                      style: const TextStyle(
-                        fontSize: 10,
-                        color: MacPalette.red,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  GestureDetector(
-                    onTap: () => c.retryTransfer(item),
-                    child: const Text(
-                      '重试',
-                      style: TextStyle(
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w500,
-                        color: MacPalette.accent,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
+            // Progress changes arrive on their own notifier; only this part of
+            // the tile rebuilds for them.
+            ListenableBuilder(
+              listenable: c.transferTicks,
+              builder: (context, _) => _buildTransferSection(c, item, isMobile),
+            ),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildTransferSection(
+    DropDrawerController c,
+    DrawerItem item,
+    bool isMobile,
+  ) {
+    final progress = c.activeTransfers[item.id];
+    final isTransferring = progress != null && !progress.finished;
+    final hasTransferError =
+        progress != null && progress.finished && progress.error != null;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (isTransferring) ...[
+          const SizedBox(height: 7),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(2),
+            child: LinearProgressIndicator(
+              value: progress.fraction > 0 ? progress.fraction : null,
+              minHeight: 2.5,
+              backgroundColor: MacPalette.fill(0.1),
+              valueColor: AlwaysStoppedAnimation<Color>(
+                MacPalette.textPrimary,
+              ),
+            ),
+          ),
+          const SizedBox(height: 3),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                switch (progress.channel) {
+                  'preparing' => '正在准备下载',
+                  'upload' => '正在上传到云盘',
+                  'p2p_connecting' => '正在建立 P2P 连接',
+                  'p2p_direct' => 'P2P 端到端直连',
+                  'p2p_relay' => 'P2P 加密中继',
+                  _ => '云端高速下载',
+                },
+                style: TextStyle(
+                  fontSize: isMobile ? 12 : 10,
+                  color: MacPalette.textTertiary,
+                ),
+              ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '${(progress.fraction * 100).toStringAsFixed(0)}%'
+                    '${progress.speedBps > 0 ? ' · ${formatBytes(progress.speedBps)}/s' : ''}',
+                    style: TextStyle(
+                      fontSize: isMobile ? 12 : 10,
+                      color: MacPalette.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  CupertinoButton(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    minimumSize: const Size(0, 24),
+                    onPressed: c.isCancelling(item.id) ? null : () => c.cancelTransfer(item.id),
+                    child: Text(
+                      c.isCancelling(item.id) ? '正在取消' : (progress.channel == 'upload' ? '取消上传' : '取消下载'),
+                      style: TextStyle(fontSize: isMobile ? 12 : 10, color: MacPalette.red),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ],
+        for (final entry in c.outgoingTransfers.entries.where((e) => e.value.itemId == item.id))
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '正在发送给 ${c.recipientName(entry.value.sendingTo!)} · ${(entry.value.fraction * 100).floor()}%',
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: isMobile ? 12 : 10, color: MacPalette.textSecondary),
+                ),
+              ),
+              CupertinoButton(
+                minimumSize: const Size(0, 24),
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                onPressed: c.isCancellingSend(entry.key) ? null : () => c.cancelOutgoingTransfer(entry.key),
+                child: Text(c.isCancellingSend(entry.key) ? '正在取消' : '取消发送', style: TextStyle(fontSize: isMobile ? 12 : 10, color: MacPalette.red)),
+              ),
+            ],
+          ),
+        if (hasTransferError) ...[
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '传输失败：${progress.error}',
+                  style: TextStyle(
+                    fontSize: isMobile ? 12 : 10,
+                    color: MacPalette.red,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: () => c.retryTransfer(item),
+                child: Text(
+                  '重试',
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w500,
+                    color: MacPalette.accent,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ],
     );
   }
 }
@@ -2225,12 +2564,41 @@ class _FileIconBox extends StatelessWidget {
   final DrawerItem item;
   final String? localPath;
   final bool draggable;
+  final double size;
 
   const _FileIconBox({
     required this.item,
     this.localPath,
     required this.draggable,
+    this.size = 34,
   });
+
+  /// Decoded thumbnails, reused across rebuilds. Building a new MemoryImage from
+  /// fresh bytes on every rebuild defeats Flutter's image cache and re-decodes
+  /// every thumbnail each time the drawer rebuilds (several times per drop).
+  static final Map<String, MemoryImage> _thumbnails = {};
+  static const _maxCachedThumbnails = 256;
+
+  static MemoryImage? _thumbnailFor(DrawerItem item) {
+    final data = item.thumbnailBase64;
+    if (data == null || data.isEmpty) return null;
+    final key = '${item.id}:${data.length}:${data.hashCode}';
+    final cached = _thumbnails.remove(key);
+    if (cached != null) {
+      _thumbnails[key] = cached; // Most recently used goes last.
+      return cached;
+    }
+    try {
+      final image = MemoryImage(base64Decode(data));
+      _thumbnails[key] = image;
+      if (_thumbnails.length > _maxCachedThumbnails) {
+        _thumbnails.remove(_thumbnails.keys.first);
+      }
+      return image;
+    } catch (_) {
+      return null;
+    }
+  }
 
   bool get _isImage {
     if (item.kind != 'file') return false;
@@ -2246,29 +2614,28 @@ class _FileIconBox extends StatelessWidget {
   }
 
   Widget _buildContent() {
-    if (item.thumbnailBase64 != null && item.thumbnailBase64!.isNotEmpty) {
-      try {
-        final bytes = base64Decode(item.thumbnailBase64!);
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(7.5),
-          child: Image.memory(
-            bytes,
-            width: 34,
-            height: 34,
-            fit: BoxFit.cover,
-            gaplessPlayback: true,
-          ),
-        );
-      } catch (_) {}
+    final radius = BorderRadius.circular(size * 0.22);
+    final thumbnail = _thumbnailFor(item);
+    if (thumbnail != null) {
+      return ClipRRect(
+        borderRadius: radius,
+        child: Image(
+          image: thumbnail,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+        ),
+      );
     }
     if (_isImage && localPath != null && File(localPath!).existsSync()) {
       return ClipRRect(
-        borderRadius: BorderRadius.circular(7.5),
+        borderRadius: radius,
         child: Image.file(
           File(localPath!),
-          width: 34,
-          height: 34,
-          cacheWidth: 96,
+          width: size,
+          height: size,
+          cacheWidth: 128,
           fit: BoxFit.cover,
           errorBuilder: (_, _, _) =>
               Icon(_resolveIcon(), size: 17, color: MacPalette.textPrimary),
@@ -2284,13 +2651,13 @@ class _FileIconBox extends StatelessWidget {
       clipBehavior: Clip.none,
       children: [
         Container(
-          width: 34,
-          height: 34,
+          width: size,
+          height: size,
           decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(8),
+            color: MacPalette.fill(0.08),
+            borderRadius: BorderRadius.circular(size * 0.235),
             border: Border.all(
-              color: Colors.white.withValues(alpha: 0.1),
+              color: MacPalette.fill(0.1),
               width: 0.5,
             ),
           ),
@@ -2308,7 +2675,7 @@ class _FileIconBox extends StatelessWidget {
                 shape: BoxShape.circle,
                 border: Border.all(color: MacPalette.hairline, width: 0.8),
               ),
-              child: const Icon(
+              child: Icon(
                 CupertinoIcons.arrow_up_right,
                 size: 7,
                 color: MacPalette.textSecondary,
@@ -2355,4 +2722,85 @@ class _FileIconBox extends StatelessWidget {
     }
     return CupertinoIcons.doc;
   }
+}
+
+
+/// Placeholder for a dropped file that is still being added to the drawer.
+class _PendingDropTile extends StatelessWidget {
+  final PendingDrop drop;
+  final bool isMobile;
+
+  const _PendingDropTile({required this.drop, required this.isMobile});
+
+  @override
+  Widget build(BuildContext context) {
+    final box = isMobile ? 44.0 : 34.0;
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: isMobile ? 12 : 10,
+        vertical: isMobile ? 11 : 9,
+      ),
+      decoration: BoxDecoration(
+        color: MacPalette.cardBg,
+        borderRadius: BorderRadius.circular(isMobile ? 12 : 10),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: box,
+            height: box,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: MacPalette.fill(0.08),
+              borderRadius: BorderRadius.circular(box * 0.235),
+            ),
+            child: const AdaptiveSpinner(radius: 7),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  drop.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: isMobile ? 15 : 12.5,
+                    fontWeight: FontWeight.w500,
+                    color: MacPalette.textSecondary,
+                  ),
+                ),
+                SizedBox(height: isMobile ? 3 : 2),
+                Text(
+                  '正在加入抽屉…',
+                  style: TextStyle(
+                    fontSize: isMobile ? 12.5 : 10.5,
+                    color: MacPalette.textTertiary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Short Chinese relative time, e.g. 刚刚 / 5 分钟前 / 昨天 / 3月2日.
+@visibleForTesting
+String relativeTimeLabel(DateTime time, {DateTime? now}) {
+  final current = now ?? DateTime.now();
+  final local = time.toLocal();
+  final diff = current.difference(local);
+  if (diff.inMinutes < 1) return '刚刚';
+  if (diff.inHours < 1) return '${diff.inMinutes} 分钟前';
+  final today = DateTime(current.year, current.month, current.day);
+  final day = DateTime(local.year, local.month, local.day);
+  final days = today.difference(day).inDays;
+  if (days == 0) return '${diff.inHours} 小时前';
+  if (days == 1) return '昨天';
+  if (local.year == current.year) return '${local.month}月${local.day}日';
+  return '${local.year}年${local.month}月${local.day}日';
 }

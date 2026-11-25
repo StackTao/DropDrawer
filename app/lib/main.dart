@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,19 +9,31 @@ import 'ui/drawer_screen.dart';
 import 'ui/login_screen.dart';
 import 'ui/theme.dart';
 
+bool get _isMobile => Platform.isIOS || Platform.isAndroid;
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  if (Platform.isIOS || Platform.isAndroid) {
-    SystemChrome.setSystemUIOverlayStyle(
-      const SystemUiOverlayStyle(
-        statusBarBrightness: Brightness.dark,
-        statusBarIconBrightness: Brightness.light,
-        systemNavigationBarColor: Color(0xFF141417),
-        systemNavigationBarIconBrightness: Brightness.light,
-      ),
-    );
+  if (_isMobile) {
+    // Phones follow the system appearance; the desktop drawer is always dark.
+    MacPalette.use(ui.PlatformDispatcher.instance.platformBrightness);
+    _applySystemBars();
   }
   runApp(const DropDrawerApp());
+}
+
+void _applySystemBars() {
+  final light = MacPalette.isLight;
+  SystemChrome.setSystemUIOverlayStyle(
+    SystemUiOverlayStyle(
+      // iOS: statusBarBrightness is the *background* brightness.
+      statusBarBrightness: light ? Brightness.light : Brightness.dark,
+      statusBarIconBrightness: light ? Brightness.dark : Brightness.light,
+      statusBarColor: Colors.transparent,
+      systemNavigationBarColor: MacPalette.background,
+      systemNavigationBarIconBrightness:
+          light ? Brightness.dark : Brightness.light,
+    ),
+  );
 }
 
 class DropDrawerApp extends StatefulWidget {
@@ -30,43 +43,52 @@ class DropDrawerApp extends StatefulWidget {
   State<DropDrawerApp> createState() => _DropDrawerAppState();
 }
 
-class _DropDrawerAppState extends State<DropDrawerApp> {
+class _DropDrawerAppState extends State<DropDrawerApp>
+    with WidgetsBindingObserver {
   final DropDrawerController _controller = DropDrawerController();
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _controller.bootstrap();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _controller.dispose();
     super.dispose();
   }
 
   @override
+  void didChangePlatformBrightness() {
+    if (!_isMobile) return;
+    if (!MacPalette.use(ui.PlatformDispatcher.instance.platformBrightness)) {
+      return;
+    }
+    _applySystemBars();
+    setState(() {});
+    // Palette colors are read during build, and widgets built with `const`
+    // constructors are not rebuilt by a parent rebuild, so mark every element.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      void markAll(Element element) {
+        element.markNeedsBuild();
+        element.visitChildren(markAll);
+      }
+
+      if (mounted) (context as Element).visitChildren(markAll);
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final isMobile = Platform.isIOS || Platform.isAndroid;
     return MaterialApp(
       title: 'DropDrawer',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark(useMaterial3: true).copyWith(
-        scaffoldBackgroundColor:
-            isMobile ? const Color(0xFF141417) : Colors.transparent,
-        canvasColor: isMobile ? const Color(0xFF141417) : Colors.transparent,
-        colorScheme: const ColorScheme.dark(
-          primary: MacPalette.textPrimary,
-          secondary: MacPalette.accent,
-          surface: MacPalette.elevatedBg,
-        ),
-        dividerColor: MacPalette.hairline,
-        splashFactory: NoSplash.splashFactory,
-        highlightColor: Colors.transparent,
-        textTheme: ThemeData.dark().textTheme.apply(
-              bodyColor: MacPalette.textPrimary,
-              displayColor: MacPalette.textPrimary,
-            ),
+      theme: buildAppTheme(
+        mobile: _isMobile,
+        android: Platform.isAndroid,
       ),
       home: AnimatedBuilder(
         animation: _controller,

@@ -39,10 +39,13 @@
 13. **Windows 文件夹打包禁止裸调 PATH 中的 `tar.exe`**：优先调用 `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe` 的 `.NET ZipFile`（强制 UTF-8 编码），回退到绝对路径 `%SystemRoot%\System32\tar.exe`，防止被 Git Bash 的 GNU tar 劫持。
 14. **Windows 安装/升级不要加 `AppMutex`**：Inno Setup 的 `AppMutex` 会阻断自动静默升级/卸载流程。当前 [deploy/windows/DropDrawer.iss](deploy/windows/DropDrawer.iss) 通过 `[Code]` 向窗口发送 `$8002`（`WM_APP + 2 = kQuitMessage`）优雅关闭托盘进程，并配合 `WM_QUERYENDSESSION`/`WM_ENDSESSION` 与卸载注册表清理；改动退出消息值时必须同步 `DropDrawer.iss` 与 `drawer_window.cpp`。
 15. **Windows 边缘模式与拖拽守卫**：
-    - `CreateRoundRectRgn` 第 5/6 参数是椭圆**直径**（`2 * radius`），且 `WM_DPICHANGED` 需重排 `PlaceDrawer()`。
-    - 仅在 `SHELLDLL_DefView`（资源管理器/桌面文件视图）拖动时提前弹引导条；`OnTimer`、`WM_ACTIVATE`、`kOutsideClickMessage` 均需检查 `!IsOleDragActive()` 防止拖出文件时误收起。
+    - 圆角优先用 Windows 11 的 `DWMWA_WINDOW_CORNER_PREFERENCE`（抗锯齿）；失败时（Windows 10）回退 `CreateRoundRectRgn`，其第 5/6 参数是椭圆**直径**（`2 * radius`），且 `WM_DPICHANGED` 需重排 `PlaceDrawer()`。
+    - 资源管理器/桌面（`SHELLDLL_DefView`）里的文件拖动会**立即**弹引导条；其他 OLE 拖动（浏览器、编辑器、聊天软件里的文字等）只有靠近折叠手柄 `kHandleDragReach`（28 逻辑像素）以内才弹，避免选中或拖动网页文字时误触发。`OnTimer`、`WM_ACTIVATE`、`kOutsideClickMessage` 均需检查 `!IsOleDragActive()` 防止拖出文件时误收起。
     - 常规窗口顶部左侧 `78px` 留白仅用于 macOS 红绿灯（`windowService.needsMacTrafficLightPadding`），不要加在 Windows/移动端上。
-16. **macOS Release 构建要点**：
+16. **抽屉模式切换必须等 Flutter 画好再显示**：原生层切换 `collapsed` / `drag_pill` / `expanded` 时先隐藏窗口（macOS `alphaValue = 0`，Windows 空 `SetWindowRgn`），改尺寸后再发 `onDrawerStateChanged`，收到 Dart 回传的 `drawerFrameReady {mode}` 才显示（超时 160ms 兜底）。否则旧模式的布局会被拉伸进新尺寸的窗口里（"变形"）。改动该协议时必须同步 `drawer_window_service.dart`、`MainFlutterWindow.swift` 与 `drawer_window.cpp`；动画只用等比缩放与临界阻尼弹簧，不要再用 `sx ≠ sy` 的变换。
+17. **界面配色只用 `MacPalette`，且它不是常量**：手机端跟随系统浅色/深色（`MacPalette.use` + `main.dart` 全量重建），桌面端固定深色（macOS 窗口强制 `darkAqua`）。`MacPalette.*` 是运行时 getter，不能放进 `const` 表达式或参数默认值；不要新增 `Colors.white/black.withValues(...)` 或深色十六进制字面量，改用 `MacPalette.fill()`（中性叠加）、`shade()`（凹陷区域）、`group()`（分组面板）、`background`、`onTextPrimary` 等语义色。Material 3 的分隔线和描边颜色取自 `colorScheme.outlineVariant` / `outline`，不是 `dividerColor`。
+18. **Windows 毛玻璃需要 DWM 确认后才半透明**：`ApplyBackdrop()` 用 `DWMWA_SYSTEMBACKDROP_TYPE`（常规窗口 Mica、边缘抽屉 Acrylic，Windows 11 22H2+）并 `DwmExtendFrameIntoClientArea`；只有原生回报 `backdrop: true` 时 Flutter 才画半透明底色，否则保持不透明 `#202020`。偏好设置里可关闭（注册表 `Backdrop`）。
+19. **macOS Release 构建要点**：
     - 使用 `./scripts/build_macos_release.sh`（已处理 `ARCHS=arm64`、`super_native_extensions` 预编译 `CARGO_PROFILE_RELEASE_LTO=false CARGO_PROFILE_RELEASE_PANIC=unwind` 与 Apple Development 证书签名，避免 TCC 辅助功能权限重建后失效）。
     - 若更改过项目目录路径，需先清理 `app/build/macos` 避免 Xcode stale file 报错。
 

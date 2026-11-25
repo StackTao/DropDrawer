@@ -63,7 +63,27 @@ class DropDrawerController extends ChangeNotifier {
   final Map<String, TransferCancelToken> _activeCancelTokens = {};
   final List<String> _pendingSharedFiles = [];
   final List<String> _pendingSharedTexts = [];
-  String? statusBanner;
+  String? _statusBanner;
+
+  /// Increases with every new status message, so the UI can tell a repeated
+  /// message apart from one it has already shown (mobile shows each as a toast).
+  int bannerSerial = 0;
+  String? get statusBanner => _statusBanner;
+  set statusBanner(String? message) {
+    _statusBanner = message;
+    if (message != null) bannerSerial++;
+  }
+
+  /// Files dropped into the drawer that are still being packed, hashed or
+  /// created on the server. Shown at the top of the list right away.
+  final List<PendingDrop> pendingDrops = [];
+  int _pendingDropSeq = 0;
+
+  /// Ticks for transfer progress alone (bytes, speed, route). Only the progress
+  /// area of each item listens to it, so a progress stream (every 120 ms, or
+  /// every P2P poll) no longer rebuilds the whole drawer.
+  final ValueNotifier<int> transferTicks = ValueNotifier(0);
+  void _tickTransfers() => transferTicks.value++;
 
   DropDrawerController() {
     windowService.onStateChanged = notifyListeners;
@@ -420,6 +440,9 @@ class DropDrawerController extends ChangeNotifier {
     final events = p2p.pollEvents();
     if (events.isEmpty) return;
 
+    // Progress-only events just tick the progress listeners; anything that
+    // ends a transfer or saves a file changes what the drawer shows.
+    var structural = false;
     for (final ev in events) {
       final itemId = ev['item_id'] as String;
       final pathKind = ev['path_kind'] as String? ?? 'unknown';
@@ -449,6 +472,7 @@ class DropDrawerController extends ChangeNotifier {
 
       if (sendingTo != null) {
         if (finished) {
+          structural = true;
           if (_cancellingSends.remove(transferId) && !cancelled && err == null) {
             statusBanner = '发送已完成';
           }
@@ -462,11 +486,13 @@ class DropDrawerController extends ChangeNotifier {
       }
       if (_p2pDownloadIds[itemId] != transferId) continue;
       final token = _activeCancelTokens[itemId];
+      if (finished || savedPath != null) structural = true;
       if (finished) {
         _p2pDownloadIds.remove(itemId);
         _activeCancelTokens.remove(itemId);
       }
       if (cancelled) {
+        structural = true;
         activeTransfers.remove(itemId);
         statusBanner = '已取消下载';
         continue;
@@ -490,7 +516,11 @@ class DropDrawerController extends ChangeNotifier {
         statusBanner = 'Downloaded via $transport';
       }
     }
-    notifyListeners();
+    if (structural) {
+      notifyListeners();
+    } else {
+      _tickTransfers();
+    }
   }
 
   Future<void> _connectWs() async {
@@ -563,6 +593,7 @@ class DropDrawerController extends ChangeNotifier {
     _wsReconnectTimer?.cancel();
     _p2pPollTimer?.cancel();
     _closeWs();
+    transferTicks.dispose();
     super.dispose();
   }
 
@@ -663,97 +694,121 @@ class DropDrawerController extends ChangeNotifier {
   /// Folders are seamlessly zipped (preserving structure & UTF-8 names) before syncing.
   Future<void> addFilesToDrawer(List<String> paths) async {
     if (_api == null || deviceId == null) return;
-    for (final rawPath in paths) {
-      String filePath = rawPath;
-      String? displayName;
-
-      if (FileSystemEntity.isDirectorySync(rawPath)) {
-        final folderName = p.basename(rawPath);
-        statusBanner = '正在打包文件夹「$folderName」...';
-        notifyListeners();
-        try {
-          filePath = await _archiveFolderToZip(rawPath);
-          displayName = '$folderName.zip';
-        } catch (e) {
-          statusBanner = '打包文件夹「$folderName」失败: $e';
-          notifyListeners();
-          continue;
-        }
-      }
-
-      final file = File(filePath);
-      if (!await file.exists()) continue;
-
-      final size = await file.length();
-      final name = displayName ?? p.basename(filePath);
-      final mime = lookupMimeType(filePath) ?? 'application/octet-stream';
-      String? thumbBase64;
-      final lowerName = name.toLowerCase();
-      final isImage = mime.startsWith('image/') ||
-          lowerName.endsWith('.png') ||
-          lowerName.endsWith('.jpg') ||
-          lowerName.endsWith('.jpeg') ||
-          lowerName.endsWith('.webp') ||
-          lowerName.endsWith('.heic') ||
-          lowerName.endsWith('.gif');
-      if (isImage) {
-        thumbBase64 = await windowService.generateThumbnailBase64(filePath);
-      }
-
-      final bool shouldRegisterP2p;
-      final bool shouldAutoCloud;
-      final String mode;
-
-      if (defaultDropPolicy == 'cloud_cached') {
-        shouldRegisterP2p = false;
-        shouldAutoCloud = true;
-        mode = 'cloud_cached';
-      } else if (defaultDropPolicy == 'p2p_only') {
-        shouldRegisterP2p = p2pReady;
-        shouldAutoCloud = !p2pReady;
-        mode = p2pReady ? 'p2p_only' : 'cloud_cached';
-      } else {
-        // smart: <= threshold caches to cloud in addition to P2P; larger files stay P2P-only.
-        shouldRegisterP2p = p2pReady;
-        shouldAutoCloud = (size <= autoCloudThresholdBytes) || !p2pReady;
-        mode = shouldAutoCloud
-            ? (p2pReady ? 'hybrid' : 'cloud_cached')
-            : 'p2p_only';
-      }
-
+    // Show every dropped entry immediately; each placeholder is replaced by the
+    // real item once it has been created on the server.
+    final drops = [
+      for (final path in paths)
+        PendingDrop(
+          id: 'pending-${_pendingDropSeq++}',
+          name: FileSystemEntity.isDirectorySync(path)
+              ? '${p.basename(path)}.zip'
+              : p.basename(path),
+        ),
+    ];
+    pendingDrops.addAll(drops);
+    notifyListeners();
+    for (var i = 0; i < paths.length; i++) {
       try {
-        final created = await _api!.createItem(
-          deviceId: deviceId!,
-          kind: 'file',
-          name: name,
-          size: size,
-          mimeType: mime,
-          thumbnailBase64: thumbBase64,
-          transferMode: mode,
-          ttlHours: defaultTtlHours > 0 ? defaultTtlHours : null,
-        );
-
-        localFilePaths[created.id] = filePath;
-        unawaited(_persistLocalFilePaths());
-
-        if (shouldRegisterP2p) {
-          try {
-            p2p.registerFile(created.id, filePath);
-          } catch (e) {
-            statusBanner = 'P2P 注册提示: $e';
-          }
-        }
-
-        if (shouldAutoCloud) {
-          unawaited(cacheItemToCloud(created.id, filePath));
-        } else {
-          statusBanner = '已加入「$name」(纯 P2P 端到端直连)';
-        }
-      } catch (e) {
-        statusBanner = '添加「$name」失败: $e';
+        await _addFileToDrawer(paths[i]);
+      } finally {
+        pendingDrops.remove(drops[i]);
+        notifyListeners();
       }
-      notifyListeners();
     }
+  }
+
+  Future<void> _addFileToDrawer(String rawPath) async {
+    String filePath = rawPath;
+    String? displayName;
+
+    if (FileSystemEntity.isDirectorySync(rawPath)) {
+      final folderName = p.basename(rawPath);
+      statusBanner = '正在打包文件夹「$folderName」...';
+      notifyListeners();
+      try {
+        filePath = await _archiveFolderToZip(rawPath);
+        displayName = '$folderName.zip';
+      } catch (e) {
+        statusBanner = '打包文件夹「$folderName」失败: $e';
+        notifyListeners();
+        return;
+      }
+    }
+
+    final file = File(filePath);
+    if (!await file.exists()) return;
+
+    final size = await file.length();
+    final name = displayName ?? p.basename(filePath);
+    final mime = lookupMimeType(filePath) ?? 'application/octet-stream';
+    String? thumbBase64;
+    final lowerName = name.toLowerCase();
+    final isImage = mime.startsWith('image/') ||
+        lowerName.endsWith('.png') ||
+        lowerName.endsWith('.jpg') ||
+        lowerName.endsWith('.jpeg') ||
+        lowerName.endsWith('.webp') ||
+        lowerName.endsWith('.heic') ||
+        lowerName.endsWith('.gif');
+    if (isImage) {
+      thumbBase64 = await windowService.generateThumbnailBase64(filePath);
+    }
+
+    final bool shouldRegisterP2p;
+    final bool shouldAutoCloud;
+    final String mode;
+
+    if (defaultDropPolicy == 'cloud_cached') {
+      shouldRegisterP2p = false;
+      shouldAutoCloud = true;
+      mode = 'cloud_cached';
+    } else if (defaultDropPolicy == 'p2p_only') {
+      shouldRegisterP2p = p2pReady;
+      shouldAutoCloud = !p2pReady;
+      mode = p2pReady ? 'p2p_only' : 'cloud_cached';
+    } else {
+      // smart: <= threshold caches to cloud in addition to P2P; larger files stay P2P-only.
+      shouldRegisterP2p = p2pReady;
+      shouldAutoCloud = (size <= autoCloudThresholdBytes) || !p2pReady;
+      mode = shouldAutoCloud
+          ? (p2pReady ? 'hybrid' : 'cloud_cached')
+          : 'p2p_only';
+    }
+
+    try {
+      final created = await _api!.createItem(
+        deviceId: deviceId!,
+        kind: 'file',
+        name: name,
+        size: size,
+        mimeType: mime,
+        thumbnailBase64: thumbBase64,
+        transferMode: mode,
+        ttlHours: defaultTtlHours > 0 ? defaultTtlHours : null,
+      );
+
+      localFilePaths[created.id] = filePath;
+      unawaited(_persistLocalFilePaths());
+      // Show it now instead of waiting for the server's item_added broadcast.
+      if (!items.any((e) => e.id == created.id)) items.insert(0, created);
+
+      if (shouldRegisterP2p) {
+        try {
+          p2p.registerFile(created.id, filePath);
+        } catch (e) {
+          statusBanner = 'P2P 注册提示: $e';
+        }
+      }
+
+      if (shouldAutoCloud) {
+        unawaited(cacheItemToCloud(created.id, filePath));
+      } else {
+        statusBanner = '已加入「$name」(纯 P2P 端到端直连)';
+      }
+    } catch (e) {
+      statusBanner = '添加「$name」失败: $e';
+    }
+    notifyListeners();
   }
 
   Future<void> addTextToDrawer(String text) async {
@@ -857,7 +912,7 @@ class DropDrawerController extends ChangeNotifier {
             channel: 'upload',
             finished: false,
           );
-          notifyListeners();
+          _tickTransfers();
         },
       );
       activeTransfers[itemId] = TransferProgress(
@@ -1023,7 +1078,7 @@ class DropDrawerController extends ChangeNotifier {
             channel: 'cloud',
             finished: false,
           );
-          notifyListeners();
+          _tickTransfers();
         },
       );
 
@@ -1520,4 +1575,12 @@ String availableDownloadPath(String dir, String name, {String? previousPath}) {
     if (usable(candidate)) return candidate;
   }
   return p.join(dir, '$stem (${DateTime.now().millisecondsSinceEpoch})$ext');
+}
+
+/// A dropped file that has not become a drawer item yet.
+class PendingDrop {
+  final String id;
+  final String name;
+
+  PendingDrop({required this.id, required this.name});
 }

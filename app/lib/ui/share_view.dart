@@ -127,7 +127,7 @@ class _ShareViewState extends State<ShareView> {
               ? const EdgeInsets.fromLTRB(78, 1, 10, 3)
               : const EdgeInsets.fromLTRB(10, 10, 12, 9),
           child: SizedBox(
-            height: 26,
+            height: UiDensity.headerHeight(context),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
@@ -173,7 +173,7 @@ class _ShareViewState extends State<ShareView> {
                 children: [
                   Text(
                     '已创建的外链 (${c.shareLinks.length})',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 11.5,
                       color: MacPalette.textSecondary,
                       fontWeight: FontWeight.w500,
@@ -181,7 +181,7 @@ class _ShareViewState extends State<ShareView> {
                   ),
                   const Spacer(),
                   if (_loadingList)
-                    const SizedBox(
+                    SizedBox(
                       width: 11,
                       height: 11,
                       child: CircularProgressIndicator(
@@ -199,11 +199,11 @@ class _ShareViewState extends State<ShareView> {
                     vertical: 20,
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.2),
+                    color: MacPalette.group(0.2),
                     borderRadius: BorderRadius.circular(10),
                     border: Border.all(color: MacPalette.hairline, width: 0.7),
                   ),
-                  child: const Text(
+                  child: Text(
                     '暂无外链分享\n点击单条链接图标，或进入「多选」打包创建合集外链',
                     textAlign: TextAlign.center,
                     style: TextStyle(
@@ -238,7 +238,7 @@ class _ShareViewState extends State<ShareView> {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.24),
+        color: MacPalette.group(0.24),
         borderRadius: BorderRadius.circular(11),
         border: Border.all(color: MacPalette.hairline, width: 0.7),
       ),
@@ -251,7 +251,7 @@ class _ShareViewState extends State<ShareView> {
                 width: 30,
                 height: 30,
                 decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.08),
+                  color: MacPalette.fill(0.08),
                   borderRadius: BorderRadius.circular(7),
                 ),
                 child: Icon(
@@ -273,7 +273,7 @@ class _ShareViewState extends State<ShareView> {
                       isBundle
                           ? '${primary.name} 等 ${items.length} 项'
                           : primary.name,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12.5,
                         fontWeight: FontWeight.w500,
                         color: MacPalette.textPrimary,
@@ -286,7 +286,7 @@ class _ShareViewState extends State<ShareView> {
                       pendingUploadCount > 0
                           ? '${formatBytes(totalBytes)} · 生成前自动上云 $pendingUploadCount 个文件至「${c.defaultStorageBackendName}」'
                           : '${formatBytes(totalBytes)} · 已就绪，外部浏览器免登录提取',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 10.5,
                         color: MacPalette.textTertiary,
                       ),
@@ -304,7 +304,7 @@ class _ShareViewState extends State<ShareView> {
               constraints: const BoxConstraints(maxHeight: 84),
               padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.04),
+                color: MacPalette.fill(0.04),
                 borderRadius: BorderRadius.circular(7),
                 border: Border.all(color: MacPalette.hairline, width: 0.5),
               ),
@@ -327,7 +327,7 @@ class _ShareViewState extends State<ShareView> {
                       Expanded(
                         child: Text(
                           it.name,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 11,
                             color: MacPalette.textSecondary,
                           ),
@@ -338,7 +338,7 @@ class _ShareViewState extends State<ShareView> {
                       const SizedBox(width: 6),
                       Text(
                         formatBytes(it.size),
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 10,
                           color: MacPalette.textTertiary,
                         ),
@@ -351,7 +351,7 @@ class _ShareViewState extends State<ShareView> {
             const SizedBox(height: 8),
             Container(
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.05),
+                color: MacPalette.fill(0.05),
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(color: MacPalette.hairline, width: 0.6),
               ),
@@ -363,7 +363,7 @@ class _ShareViewState extends State<ShareView> {
             ),
           ],
           const SizedBox(height: 12),
-          const Text(
+          Text(
             '有效期',
             style: TextStyle(fontSize: 11, color: MacPalette.textSecondary),
           ),
@@ -379,7 +379,7 @@ class _ShareViewState extends State<ShareView> {
             onChanged: (v) => setState(() => _expiresHours = v),
           ),
           const SizedBox(height: 10),
-          const Text(
+          Text(
             '下载次数限制',
             style: TextStyle(fontSize: 11, color: MacPalette.textSecondary),
           ),
@@ -397,7 +397,7 @@ class _ShareViewState extends State<ShareView> {
           const SizedBox(height: 10),
           Container(
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.05),
+              color: MacPalette.fill(0.05),
               borderRadius: BorderRadius.circular(8),
               border: Border.all(color: MacPalette.hairline, width: 0.6),
             ),
@@ -426,7 +426,7 @@ class _ShareViewState extends State<ShareView> {
             const SizedBox(height: 8),
             Text(
               _error!,
-              style: const TextStyle(fontSize: 11, color: MacPalette.red),
+              style: TextStyle(fontSize: 11, color: MacPalette.red),
             ),
           ],
           const SizedBox(height: 12),
@@ -436,18 +436,18 @@ class _ShareViewState extends State<ShareView> {
               onPressed: _creating ? null : _createShare,
               style: FilledButton.styleFrom(
                 backgroundColor: MacPalette.textPrimary,
-                foregroundColor: const Color(0xFF111113),
+                foregroundColor: MacPalette.onTextPrimary,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8),
                 ),
               ),
               child: _creating
-                  ? const SizedBox(
+                  ? SizedBox(
                       width: 14,
                       height: 14,
                       child: CircularProgressIndicator(
                         strokeWidth: 1.8,
-                        color: Color(0xFF111113),
+                        color: MacPalette.onTextPrimary,
                       ),
                     )
                   : Text(
@@ -478,13 +478,13 @@ class _ShareViewState extends State<ShareView> {
                 children: [
                   Row(
                     children: [
-                      const Icon(
+                      Icon(
                         CupertinoIcons.checkmark_circle_fill,
                         size: 13,
                         color: MacPalette.green,
                       ),
                       const SizedBox(width: 5),
-                      const Text(
+                      Text(
                         '已生成并复制到剪贴板',
                         style: TextStyle(
                           fontSize: 11.5,
@@ -529,7 +529,7 @@ class _ShareViewState extends State<ShareView> {
                       _justCreated!,
                       plainPasscode: _justCreatedPasscode,
                     ),
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 11,
                       fontFamily: 'Menlo',
                       color: MacPalette.textSecondary,
@@ -577,7 +577,7 @@ class _ShareViewState extends State<ShareView> {
             width: 30,
             height: 30,
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.07),
+              color: MacPalette.fill(0.07),
               borderRadius: BorderRadius.circular(7),
             ),
             child: Icon(

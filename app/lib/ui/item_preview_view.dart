@@ -66,7 +66,7 @@ class ItemPreviewView extends StatelessWidget {
               ? const EdgeInsets.fromLTRB(78, 1, 10, 3)
               : const EdgeInsets.fromLTRB(10, 10, 12, 9),
           child: SizedBox(
-            height: 26,
+            height: UiDensity.headerHeight(context),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
@@ -139,14 +139,14 @@ class ItemPreviewView extends StatelessWidget {
       constraints: const BoxConstraints(minHeight: 160, maxHeight: 300),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.28),
+        color: MacPalette.shade(0.28),
         borderRadius: BorderRadius.circular(11),
         border: Border.all(color: MacPalette.hairline, width: 0.7),
       ),
       child: SingleChildScrollView(
         child: SelectableText(
           fullText,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 12.5,
             height: 1.55,
             color: MacPalette.textPrimary,
@@ -175,7 +175,7 @@ class ItemPreviewView extends StatelessWidget {
     return Container(
       height: 240,
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.32),
+        color: MacPalette.shade(0.32),
         borderRadius: BorderRadius.circular(11),
         border: Border.all(color: MacPalette.hairline, width: 0.7),
       ),
@@ -187,7 +187,7 @@ class ItemPreviewView extends StatelessWidget {
                 maxScale: 4.0,
                 child: Center(child: preview),
               )
-            : const Center(
+            : Center(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -215,7 +215,7 @@ class ItemPreviewView extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 18),
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.24),
+        color: MacPalette.group(0.24),
         borderRadius: BorderRadius.circular(11),
         border: Border.all(color: MacPalette.hairline, width: 0.7),
       ),
@@ -225,11 +225,11 @@ class ItemPreviewView extends StatelessWidget {
             width: 48,
             height: 48,
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.08),
+              color: MacPalette.fill(0.08),
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: MacPalette.hairline, width: 0.7),
             ),
-            child: const Icon(
+            child: Icon(
               CupertinoIcons.doc_fill,
               size: 24,
               color: MacPalette.textPrimary,
@@ -239,7 +239,7 @@ class ItemPreviewView extends StatelessWidget {
           SelectableText(
             item.name,
             textAlign: TextAlign.center,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w500,
               color: MacPalette.textPrimary,
@@ -271,7 +271,7 @@ class ItemPreviewView extends StatelessWidget {
 
     return Container(
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.2),
+        color: MacPalette.group(0.2),
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: MacPalette.hairline, width: 0.7),
       ),
@@ -288,7 +288,7 @@ class ItemPreviewView extends StatelessWidget {
                     width: 64,
                     child: Text(
                       rows[i].$1,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 11,
                         color: MacPalette.textTertiary,
                       ),
@@ -297,7 +297,7 @@ class ItemPreviewView extends StatelessWidget {
                   Expanded(
                     child: SelectableText(
                       rows[i].$2,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 11.5,
                         color: MacPalette.textSecondary,
                       ),
@@ -324,7 +324,7 @@ class ItemPreviewView extends StatelessWidget {
       margin: const EdgeInsets.only(top: 12),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.22),
+        color: MacPalette.group(0.22),
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: MacPalette.hairline, width: 0.7),
       ),
@@ -337,8 +337,8 @@ class ItemPreviewView extends StatelessWidget {
               child: LinearProgressIndicator(
                 value: progress.fraction > 0 ? progress.fraction : null,
                 minHeight: 3,
-                backgroundColor: Colors.white.withValues(alpha: 0.1),
-                valueColor: const AlwaysStoppedAnimation<Color>(
+                backgroundColor: MacPalette.fill(0.1),
+                valueColor: AlwaysStoppedAnimation<Color>(
                   MacPalette.textPrimary,
                 ),
               ),
@@ -356,7 +356,7 @@ class ItemPreviewView extends StatelessWidget {
                     'p2p_relay' => 'P2P 加密中继',
                     _ => '云端高速下载',
                   },
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 11,
                     color: MacPalette.textSecondary,
                   ),
@@ -367,7 +367,7 @@ class ItemPreviewView extends StatelessWidget {
                     Text(
                       '${(progress.fraction * 100).toStringAsFixed(0)}%'
                       '${progress.speedBps > 0 ? ' · ${formatBytes(progress.speedBps)}/s' : ''}',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 11,
                         color: MacPalette.textPrimary,
                       ),
@@ -379,7 +379,7 @@ class ItemPreviewView extends StatelessWidget {
                       onPressed: c.isCancelling(item.id) ? null : () => c.cancelTransfer(item.id),
                       child: Text(
                         c.isCancelling(item.id) ? '正在取消' : (progress.channel == 'upload' ? '取消上传' : '取消下载'),
-                        style: const TextStyle(fontSize: 11, color: MacPalette.red),
+                        style: TextStyle(fontSize: 11, color: MacPalette.red),
                       ),
                     ),
                   ],
@@ -394,7 +394,7 @@ class ItemPreviewView extends StatelessWidget {
                   child: Text(
                     '正在发送给 ${c.recipientName(entry.value.sendingTo!)} · ${(entry.value.fraction * 100).floor()}%',
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 11,
                       color: MacPalette.textSecondary,
                     ),
@@ -406,7 +406,7 @@ class ItemPreviewView extends StatelessWidget {
                   onPressed: c.isCancellingSend(entry.key) ? null : () => c.cancelOutgoingTransfer(entry.key),
                   child: Text(
                     c.isCancellingSend(entry.key) ? '正在取消' : '取消发送',
-                    style: const TextStyle(fontSize: 11, color: MacPalette.red),
+                    style: TextStyle(fontSize: 11, color: MacPalette.red),
                   ),
                 ),
               ],
@@ -514,7 +514,7 @@ class ItemPreviewView extends StatelessWidget {
         onPressed: onTap,
         style: FilledButton.styleFrom(
           backgroundColor: MacPalette.textPrimary,
-          foregroundColor: const Color(0xFF111113),
+          foregroundColor: MacPalette.onTextPrimary,
           padding: const EdgeInsets.symmetric(horizontal: 12),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
@@ -538,7 +538,7 @@ class ItemPreviewView extends StatelessWidget {
         onPressed: onTap,
         style: OutlinedButton.styleFrom(
           foregroundColor: MacPalette.textPrimary,
-          side: const BorderSide(color: MacPalette.strongHairline, width: 0.7),
+          side: BorderSide(color: MacPalette.strongHairline, width: 0.7),
           padding: const EdgeInsets.symmetric(horizontal: 11),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),

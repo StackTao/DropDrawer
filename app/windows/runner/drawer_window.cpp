@@ -1,5 +1,6 @@
 #include "drawer_window.h"
 
+#include <dwmapi.h>
 #include <shellapi.h>
 #include <flutter/standard_method_codec.h>
 
@@ -24,6 +25,35 @@ constexpr UINT kTrayMessage = WM_APP + 1;
 constexpr UINT kQuitMessage = WM_APP + 2;
 constexpr UINT kOutsideClickMessage = WM_APP + 3;
 constexpr UINT_PTR kDrawerTimer = 1;
+// Fallback reveal if Flutter never acknowledges the new mode's first frame.
+constexpr UINT_PTR kRevealTimer = 2;
+constexpr UINT kRevealFallbackMs = 160;
+
+#ifndef DWMWA_WINDOW_CORNER_PREFERENCE
+#define DWMWA_WINDOW_CORNER_PREFERENCE 33
+#endif
+// DWM_WINDOW_CORNER_PREFERENCE values (Windows 11 SDK).
+constexpr int kCornerDefault = 0;
+constexpr int kCornerRound = 2;
+constexpr int kCornerRoundSmall = 3;
+
+// Windows 11 draws smooth, anti-aliased rounded corners. Returns false on
+// Windows 10, where a window region is used instead.
+bool SetSystemCorners(HWND window, int preference) {
+  return SUCCEEDED(DwmSetWindowAttribute(window, DWMWA_WINDOW_CORNER_PREFERENCE,
+                                         &preference, sizeof(preference)));
+}
+
+#ifndef DWMWA_SYSTEMBACKDROP_TYPE
+#define DWMWA_SYSTEMBACKDROP_TYPE 38
+#endif
+// DWM_SYSTEMBACKDROP_TYPE values (Windows 11 22H2 SDK).
+constexpr int kBackdropNone = 1;
+constexpr int kBackdropMica = 2;
+constexpr int kBackdropAcrylic = 3;
+
+// Edge-drawer pixels near the collapsed handle that count as "dragging to it".
+constexpr int kHandleDragReach = 28;
 constexpr int kShortcutId = 1;
 
 template <class T>
@@ -98,6 +128,16 @@ UINT PresetModifiers(const List& names) {
   return modifiers;
 }
 
+}  // namespace
+
+const char* DrawerWindow::ModeName(Mode mode) {
+  return mode == Mode::kExpanded    ? "expanded"
+         : mode == Mode::kDragGuide ? "drag_pill"
+                                    : "collapsed";
+}
+
+namespace {
+
 bool IsOleDragActive() {
   GUITHREADINFO info{};
   info.cbSize = sizeof(info);
@@ -152,6 +192,8 @@ DrawerWindow::DrawerWindow(HWND window, flutter::BinaryMessenger* messenger,
       [this](const auto& call, auto result) { HandleCall(call, std::move(result)); });
   RegisterShortcut();
   tray_added_ = AddTrayIcon();
+  backdrop_enabled_ = Preference(L"Backdrop", 1) != 0;
+  ApplyBackdrop();
 }
 
 DrawerWindow::~DrawerWindow() {
@@ -170,8 +212,7 @@ Map DrawerWindow::State() const {
   return {
       {Value("edgeMode"), Value(edge_)},
       {Value("expanded"), Value(mode_ == Mode::kExpanded)},
-      {Value("mode"), Value(mode_ == Mode::kExpanded ? "expanded"
-                            : mode_ == Mode::kDragGuide ? "drag_pill" : "collapsed")},
+      {Value("mode"), Value(ModeName(mode_))},
       {Value("pinned"), Value(pinned_)},
       {Value("dockSide"), Value(dock_left_ ? "left" : "right")},
       {Value("hotkeyEnabled"), Value(shortcut_enabled_)},
@@ -180,6 +221,8 @@ Map DrawerWindow::State() const {
       {Value("hotkeyEngine"), Value(shortcut_registered_ ? "register_hotkey" : "local_only")},
       {Value("launchAtLogin"), Value(StartsAtLogin())},
       {Value("showDockIcon"), Value(show_taskbar_)},
+      {Value("backdrop"), Value(backdrop_active_)},
+      {Value("backdropEnabled"), Value(backdrop_enabled_)},
   };
 }
 
@@ -197,6 +240,8 @@ void DrawerWindow::HandleCall(const flutter::MethodCall<Value>& call,
     SetMode(Mode::kExpanded, true);
   } else if (method == "collapseDrawer") {
     SetMode(Mode::kCollapsed);
+  } else if (method == "drawerFrameReady") {
+    if (reveal_pending_ && Arg<std::string>(args, "mode") == ModeName(mode_)) Reveal();
   } else if (method == "showDragGuide") {
     if (edge_ && mode_ == Mode::kCollapsed) SetMode(Mode::kDragGuide);
   } else if (method == "dragExpandedDrawer") {
@@ -221,6 +266,11 @@ void DrawerWindow::HandleCall(const flutter::MethodCall<Value>& call,
     show_taskbar_ = Arg<bool>(args, "shown");
     SavePreference(L"ShowTaskbar", show_taskbar_);
     UpdateTaskbar();
+    NotifyState();
+  } else if (method == "setBackdrop") {
+    backdrop_enabled_ = Arg<bool>(args, "enabled");
+    SavePreference(L"Backdrop", backdrop_enabled_);
+    ApplyBackdrop();
     NotifyState();
   } else if (method == "quitApp") {
     PostMessageW(window_, kQuitMessage, 0, 0);
@@ -292,6 +342,9 @@ void DrawerWindow::SetEdgeMode(bool enabled) {
     if (start_collapsed) ShowWindow(window_, SW_SHOWNOACTIVATE);
   } else {
     KillTimer(window_, kDrawerTimer);
+    KillTimer(window_, kRevealTimer);
+    reveal_pending_ = false;
+    SetSystemCorners(window_, kCornerDefault);
     SetWindowRgn(window_, nullptr, TRUE);
     const LONG_PTR visible = GetWindowLongPtrW(window_, GWL_STYLE) & WS_VISIBLE;
     SetWindowLongPtrW(window_, GWL_STYLE, (regular_style_ & ~WS_VISIBLE) | visible);
@@ -304,6 +357,7 @@ void DrawerWindow::SetEdgeMode(bool enabled) {
                  regular_bounds_.bottom - regular_bounds_.top,
                  SWP_NOACTIVATE | SWP_FRAMECHANGED);
   }
+  ApplyBackdrop();
   NotifyState();
 }
 
@@ -322,8 +376,12 @@ void DrawerWindow::SetMode(Mode mode, bool activate) {
       opened_by_drag_ = false;
     }
     if (mode == Mode::kDragGuide) drag_guide_open_at_ = GetTickCount64() + 180;
+    // Resize while invisible, then tell Flutter. The window reappears once
+    // Flutter reports a frame laid out for the new mode (drawerFrameReady).
+    reveal_pending_ = true;
     PlaceDrawer();
     NotifyState();
+    SetTimer(window_, kRevealTimer, kRevealFallbackMs, nullptr);
   }
   if (activate) {
     Activate();
@@ -343,8 +401,8 @@ void DrawerWindow::SetDockLeft(bool left) {
 void DrawerWindow::PlaceDrawer() {
   const RECT area = WorkArea(MonitorFromWindow(window_, MONITOR_DEFAULTTONEAREST));
   const auto dpi = static_cast<int>(GetDpiForWindow(window_));
-  const int logical_width = mode_ == Mode::kExpanded ? 410 : mode_ == Mode::kDragGuide ? 200 : 14;
-  const int logical_height = mode_ == Mode::kExpanded ? 645 : mode_ == Mode::kDragGuide ? 62 : 64;
+  const int logical_width = mode_ == Mode::kExpanded ? 410 : mode_ == Mode::kDragGuide ? 252 : 14;
+  const int logical_height = mode_ == Mode::kExpanded ? 645 : mode_ == Mode::kDragGuide ? 48 : 64;
   const LONG width = std::min<LONG>(MulDiv(logical_width, dpi, 96), area.right - area.left);
   const LONG height = std::min<LONG>(MulDiv(logical_height, dpi, 96), area.bottom - area.top);
   const LONG center = area.top + MulDiv(area.bottom - area.top, static_cast<int>(anchor_), 1000);
@@ -361,12 +419,46 @@ void DrawerWindow::PlaceDrawer() {
 }
 
 void DrawerWindow::UpdateDrawerRegion(LONG width, LONG height, int dpi) {
-  // CreateRoundRectRgn takes ellipse width/height (2 * corner radius).
-  const int diameter = MulDiv(
-      mode_ == Mode::kExpanded ? 32 : mode_ == Mode::kDragGuide ? 26 : 12,
-      dpi, 96);
+  if (reveal_pending_) {
+    // An empty region hides the window without deactivating or unmapping it.
+    HRGN empty = CreateRectRgn(0, 0, 0, 0);
+    if (empty && !SetWindowRgn(window_, empty, TRUE)) DeleteObject(empty);
+    return;
+  }
+  if (SetSystemCorners(window_, mode_ == Mode::kCollapsed ? kCornerRoundSmall
+                                                           : kCornerRound)) {
+    SetWindowRgn(window_, nullptr, TRUE);
+    return;
+  }
+  // Windows 10: CreateRoundRectRgn takes ellipse width/height (2 * corner radius).
+  const int diameter = MulDiv(mode_ == Mode::kCollapsed ? 8 : 16, dpi, 96);
   HRGN region = CreateRoundRectRgn(0, 0, width + 1, height + 1, diameter, diameter);
   if (region && !SetWindowRgn(window_, region, TRUE)) DeleteObject(region);
+}
+
+void DrawerWindow::ApplyBackdrop() {
+  // Mica for the regular window, Acrylic for the transient edge drawer. It
+  // only shows through where the frame extends into the client area and
+  // Flutter leaves the background translucent.
+  const int type = !backdrop_enabled_ ? kBackdropNone
+                   : edge_            ? kBackdropAcrylic
+                                      : kBackdropMica;
+  const bool applied = SUCCEEDED(DwmSetWindowAttribute(
+      window_, DWMWA_SYSTEMBACKDROP_TYPE, &type, sizeof(type)));
+  backdrop_active_ = backdrop_enabled_ && applied;
+  const MARGINS margins =
+      backdrop_active_ ? MARGINS{-1, -1, -1, -1} : MARGINS{0, 0, 0, 0};
+  DwmExtendFrameIntoClientArea(window_, &margins);
+}
+
+void DrawerWindow::Reveal() {
+  KillTimer(window_, kRevealTimer);
+  if (!reveal_pending_) return;
+  reveal_pending_ = false;
+  RECT bounds{};
+  if (!GetWindowRect(window_, &bounds)) return;
+  UpdateDrawerRegion(bounds.right - bounds.left, bounds.bottom - bounds.top,
+                     static_cast<int>(GetDpiForWindow(window_)));
 }
 
 void DrawerWindow::DragExpandedDrawer(const std::string& phase) {
@@ -484,7 +576,15 @@ void DrawerWindow::OnTimer() {
   const bool mouse_down =
       GetAsyncKeyState(VK_LBUTTON) < 0 || GetAsyncKeyState(VK_RBUTTON) < 0;
   if (mode_ == Mode::kCollapsed) {
-    if (mouse_down && IsShellFileDrag()) {
+    if (!mouse_down || !IsOleDragActive()) return;
+    // Explorer file drags show the guide right away. Any other OLE drag (text
+    // from a browser, an editor or a chat app) only does so once it comes
+    // close to the handle, so selecting or moving text elsewhere never pops it.
+    RECT reach = bounds;
+    const int margin = MulDiv(kHandleDragReach,
+                              static_cast<int>(GetDpiForWindow(window_)), 96);
+    InflateRect(&reach, margin, margin);
+    if (IsShellFileDrag() || PtInRect(&reach, cursor)) {
       guide_from_ole_drag_ = true;
       SetMode(Mode::kDragGuide);
     }
@@ -686,6 +786,10 @@ std::optional<LRESULT> DrawerWindow::HandleMessage(UINT message, WPARAM wparam,
     case WM_TIMER:
       if (wparam == kDrawerTimer) {
         OnTimer();
+        return 0;
+      }
+      if (wparam == kRevealTimer) {
+        Reveal();
         return 0;
       }
       break;

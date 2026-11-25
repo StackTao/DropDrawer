@@ -88,15 +88,16 @@ DropDrawer 将**控制面**与**数据面**解耦：
 Dart 侧通过 [drawer_window_service.dart](../app/lib/services/drawer_window_service.dart) 统一与 macOS / Windows 原生窗口通信。
 
 ### 4.1 macOS (`app/macos/Runner/`)
-- **窗口管理 (`MainFlutterWindow.swift`)**：无标题栏毛玻璃贴边悬浮窗，支持 `collapsed` / `drag_pill` / `expanded` 三态，折叠手柄与展开态顶部拖条均可拖拽调整垂直位置及跨屏左右停靠（持久化到 `UserDefaults`）。
+- **窗口管理 (`MainFlutterWindow.swift`)**：无标题栏毛玻璃贴边悬浮窗，支持 `collapsed` / `drag_pill` / `expanded` 三态（切换时先隐藏，等 Dart 回传 `drawerFrameReady` 再以等比缩放 + 临界阻尼弹簧显示，Windows 同理），折叠手柄与展开态顶部拖条均可拖拽调整垂直位置及跨屏左右停靠（持久化到 `UserDefaults`）。
 - **菜单与状态栏 (`AppDelegate.swift`)**：原生 `NSMenu`（含 SF Symbols），状态栏左键菜单常驻，支持可选 Dock 图标与 `⌘Q` 退出。
 - **全局快捷键**：基于 `CGEvent.tapCreate`（辅助功能）+ `NSEvent.addGlobalMonitorForEvents`（输入监控）+ 本地监听，支持实时录制与权限状态检测。
 - **文件与媒体**：原生 `ImageIO` 缩略图生成、剪贴板读写（文件/截图/文本）、`/usr/bin/ditto` 文件夹无损 ZIP 打包。
 - **签名与打包**：`scripts/build_macos_release.sh` 固定 `arm64` Release，预编译 `super_native_extensions`（`LTO=false`、`panic=unwind`），嵌入 `libdropdrawer_p2p.dylib` 并使用 Apple Development 证书签名（保证重新打包后 macOS 辅助功能 TCC 权限不失效）。
 
 ### 4.2 Windows (`app/windows/runner/` + `deploy/windows/`)
-- **窗口与托盘 (`drawer_window.cpp`)**：单实例互斥锁 `Local\DropDrawer`、系统托盘图标与右键菜单、`WS_POPUP` 贴边抽屉、`CreateRoundRectRgn` 按 DPI 缩放裁剪圆角（响应 `WM_DPICHANGED` 与 `WM_DISPLAYCHANGE`）、折叠手柄与展开态顶部拖条支持上下滑动与跨屏左右停靠。
-- **拖拽唤出与防误触**：通过 `CLIPBRDWNDCLASS` + `SHELLDLL_DefView` 祖先链识别资源管理器/桌面文件拖动自动弹引导条（避免网页文本/标签页误触发）；`OnTimer`、`WM_ACTIVATE`、`kOutsideClickMessage` 均带 `!IsOleDragActive()` 守卫，防止从抽屉拖出文件时中途收起。
+- **窗口与托盘 (`drawer_window.cpp`)**：单实例互斥锁 `Local\DropDrawer`、系统托盘图标与右键菜单、`WS_POPUP` 贴边抽屉、Windows 11 用 `DWMWA_WINDOW_CORNER_PREFERENCE` 系统圆角（Windows 10 回退 `CreateRoundRectRgn` 按 DPI 缩放裁剪，响应 `WM_DPICHANGED` 与 `WM_DISPLAYCHANGE`）、折叠手柄与展开态顶部拖条支持上下滑动与跨屏左右停靠。
+- **毛玻璃背景**：Windows 11 22H2+ 上常规窗口用 Mica、边缘抽屉用 Acrylic（`DWMWA_SYSTEMBACKDROP_TYPE` + `DwmExtendFrameIntoClientArea`），原生回报 `backdrop` 后 Flutter 才改用半透明底色；偏好设置可关闭。
+- **拖拽唤出与防误触**：通过 `CLIPBRDWNDCLASS` + `SHELLDLL_DefView` 祖先链识别资源管理器/桌面文件拖动，立即弹引导条；其他 OLE 拖动（如浏览器、编辑器中的文字）在靠近折叠手柄 28 逻辑像素内才弹，避免选中网页文本时误触发；`OnTimer`、`WM_ACTIVATE`、`kOutsideClickMessage` 均带 `!IsOleDragActive()` 守卫，防止从抽屉拖出文件时中途收起。
 - **剪贴板与文件 (`drawer_files.cpp`)**：`CF_HDROP` + `Preferred DropEffect` 多文件复制（跳过失效路径）、WIC 截图保存（由启动阶段 `pruneClipboardFiles` 排除抽屉保留路径后清理超 24h 旧缓存）、`SHOpenFolderAndSelectItems` 定位文件、PowerShell `.NET ZipFile`（UTF-8 编码，回退绝对路径 `%SystemRoot%\System32\tar.exe`）打包文件夹。
 - **安装、升级与卸载 (`DropDrawer.iss`)**：
   - 处理 `WM_QUERYENDSESSION` / `WM_ENDSESSION` 及自定义退出消息 `kQuitMessage (WM_APP + 2 = 0x8002)`。
@@ -105,6 +106,8 @@ Dart 侧通过 [drawer_window_service.dart](../app/lib/services/drawer_window_se
 ---
 
 ## 5. 移动端原生层 (`com.dropdrawer/mobile`)
+
+界面层面：手机端跟随系统浅色/深色模式（`MacPalette.use`），按钮、标题栏、分段控件等使用触控尺寸（`UiDensity`）；Android 上开关、确认对话框、加载指示和点击水波纹使用 Material 风格，系统返回键会先退出二级页面、多选和搜索。
 
 Dart 侧通过 [drawer_window_service.dart](../app/lib/services/drawer_window_service.dart) 在 iOS / Android 上接入 `com.dropdrawer/mobile` MethodChannel：
 

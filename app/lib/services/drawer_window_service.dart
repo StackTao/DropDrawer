@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -26,6 +28,11 @@ class DrawerWindowService {
   String hotkeyEngine = 'local_only';
   bool launchAtLogin = false;
   bool showDockIcon = false;
+
+  /// Windows: whether the Mica/Acrylic system backdrop is on (the user setting)
+  /// and whether DWM actually applied it (Windows 11 22H2 and later).
+  bool windowsBackdropEnabled = true;
+  bool windowsBackdrop = false;
   void Function()? onStateChanged;
   void Function()? onPasteShortcut;
   void Function(List<String> files, List<String> texts)? onSharedPayload;
@@ -51,7 +58,11 @@ class DrawerWindowService {
           hotkeyEngine = args['hotkeyEngine'] as String? ?? hotkeyEngine;
           launchAtLogin = args['launchAtLogin'] as bool? ?? launchAtLogin;
           showDockIcon = args['showDockIcon'] as bool? ?? showDockIcon;
+          windowsBackdrop = args['backdrop'] as bool? ?? windowsBackdrop;
+          windowsBackdropEnabled =
+              args['backdropEnabled'] as bool? ?? windowsBackdropEnabled;
           onStateChanged?.call();
+          unawaited(_confirmFrameDrawn(drawerMode));
         } else if (call.method == 'onPasteShortcut') {
           onPasteShortcut?.call();
         }
@@ -76,6 +87,21 @@ class DrawerWindowService {
           }
         }
       });
+    }
+  }
+
+  /// The native window hides itself while switching modes and reappears once
+  /// Flutter has drawn a frame for the new mode, so the old layout is never
+  /// shown stretched into the resized window.
+  Future<void> _confirmFrameDrawn(String mode) async {
+    final binding = SchedulerBinding.instance;
+    binding.scheduleFrame();
+    await binding.endOfFrame;
+    if (drawerMode != mode) return;
+    try {
+      await _channel.invokeMethod('drawerFrameReady', {'mode': mode});
+    } catch (_) {
+      // Older native runners fall back to their own reveal timeout.
     }
   }
 
@@ -390,6 +416,9 @@ class DrawerWindowService {
         launchAtLogin = raw['launchAtLogin'] as bool? ?? launchAtLogin;
         showDockIcon = raw['showDockIcon'] as bool? ?? showDockIcon;
         dockSide = raw['dockSide'] as String? ?? dockSide;
+        windowsBackdrop = raw['backdrop'] as bool? ?? windowsBackdrop;
+        windowsBackdropEnabled =
+            raw['backdropEnabled'] as bool? ?? windowsBackdropEnabled;
         onStateChanged?.call();
       }
     } catch (_) {}
@@ -400,6 +429,12 @@ class DrawerWindowService {
     if (!supportsEdgeDrawer) return;
     await _channel.invokeMethod('setShowDockIcon', {'shown': shown});
     onStateChanged?.call();
+  }
+
+  Future<void> setWindowsBackdrop(bool enabled) async {
+    windowsBackdropEnabled = enabled;
+    if (!isWindows) return;
+    await _channel.invokeMethod('setBackdrop', {'enabled': enabled});
   }
 
   Future<void> quitApp() async {

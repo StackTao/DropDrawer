@@ -55,6 +55,9 @@ class MainFlutterWindow: NSWindow {
   private var expandedMouseDown: NSPoint?
   private var expandedMousePosition: NSPoint?
   private var isAnimating: Bool = false
+  /// Reveal animation waiting for Flutter to draw the new mode (`drawerFrameReady`).
+  private var pendingReveal: (mode: DrawerMode, token: Int, run: () -> Void)?
+  private var revealToken: Int = 0
   private var isPinned: Bool = false
   private var isModalOpen: Bool = false
   private var isMainDrawerActive: Bool = false
@@ -390,6 +393,10 @@ class MainFlutterWindow: NSWindow {
       case "expandDrawer":
         self.openedByDrag = false
         self.transitionTo(.expanded, animated: true, activateFocus: true)
+        result(true)
+      case "drawerFrameReady":
+        let modeName = (call.arguments as? [String: Any])?["mode"] as? String
+        self.flutterDrewFrame(modeName: modeName)
         result(true)
       case "collapseDrawer":
         self.isPinned = false
@@ -798,6 +805,48 @@ class MainFlutterWindow: NSWindow {
     return t
   }
 
+  /// A spring with damping ratio 1: settles quickly without overshooting, so the
+  /// drawer never visibly bounces past its final size.
+  private static func criticallyDampedSpring(
+    from start: CATransform3D, mass: CGFloat, stiffness: CGFloat
+  ) -> CASpringAnimation {
+    let spring = CASpringAnimation(keyPath: "transform")
+    spring.fromValue = NSValue(caTransform3D: start)
+    spring.toValue = NSValue(caTransform3D: CATransform3DIdentity)
+    spring.mass = mass
+    spring.stiffness = stiffness
+    spring.damping = 2.0 * sqrt(stiffness * mass)
+    spring.duration = spring.settlingDuration
+    return spring
+  }
+
+  /// Runs `reveal` once Flutter reports a frame drawn for `targetMode`, so the
+  /// previous mode's layout is never shown in the resized window. Falls back
+  /// after a short timeout (older Dart side, or a dropped message).
+  private func revealWhenFlutterDrew(_ targetMode: DrawerMode, reveal: @escaping () -> Void) {
+    revealToken += 1
+    let token = revealToken
+    pendingReveal = (targetMode, token, reveal)
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) { [weak self] in
+      self?.runPendingReveal(token: token)
+    }
+  }
+
+  private func flutterDrewFrame(modeName: String?) {
+    guard let pending = pendingReveal, pending.mode.rawValue == modeName else { return }
+    // Give the raster thread one display frame to present what Dart just built.
+    let token = pending.token
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.016) { [weak self] in
+      self?.runPendingReveal(token: token)
+    }
+  }
+
+  private func runPendingReveal(token: Int) {
+    guard let pending = pendingReveal, pending.token == token else { return }
+    pendingReveal = nil
+    pending.run()
+  }
+
   private func relativeAnchorYRatio(for frame: NSRect, on screen: NSRect) -> CGFloat {
     let anchorY = screen.minY + (screen.height * dockYRatio)
     return (anchorY - frame.minY) / max(frame.height, 1.0)
@@ -832,40 +881,36 @@ class MainFlutterWindow: NSWindow {
     if target == .dragPill {
       self.contentView?.layer?.removeAllAnimations()
       self.mode = .dragPill
-      self.notifyDrawerState()
       self.effectView?.layer?.cornerRadius = cornerRadiusFor(.dragPill)
       self.hasShadow = true
 
-      let startTx = edgeScaleTransform(size: dragPillSize, sx: 0.14, sy: 0.72, tx: 14)
+      // Uniform scale only: non-uniform scaling squashes text and icons.
+      let startTx = edgeScaleTransform(size: dragPillSize, sx: 0.9, sy: 0.9, tx: 10)
       self.alphaValue = 0.0
       self.setFrame(targetFrame, display: true, animate: false)
       self.orderFrontRegardless()
+      // Tell Flutter only after the resize so its first new-mode frame has the new size.
+      self.notifyDrawerState()
 
-      if let layer = self.contentView?.layer {
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        layer.transform = startTx
-        CATransaction.commit()
-
-        DispatchQueue.main.async { [weak self] in
-          guard let self = self else { return }
-          let spring = CASpringAnimation(keyPath: "transform")
-          spring.fromValue = NSValue(caTransform3D: startTx)
-          spring.toValue = NSValue(caTransform3D: CATransform3DIdentity)
-          spring.mass = 0.75
-          spring.stiffness = 340
-          spring.damping = 26
-          spring.duration = spring.settlingDuration
-          layer.transform = CATransform3DIdentity
-          layer.add(spring, forKey: "dragPillBloom")
-
-          NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.13
-            self.animator().alphaValue = 1.0
-          }
-        }
-      } else {
+      guard let layer = self.contentView?.layer else {
         self.alphaValue = 1.0
+        return
+      }
+      CATransaction.begin()
+      CATransaction.setDisableActions(true)
+      layer.transform = startTx
+      CATransaction.commit()
+
+      revealWhenFlutterDrew(.dragPill) { [weak self] in
+        guard let self = self else { return }
+        let spring = Self.criticallyDampedSpring(from: startTx, mass: 0.75, stiffness: 340)
+        layer.transform = CATransform3DIdentity
+        layer.add(spring, forKey: "dragPillBloom")
+
+        NSAnimationContext.runAnimationGroup { ctx in
+          ctx.duration = 0.12
+          self.animator().alphaValue = 1.0
+        }
       }
       return
     }
@@ -874,7 +919,6 @@ class MainFlutterWindow: NSWindow {
     if target == .expanded {
       isAnimating = animated
       mode = .expanded
-      notifyDrawerState()
       self.effectView?.layer?.cornerRadius = cornerRadiusFor(.expanded)
       self.hasShadow = true
 
@@ -892,12 +936,14 @@ class MainFlutterWindow: NSWindow {
         self.alphaValue = 1.0
         self.setFrame(targetFrame, display: true, animate: false)
         presentWindow()
+        notifyDrawerState()
         return
       }
 
       self.alphaValue = 0.0
       self.setFrame(targetFrame, display: true, animate: false)
       presentWindow()
+      notifyDrawerState()
 
       guard let layer = self.contentView?.layer else {
         self.alphaValue = 1.0
@@ -905,11 +951,12 @@ class MainFlutterWindow: NSWindow {
         return
       }
 
-      // Bloom organically from the drag pill (if coming from dragPill) or from the edge handle.
+      // Grow from the edge (or the guide pill) with a uniform scale; scaling the
+      // axes differently squashes the drawer's text and cards mid-animation.
       let anchorRatio = relativeAnchorYRatio(for: targetFrame, on: screen)
-      let startTx = previous == .dragPill
-        ? edgeScaleTransform(size: expandedSize, sx: 0.68, sy: 0.14, tx: 4, anchorYRatio: anchorRatio)
-        : edgeScaleTransform(size: expandedSize, sx: 0.08, sy: 0.18, tx: 12, anchorYRatio: anchorRatio)
+      let startScale: CGFloat = previous == .dragPill ? 0.94 : 0.9
+      let startTx = edgeScaleTransform(
+        size: expandedSize, sx: startScale, sy: startScale, tx: 8, anchorYRatio: anchorRatio)
 
       CATransaction.begin()
       CATransaction.setDisableActions(true)
@@ -917,16 +964,9 @@ class MainFlutterWindow: NSWindow {
       layer.transform = startTx
       CATransaction.commit()
 
-      DispatchQueue.main.async { [weak self] in
+      revealWhenFlutterDrew(.expanded) { [weak self] in
         guard let self = self else { return }
-        let spring = CASpringAnimation(keyPath: "transform")
-        spring.fromValue = NSValue(caTransform3D: startTx)
-        spring.toValue = NSValue(caTransform3D: CATransform3DIdentity)
-        spring.mass = 0.85
-        spring.stiffness = 310
-        spring.damping = 26
-        spring.initialVelocity = 1.4
-        spring.duration = spring.settlingDuration
+        let spring = Self.criticallyDampedSpring(from: startTx, mass: 0.85, stiffness: 310)
         layer.transform = CATransform3DIdentity
         layer.add(spring, forKey: "drawerSpringExpand")
 
@@ -971,8 +1011,8 @@ class MainFlutterWindow: NSWindow {
     let anchorRatio = relativeAnchorYRatio(for: self.frame, on: screen)
     let endTx = edgeScaleTransform(
       size: self.frame.size,
-      sx: previous == .expanded ? 0.04 : 0.14,
-      sy: previous == .expanded ? 0.16 : 0.72,
+      sx: 0.92,
+      sy: 0.92,
       tx: 12,
       anchorYRatio: anchorRatio
     )
@@ -997,17 +1037,19 @@ class MainFlutterWindow: NSWindow {
       CATransaction.commit()
 
       self.mode = .collapsed
-      self.notifyDrawerState()
       self.effectView?.layer?.cornerRadius = self.cornerRadiusFor(.collapsed)
       self.hasShadow = false
       self.setFrame(targetFrame, display: true, animate: false)
+      self.notifyDrawerState()
 
-      NSAnimationContext.runAnimationGroup({ ctx in
-        ctx.duration = 0.10
-        self.animator().alphaValue = 1.0
-      }, completionHandler: { [weak self] in
-        self?.isAnimating = false
-      })
+      self.revealWhenFlutterDrew(.collapsed) { [weak self] in
+        NSAnimationContext.runAnimationGroup({ ctx in
+          ctx.duration = 0.10
+          self?.animator().alphaValue = 1.0
+        }, completionHandler: { [weak self] in
+          self?.isAnimating = false
+        })
+      }
     })
   }
 

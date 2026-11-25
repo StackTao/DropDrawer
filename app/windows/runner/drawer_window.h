@@ -24,6 +24,7 @@ class DrawerWindow {
  private:
   using Result = flutter::MethodResult<flutter::EncodableValue>;
   enum class Mode { kCollapsed, kDragGuide, kExpanded };
+  static const char* ModeName(Mode mode);
 
   void HandleCall(const flutter::MethodCall<flutter::EncodableValue>& call,
                   std::unique_ptr<Result> result);
@@ -34,6 +35,8 @@ class DrawerWindow {
   void SetDockLeft(bool left);
   void PlaceDrawer();
   void UpdateDrawerRegion(LONG width, LONG height, int dpi);
+  void Reveal();
+  void ApplyBackdrop();
   void DragExpandedDrawer(const std::string& phase);
   void MoveHandle(bool save);
   void Toggle();
@@ -64,6 +67,13 @@ class DrawerWindow {
   bool edge_ = false;
   bool pinned_ = false;
   bool guide_from_ole_drag_ = false;
+  // Set while the window has changed mode but Flutter has not drawn it yet;
+  // the window stays invisible so the old layout is never shown stretched.
+  bool reveal_pending_ = false;
+  // Mica/Acrylic system backdrop (Windows 11 22H2+). `backdrop_active_` is
+  // whether DWM accepted it; Flutter paints a translucent surface only then.
+  bool backdrop_enabled_ = true;
+  bool backdrop_active_ = false;
   bool opened_by_drag_ = false;
   bool modal_open_ = false;
   bool main_drawer_active_ = false;

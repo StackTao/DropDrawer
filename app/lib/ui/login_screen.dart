@@ -105,10 +105,10 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     final isMobile = widget.controller.windowService.isMobile;
     return Scaffold(
-      backgroundColor: isMobile ? const Color(0xFF141417) : Colors.transparent,
+      backgroundColor: isMobile ? MacPalette.background : Colors.transparent,
       body: Container(
         decoration: BoxDecoration(
-          color: isMobile ? const Color(0xFF141417) : MacPalette.surfaceTint,
+          color: isMobile ? MacPalette.background : MacPalette.surfaceTint,
           border: isMobile
               ? null
               : Border.all(color: MacPalette.hairline, width: 0.8),
@@ -138,7 +138,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  const Text(
+                  Text(
                     'DropDrawer',
                     textAlign: TextAlign.center,
                     style: TextStyle(
@@ -149,7 +149,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                   const SizedBox(height: 4),
-                  const Text(
+                  Text(
                     '跨端文件暂存抽屉',
                     textAlign: TextAlign.center,
                     style: TextStyle(
@@ -161,7 +161,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   // macOS System Settings grouped form
                   Container(
                     decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.24),
+                      color: MacPalette.group(0.24),
                       borderRadius: BorderRadius.circular(10),
                       border: Border.all(color: MacPalette.hairline, width: 0.8),
                     ),
@@ -194,7 +194,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     Text(
                       _error!,
                       textAlign: TextAlign.center,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: MacPalette.red,
                         fontSize: 11.5,
                       ),
@@ -207,9 +207,9 @@ class _LoginScreenState extends State<LoginScreen> {
                       onPressed: _loading ? null : _submit,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: MacPalette.textPrimary,
-                        foregroundColor: const Color(0xFF111113),
+                        foregroundColor: MacPalette.onTextPrimary,
                         disabledBackgroundColor:
-                            Colors.white.withValues(alpha: 0.25),
+                            MacPalette.fill(0.25),
                         elevation: 0,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(9),
@@ -220,12 +220,12 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                       ),
                       child: _loading
-                          ? const SizedBox(
+                          ? SizedBox(
                               width: 15,
                               height: 15,
                               child: CircularProgressIndicator(
                                 strokeWidth: 1.8,
-                                color: Color(0xFF111113),
+                                color: MacPalette.onTextPrimary,
                               ),
                             )
                           : Text(_isRegister ? '创建账号并连接' : '继续'),
@@ -233,7 +233,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   const SizedBox(height: 8),
                   if (_waitingForGoogle) ...[
-                    const Text(
+                    Text(
                       '请在系统浏览器完成 Google 授权，然后返回 DropDrawer。',
                       textAlign: TextAlign.center,
                       style: TextStyle(
@@ -258,7 +258,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   if (!_loading)
                     TextButton(
                       onPressed: _openPrivacyNotice,
-                      child: const Text(
+                      child: Text(
                         '隐私说明',
                         style: TextStyle(
                           color: MacPalette.textSecondary,
@@ -281,7 +281,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           padding: const EdgeInsets.symmetric(vertical: 4),
                           child: Text(
                             _isRegister ? '已有账号，返回登录' : '还没有账号？创建一个',
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 11.5,
                               color: MacPalette.textSecondary,
                             ),

@@ -124,7 +124,7 @@ class _PreferencesViewState extends State<PreferencesView> {
               ? const EdgeInsets.fromLTRB(78, 1, 10, 3)
               : const EdgeInsets.fromLTRB(10, 10, 12, 9),
           child: SizedBox(
-            height: 26,
+            height: UiDensity.headerHeight(context),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
@@ -152,12 +152,48 @@ class _PreferencesViewState extends State<PreferencesView> {
               const SizedBox(height: 6),
               _GroupBox(
                 children: [
+                  // Phones have no drop header, so the policy is chosen here.
                   Padding(
                     padding: const EdgeInsets.all(12),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
+                        Text(
+                          '新文件传输策略',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                            color: MacPalette.textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '智能：小文件同时存云盘、大文件只走 P2P；纯 P2P：不经过服务器；强制存云盘：来源离线也能下载',
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            color: MacPalette.textTertiary,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        MacSegmentedControl<String>(
+                          selected: c.defaultDropPolicy,
+                          items: const [
+                            ('smart', '智能'),
+                            ('p2p_only', '纯 P2P'),
+                            ('cloud_cached', '存云盘'),
+                          ],
+                          onChanged: c.setDropPolicy,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Divider(height: 0.5, thickness: 0.5, indent: 12),
+                  Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
                           '默认过期自动清理',
                           style: TextStyle(
                             fontSize: 12,
@@ -166,7 +202,7 @@ class _PreferencesViewState extends State<PreferencesView> {
                           ),
                         ),
                         const SizedBox(height: 2),
-                        const Text(
+                        Text(
                           '新拖入的文件/文本到期后自动清理云端缓存与抽屉记录',
                           style: TextStyle(
                             fontSize: 10.5,
@@ -193,7 +229,7 @@ class _PreferencesViewState extends State<PreferencesView> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
+                        Text(
                           '智能模式自动上云阈值',
                           style: TextStyle(
                             fontSize: 12,
@@ -202,7 +238,7 @@ class _PreferencesViewState extends State<PreferencesView> {
                           ),
                         ),
                         const SizedBox(height: 2),
-                        const Text(
+                        Text(
                           '小于该体积自动缓存至云盘，超过则纯 P2P 端到端直连',
                           style: TextStyle(
                             fontSize: 10.5,
@@ -233,7 +269,7 @@ class _PreferencesViewState extends State<PreferencesView> {
                       children: [
                         Row(
                           children: [
-                            const Text(
+                            Text(
                               '默认下载目录',
                               style: TextStyle(
                                 fontSize: 12,
@@ -248,7 +284,7 @@ class _PreferencesViewState extends State<PreferencesView> {
                                   await c.setCustomDownloadDir(null);
                                   await _loadDir();
                                 },
-                                child: const MouseRegion(
+                                child: MouseRegion(
                                   cursor: SystemMouseCursors.click,
                                   child: Text(
                                     '恢复默认',
@@ -264,7 +300,7 @@ class _PreferencesViewState extends State<PreferencesView> {
                         const SizedBox(height: 5),
                         Text(
                           _effectiveDir.isEmpty ? '加载中...' : _effectiveDir,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 10.5,
                             fontFamily: 'Menlo',
                             color: MacPalette.textSecondary,
@@ -283,7 +319,7 @@ class _PreferencesViewState extends State<PreferencesView> {
                                     onPressed: _pickDownloadDir,
                                     style: OutlinedButton.styleFrom(
                                       foregroundColor: MacPalette.textPrimary,
-                                      side: const BorderSide(
+                                      side: BorderSide(
                                         color: MacPalette.strongHairline,
                                         width: 0.7,
                                       ),
@@ -308,7 +344,7 @@ class _PreferencesViewState extends State<PreferencesView> {
                                       .openDirectoryNative(_effectiveDir),
                                   style: OutlinedButton.styleFrom(
                                     foregroundColor: MacPalette.textSecondary,
-                                    side: const BorderSide(
+                                    side: BorderSide(
                                       color: MacPalette.hairline,
                                       width: 0.7,
                                     ),
@@ -341,7 +377,7 @@ class _PreferencesViewState extends State<PreferencesView> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(
+                          Text(
                             '边缘抽屉停靠侧',
                             style: TextStyle(
                               fontSize: 12,
@@ -350,7 +386,7 @@ class _PreferencesViewState extends State<PreferencesView> {
                             ),
                           ),
                           const SizedBox(height: 2),
-                          const Text(
+                          Text(
                             '也可直接按住边缘悬浮手柄上下或跨屏拖动调整',
                             style: TextStyle(
                               fontSize: 10.5,
@@ -391,7 +427,7 @@ class _PreferencesViewState extends State<PreferencesView> {
                           children: [
                             Row(
                               children: [
-                                const Text(
+                                Text(
                                   '当前快捷键',
                                   style: TextStyle(
                                     fontSize: 11,
@@ -414,8 +450,7 @@ class _PreferencesViewState extends State<PreferencesView> {
                                         color: _recordingHotkey
                                             ? MacPalette.accent
                                                 .withValues(alpha: 0.22)
-                                            : Colors.white
-                                                .withValues(alpha: 0.09),
+                                            : MacPalette.fill(0.09),
                                         borderRadius: BorderRadius.circular(7),
                                         border: Border.all(
                                           color: _recordingHotkey
@@ -452,7 +487,7 @@ class _PreferencesViewState extends State<PreferencesView> {
                                           ),
                                           if (!_recordingHotkey) ...[
                                             const SizedBox(width: 6),
-                                            const Text(
+                                            Text(
                                               '点击修改',
                                               style: TextStyle(
                                                 fontSize: 10,
@@ -544,7 +579,7 @@ class _PreferencesViewState extends State<PreferencesView> {
                                               : isWindows
                                                   ? '全局快捷键可能已被占用，请换一个组合键'
                                                   : '需要开启 macOS「辅助功能」权限才能在其他应用下响应全局快捷键',
-                                          style: const TextStyle(
+                                          style: TextStyle(
                                             fontSize: 10.5,
                                             color: MacPalette.textPrimary,
                                           ),
@@ -566,7 +601,7 @@ class _PreferencesViewState extends State<PreferencesView> {
                                               backgroundColor:
                                                   MacPalette.textPrimary,
                                               foregroundColor:
-                                                  const Color(0xFF111113),
+                                                  MacPalette.onTextPrimary,
                                               padding:
                                                   const EdgeInsets.symmetric(
                                                 horizontal: 10,
@@ -604,7 +639,7 @@ class _PreferencesViewState extends State<PreferencesView> {
                                             style: OutlinedButton.styleFrom(
                                               foregroundColor:
                                                   MacPalette.textSecondary,
-                                              side: const BorderSide(
+                                              side: BorderSide(
                                                 color: MacPalette.hairline,
                                                 width: 0.7,
                                               ),
@@ -641,6 +676,21 @@ class _PreferencesViewState extends State<PreferencesView> {
                       value: c.windowService.showDockIcon,
                       onChanged: (v) => c.windowService.setShowDockIcon(v),
                     ),
+                    if (isWindows) ...[
+                      const Divider(height: 0.5, thickness: 0.5, indent: 12),
+                      _SwitchRow(
+                        title: '毛玻璃背景',
+                        subtitle: c.windowService.windowsBackdropEnabled &&
+                                !c.windowService.windowsBackdrop
+                            ? '当前系统不支持（需 Windows 11 22H2 及以上），已使用不透明背景'
+                            : '使用 Windows 11 的 Mica / 亚克力效果；如背景显示异常可关闭',
+                        value: c.windowService.windowsBackdropEnabled,
+                        onChanged: (v) async {
+                          await c.windowService.setWindowsBackdrop(v);
+                          if (mounted) setState(() {});
+                        },
+                      ),
+                    ],
                     const Divider(height: 0.5, thickness: 0.5, indent: 12),
                     _SwitchRow(
                       title: '开机自动启动',
@@ -681,8 +731,8 @@ class _PreferencesViewState extends State<PreferencesView> {
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           decoration: BoxDecoration(
             color: active
-                ? Colors.white.withValues(alpha: 0.16)
-                : Colors.white.withValues(alpha: 0.05),
+                ? MacPalette.fill(0.16)
+                : MacPalette.fill(0.05),
             borderRadius: BorderRadius.circular(6),
             border: Border.all(
               color: active ? MacPalette.strongHairline : MacPalette.hairline,
@@ -711,7 +761,7 @@ class _SectionLabel extends StatelessWidget {
   Widget build(BuildContext context) {
     return Text(
       text,
-      style: const TextStyle(
+      style: TextStyle(
         fontSize: 11.5,
         fontWeight: FontWeight.w500,
         color: MacPalette.textSecondary,
@@ -728,7 +778,7 @@ class _GroupBox extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.22),
+        color: MacPalette.group(0.22),
         borderRadius: BorderRadius.circular(11),
         border: Border.all(color: MacPalette.hairline, width: 0.7),
       ),
@@ -765,7 +815,7 @@ class _SwitchRow extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w500,
                     color: MacPalette.textPrimary,
@@ -774,7 +824,7 @@ class _SwitchRow extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(
                   subtitle,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 10.5,
                     color: MacPalette.textTertiary,
                   ),
@@ -783,14 +833,7 @@ class _SwitchRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          Transform.scale(
-            scale: 0.78,
-            child: CupertinoSwitch(
-              value: value,
-              activeTrackColor: MacPalette.accent,
-              onChanged: onChanged,
-            ),
-          ),
+          AdaptiveSwitch(value: value, onChanged: onChanged),
         ],
       ),
     );
