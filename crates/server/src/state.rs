@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use protocol::{DeviceInfo, DrawerItem, StorageBackendConfig, WsEvent};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 
 use crate::db::{hydrate_drawer_item, Database, StorageBackendRecord};
 use crate::storage::{build_provider, StorageProvider};
@@ -33,6 +33,8 @@ pub struct AppState {
     pub default_local_storage_dir: PathBuf,
     /// Active WebSocket connections keyed by `(user_id, device_id)`.
     pub connections: DashMap<(String, String), mpsc::UnboundedSender<WsEvent>>,
+    // Order connection replacement, removal and the corresponding presence events.
+    pub(crate) presence_changes: Mutex<()>,
     /// Short-lived Google OAuth2 authorization flows keyed by `state` nonce.
     pub pending_google_oauth: DashMap<String, PendingGoogleOAuth>,
 }
@@ -49,13 +51,15 @@ impl AppState {
             jwt_secret,
             default_local_storage_dir,
             connections: DashMap::new(),
+            presence_changes: Mutex::new(()),
             pending_google_oauth: DashMap::new(),
         })
     }
 
     pub fn is_device_online(&self, user_id: &str, device_id: &str) -> bool {
         self.connections
-            .contains_key(&(user_id.to_string(), device_id.to_string()))
+            .get(&(user_id.to_string(), device_id.to_string()))
+            .is_some_and(|tx| !tx.is_closed())
     }
 
     pub fn list_devices_with_presence(&self, user_id: &str) -> anyhow::Result<Vec<DeviceInfo>> {
@@ -90,16 +94,10 @@ impl AppState {
     }
 
     pub fn broadcast_user(&self, user_id: &str, event: WsEvent) {
-        let mut dead = Vec::new();
         for entry in self.connections.iter() {
             if entry.key().0 == user_id {
-                if entry.value().send(event.clone()).is_err() {
-                    dead.push(entry.key().clone());
-                }
+                let _ = entry.value().send(event.clone());
             }
-        }
-        for key in dead {
-            self.connections.remove(&key);
         }
     }
 

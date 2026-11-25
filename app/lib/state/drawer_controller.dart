@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:mime/mime.dart';
 import 'package:path/path.dart' as p;
@@ -23,9 +24,10 @@ class DropDrawerController extends ChangeNotifier {
 
   ApiClient? _api;
   WebSocketChannel? _ws;
-  StreamSubscription? _wsSub;
+  StreamSubscription<dynamic>? _wsSub;
   Timer? _p2pPollTimer;
   Timer? _wsReconnectTimer;
+  int _deviceRevision = 0;
 
   String serverUrl = 'http://127.0.0.1:8080';
   String? token;
@@ -71,7 +73,23 @@ class DropDrawerController extends ChangeNotifier {
   }
 
   bool get isLoggedIn => token != null && user != null;
-  int get onlineDeviceCount => devices.where((d) => d.online).length;
+  int get onlineDeviceCount => displayedDevices.where((d) => d.online).length;
+
+  List<DeviceInfo> get displayedDevices {
+    final unique = <(String, bool, String), DeviceInfo>{};
+    for (final device in devices) {
+      final nodeId = device.irohNodeId;
+      final hasNode = nodeId != null && nodeId.isNotEmpty;
+      final key = (device.platform, hasNode, hasNode ? nodeId : device.id);
+      final shown = unique[key];
+      if (shown == null ||
+          (device.online && !shown.online) ||
+          (device.online == shown.online && device.id == deviceId)) {
+        unique[key] = device;
+      }
+    }
+    return unique.values.toList();
+  }
 
   String get defaultStorageBackendName {
     for (final b in storageBackends) {
@@ -89,8 +107,6 @@ class DropDrawerController extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     serverUrl = prefs.getString('server_url') ?? serverUrl;
     token = prefs.getString('auth_token');
-    deviceId = prefs.getString('device_id');
-    deviceName = prefs.getString('device_name') ?? Platform.localHostname;
     defaultDropPolicy = prefs.getString('drop_policy') ?? 'smart';
     final savedThresholdMb = prefs.getInt('auto_cloud_threshold_mb');
     if (savedThresholdMb != null && savedThresholdMb > 0) {
@@ -121,6 +137,8 @@ class DropDrawerController extends ChangeNotifier {
 
     if (token != null && savedUser != null && savedUserId != null) {
       user = UserProfile(id: savedUserId, username: savedUser);
+      deviceId = prefs.getString('device_id.$savedUserId') ??
+          prefs.getString('device_id');
       _api = ApiClient(baseUrl: serverUrl, token: token);
       try {
         await _postLoginInit();
@@ -155,6 +173,13 @@ class DropDrawerController extends ChangeNotifier {
     user = profile;
 
     final prefs = await SharedPreferences.getInstance();
+    deviceId = prefs.getString('device_id.${profile.id}');
+    if (deviceId == null &&
+        prefs.getString('server_url') == serverUrl &&
+        prefs.getString('user_id') == profile.id) {
+      deviceId = prefs.getString('device_id');
+    }
+    if (deviceId == null) await prefs.remove('device_id');
     await prefs.setString('server_url', serverUrl);
     await prefs.setString('auth_token', tok);
     await prefs.setString('username', profile.username);
@@ -167,8 +192,7 @@ class DropDrawerController extends ChangeNotifier {
   Future<void> logout() async {
     _wsReconnectTimer?.cancel();
     _p2pPollTimer?.cancel();
-    await _wsSub?.cancel();
-    await _ws?.sink.close();
+    _closeWs();
     for (final token in _activeCancelTokens.values.toList()) {
       token.cancel();
     }
@@ -188,8 +212,8 @@ class DropDrawerController extends ChangeNotifier {
     items = [];
     storageBackends = [];
     shareLinks = [];
-    wsConnected = false;
     p2pReady = false;
+    localNodeInfo = null;
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('auth_token');
@@ -200,6 +224,8 @@ class DropDrawerController extends ChangeNotifier {
   Future<void> _postLoginInit() async {
     await _startLocalP2pNode();
 
+    final prefs = await SharedPreferences.getInstance();
+    deviceName = prefs.getString('device_name') ?? await _defaultDeviceName();
     final dev = await _api!.registerDevice(
       deviceId: deviceId,
       name: deviceName,
@@ -209,14 +235,14 @@ class DropDrawerController extends ChangeNotifier {
       directAddrs: localNodeInfo?.directAddrs ?? const [],
     );
     deviceId = dev.id;
-    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('device_id.${user!.id}', dev.id);
     await prefs.setString('device_id', dev.id);
 
     storageBackends = await _api!.listStorageBackends();
     try {
       shareLinks = await _api!.listShareLinks();
     } catch (_) {}
-    _connectWs();
+    unawaited(_connectWs());
 
     if (windowService.supportsEdgeDrawer) {
       await windowService.setEdgeDrawerMode(true);
@@ -273,9 +299,6 @@ class DropDrawerController extends ChangeNotifier {
       }
       return;
     }
-    if (!wsConnected) {
-      _connectWs();
-    }
     await manualRefresh();
     if (windowService.isMobile) {
       await checkPendingMobileShares();
@@ -283,16 +306,43 @@ class DropDrawerController extends ChangeNotifier {
   }
 
   Future<void> manualRefresh() async {
-    if (_api == null || !isLoggedIn) return;
-    try {
-      final fetched = await _api!.listItems();
-      items = fetched;
-      await refreshStorageBackends();
-      if (!wsConnected) {
-        _connectWs();
+    final api = _api;
+    if (api == null || !isLoggedIn) return;
+    unawaited(_connectWs());
+    final revision = _deviceRevision;
+    final deviceRefresh = api.listDevices().then<void>((fetched) {
+      if (identical(_api, api) && revision == _deviceRevision) {
+        devices = fetched;
+        _deviceRevision++;
+        notifyListeners();
       }
-      notifyListeners();
+    }, onError: (Object _) {});
+    try {
+      final fetched = await api.listItems();
+      if (identical(_api, api)) {
+        items = fetched;
+        await refreshStorageBackends();
+        if (identical(_api, api)) notifyListeners();
+      }
     } catch (_) {}
+    await deviceRefresh;
+  }
+
+  Future<String> _defaultDeviceName() async {
+    if (Platform.isIOS || Platform.isAndroid) {
+      try {
+        final info = DeviceInfoPlugin();
+        final model = Platform.isIOS
+            ? (await info.iosInfo).model
+            : (await info.androidInfo).model;
+        if (model.trim().isNotEmpty) return model.trim();
+      } catch (_) {}
+      return Platform.isIOS ? 'iPhone / iPad' : 'Android';
+    }
+    return Platform.localHostname.replaceAll(
+      RegExp(r'\.local$', caseSensitive: false),
+      '',
+    );
   }
 
   Future<void> _startLocalP2pNode() async {
@@ -405,49 +455,77 @@ class DropDrawerController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _connectWs() {
-    if (_api == null || deviceId == null) return;
-    _wsSub?.cancel();
-    _ws?.sink.close();
+  Future<void> _connectWs() async {
+    final api = _api;
+    final id = deviceId;
+    if (api == null || id == null || _ws != null) return;
+    _wsReconnectTimer?.cancel();
 
+    final channel = api.connectWebSocket(id);
+    _ws = channel;
+    _wsSub = channel.stream.listen(
+      (message) {
+        if (identical(_ws, channel)) _onWsMessage(message);
+      },
+      onError: (Object _) => _scheduleReconnect(channel),
+      onDone: () => _scheduleReconnect(channel),
+    );
     try {
-      _ws = _api!.connectWebSocket(deviceId!);
-      wsConnected = true;
-      notifyListeners();
-
-      // Refresh node addr shortly after connecting so relay/direct addrs are published.
-      Future.delayed(const Duration(milliseconds: 900), () {
-        if (p2pReady && wsConnected) {
-          try {
-            localNodeInfo = p2p.nodeInfo();
-            _ws?.sink.add(jsonEncode({
-              'type': 'update_node_addr',
-              'payload': {
-                'iroh_node_id': localNodeInfo!.nodeId,
-                'iroh_relay_url': localNodeInfo!.relayUrl,
-                'direct_addrs': localNodeInfo!.directAddrs,
-              },
-            }));
-          } catch (_) {}
-        }
-      });
-
-      _wsSub = _ws!.stream.listen(
-        _onWsMessage,
-        onError: (_) => _scheduleReconnect(),
-        onDone: _scheduleReconnect,
-      );
+      await channel.ready;
     } catch (_) {
-      _scheduleReconnect();
+      _scheduleReconnect(channel);
+      return;
     }
+
+    if (!identical(_ws, channel)) return;
+    wsConnected = true;
+    notifyListeners();
+    if (!p2pReady) return;
+
+    // Let the P2P node discover its relay and direct addresses.
+    await Future<void>.delayed(const Duration(milliseconds: 900));
+    if (!p2pReady || !identical(_ws, channel)) return;
+    try {
+      localNodeInfo = p2p.nodeInfo();
+      channel.sink.add(jsonEncode({
+        'type': 'update_node_addr',
+        'payload': {
+          'iroh_node_id': localNodeInfo!.nodeId,
+          'iroh_relay_url': localNodeInfo!.relayUrl,
+          'direct_addrs': localNodeInfo!.directAddrs,
+        },
+      }));
+    } catch (_) {}
   }
 
-  void _scheduleReconnect() {
+  void _closeWs() {
+    final channel = _ws;
+    _ws = null;
+    final subscription = _wsSub;
+    _wsSub = null;
+    if (subscription != null) unawaited(subscription.cancel());
+    if (channel != null) {
+      unawaited(channel.sink.close().catchError((Object _) {}));
+    }
     wsConnected = false;
+  }
+
+  void _scheduleReconnect(WebSocketChannel channel) {
+    if (!identical(_ws, channel)) return;
+    _closeWs();
+    if (isLoggedIn) {
+      _wsReconnectTimer = Timer(const Duration(seconds: 3), _connectWs);
+    }
     notifyListeners();
-    if (!isLoggedIn) return;
+  }
+
+  @override
+  void dispose() {
+    _api = null;
     _wsReconnectTimer?.cancel();
-    _wsReconnectTimer = Timer(const Duration(seconds: 3), _connectWs);
+    _p2pPollTimer?.cancel();
+    _closeWs();
+    super.dispose();
   }
 
   void _onWsMessage(dynamic raw) {
@@ -457,6 +535,7 @@ class DropDrawerController extends ChangeNotifier {
 
     switch (type) {
       case 'snapshot':
+        _deviceRevision++;
         final pMap = payload as Map<String, dynamic>;
         devices = (pMap['devices'] as List<dynamic>)
             .map((e) => DeviceInfo.fromJson(e as Map<String, dynamic>))
@@ -466,6 +545,7 @@ class DropDrawerController extends ChangeNotifier {
             .toList();
         break;
       case 'device_updated':
+        _deviceRevision++;
         final dev = DeviceInfo.fromJson(payload as Map<String, dynamic>);
         final idx = devices.indexWhere((d) => d.id == dev.id);
         if (idx >= 0) {

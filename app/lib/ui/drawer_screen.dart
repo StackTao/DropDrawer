@@ -1651,6 +1651,24 @@ class _DrawerScreenState extends State<DrawerScreen> {
   }
 
   Widget _buildDevicesView(DropDrawerController c) {
+    final devices = c.displayedDevices;
+    (String, String) nameKey(DeviceInfo device) =>
+        (device.platform, device.name.trim().toLowerCase().replaceFirst(
+          RegExp(r'\.local$'), '',
+        ));
+    final onlineNames =
+        devices.where((device) => device.online).map(nameKey).toSet();
+    final primary = <DeviceInfo>[];
+    final sameNameOffline = <DeviceInfo>[];
+    for (final device in devices) {
+      if (!device.online &&
+          device.id != c.deviceId &&
+          onlineNames.contains(nameKey(device))) {
+        sameNameOffline.add(device);
+      } else {
+        primary.add(device);
+      }
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1730,69 +1748,81 @@ class _DrawerScreenState extends State<DrawerScreen> {
                 style: TextStyle(fontSize: 11.5, color: MacPalette.textSecondary),
               ),
               const SizedBox(height: 6),
-              Container(
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.22),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: MacPalette.hairline, width: 0.7),
+              _buildDeviceRows(primary, c.deviceId),
+              if (sameNameOffline.isNotEmpty)
+                ExpansionTile(
+                  tilePadding: EdgeInsets.zero,
+                  title: Text(
+                    '同名离线设备（${sameNameOffline.length}）',
+                    style: const TextStyle(fontSize: 11.5),
+                  ),
+                  children: [_buildDeviceRows(sameNameOffline, c.deviceId)],
                 ),
-                child: Column(
-                  children: [
-                    for (var i = 0; i < c.devices.length; i++) ...[
-                      if (i > 0)
-                        const Divider(height: 0.5, thickness: 0.5, indent: 12),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 10),
-                        child: Row(
-                          children: [
-                            Container(
-                              width: 7,
-                              height: 7,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: c.devices[i].online
-                                    ? MacPalette.green
-                                    : MacPalette.textTertiary,
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    '${c.devices[i].name}${c.devices[i].id == c.deviceId ? ' (本机)' : ''}',
-                                    style: const TextStyle(
-                                      fontSize: 12.5,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    '${c.devices[i].platform} · ${c.devices[i].online ? '在线' : '离线'}',
-                                    style: const TextStyle(
-                                      fontSize: 10.5,
-                                      color: MacPalette.textTertiary,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
             ],
           ),
         ),
       ],
     );
   }
+
+  Widget _buildDeviceRows(List<DeviceInfo> devices, String? localDeviceId) =>
+      Container(
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.22),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: MacPalette.hairline, width: 0.7),
+        ),
+        child: Column(
+          children: [
+            for (final (i, device) in devices.indexed) ...[
+              if (i > 0)
+                const Divider(height: 0.5, thickness: 0.5, indent: 12),
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 12, vertical: 10),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 7,
+                      height: 7,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: device.online
+                            ? MacPalette.green
+                            : MacPalette.textTertiary,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${device.name}${device.id == localDeviceId ? ' (本机)' : ''}',
+                            style: const TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w500,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '${device.platform} · ${device.online ? '在线' : '离线'}',
+                            style: const TextStyle(
+                              fontSize: 10.5,
+                              color: MacPalette.textTertiary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      );
 
   Widget _buildFooter(DropDrawerController c) {
     final text = c.statusBanner ??

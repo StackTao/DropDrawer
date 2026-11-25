@@ -10,6 +10,7 @@ use axum::{
     Json, Router,
 };
 use chrono::{Duration, Utc};
+use futures_util::StreamExt;
 use dropdrawer_server::{
     db::{Database, DrawerItemRow},
     routes::build_router,
@@ -70,6 +71,156 @@ async fn send_json<T: serde::de::DeserializeOwned>(
         )
     });
     (status, parsed)
+}
+
+#[tokio::test]
+async fn test_device_registration_reuses_persistent_node_and_scopes_ids() {
+    let (app, state, _tmp) = spawn_test_server().await;
+    let (_, first): (_, AuthResponse) = send_json(
+        &app,
+        "POST",
+        "/api/auth/register",
+        None,
+        Some(json!({"username": "first", "password": "test-password"})),
+    )
+    .await;
+    let (_, second): (_, AuthResponse) = send_json(
+        &app,
+        "POST",
+        "/api/auth/register",
+        None,
+        Some(json!({"username": "second", "password": "test-password"})),
+    )
+    .await;
+    let (status, original): (_, DeviceInfo) = send_json(
+        &app,
+        "POST",
+        "/api/devices",
+        Some(&first.token),
+        Some(json!({
+            "device_id": "saved-windows",
+            "name": "PC",
+            "platform": "windows",
+            "iroh_node_id": "persistent-node",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, recovered): (_, DeviceInfo) = send_json(
+        &app,
+        "POST",
+        "/api/devices",
+        Some(&first.token),
+        Some(json!({
+            "name": "Renamed PC",
+            "platform": "windows",
+            "iroh_node_id": "persistent-node",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(recovered.id, original.id);
+    assert_eq!(recovered.name, "Renamed PC");
+
+    let (_, homonym): (_, DeviceInfo) = send_json(
+        &app,
+        "POST",
+        "/api/devices",
+        Some(&first.token),
+        Some(json!({
+            "name": "Renamed PC",
+            "platform": "windows",
+            "iroh_node_id": "another-node",
+        })),
+    )
+    .await;
+    assert_ne!(homonym.id, original.id);
+    assert_eq!(state.db.list_devices(&first.user.id).unwrap().len(), 2);
+
+    let (status, other_account): (_, DeviceInfo) = send_json(
+        &app,
+        "POST",
+        "/api/devices",
+        Some(&second.token),
+        Some(json!({
+            "device_id": original.id,
+            "name": "Renamed PC",
+            "platform": "windows",
+            "iroh_node_id": "persistent-node",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ne!(other_account.id, original.id);
+    let devices = state.db.list_devices(&second.user.id).unwrap();
+    assert_eq!(devices.len(), 1);
+    assert_eq!(devices[0].id, other_account.id);
+}
+
+#[tokio::test]
+async fn test_replaced_websocket_cannot_mark_device_offline() {
+    use std::time::Duration;
+    use tokio::time::timeout;
+    use tokio_tungstenite::connect_async;
+
+    let (app, state, _tmp) = spawn_test_server().await;
+    let (_, auth): (_, AuthResponse) = send_json(
+        &app,
+        "POST",
+        "/api/auth/register",
+        None,
+        Some(json!({"username": "reconnect", "password": "test-password"})),
+    )
+    .await;
+    let (_, device): (_, DeviceInfo) = send_json(
+        &app,
+        "POST",
+        "/api/devices",
+        Some(&auth.token),
+        Some(json!({"name": "Phone", "platform": "ios"})),
+    )
+    .await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let ws_url = format!("ws://{addr}/ws?token={}&device_id={}", auth.token, device.id);
+    let connection_timeout = Duration::from_secs(3);
+
+    let invalid_url = format!("ws://{addr}/ws?token={}&device_id=unknown", auth.token);
+    assert!(timeout(connection_timeout, connect_async(invalid_url))
+        .await
+        .unwrap()
+        .is_err());
+
+    let (mut previous, _) = timeout(connection_timeout, connect_async(&ws_url))
+        .await
+        .unwrap()
+        .unwrap();
+    timeout(connection_timeout, previous.next()).await.unwrap().unwrap().unwrap();
+
+    let (mut current, _) = timeout(connection_timeout, connect_async(&ws_url))
+        .await
+        .unwrap()
+        .unwrap();
+    timeout(connection_timeout, current.next()).await.unwrap().unwrap().unwrap();
+
+    previous.close(None).await.unwrap();
+    timeout(connection_timeout, async {
+        while previous.next().await.is_some() {}
+    })
+    .await
+    .unwrap();
+    assert!(state.is_device_online(&auth.user.id, &device.id));
+
+    current.close(None).await.unwrap();
+    timeout(connection_timeout, async {
+        while current.next().await.is_some() {}
+    })
+    .await
+    .unwrap();
+    assert!(!state.is_device_online(&auth.user.id, &device.id));
+    server.abort();
 }
 
 #[tokio::test]

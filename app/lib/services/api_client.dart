@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:http/http.dart' as http;
+import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../models/models.dart';
@@ -100,6 +101,17 @@ class ApiClient {
     );
     _check(resp);
     return DeviceInfo.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
+  }
+
+  Future<List<DeviceInfo>> listDevices() async {
+    final resp = await http.get(
+      Uri.parse('$_cleanBase/api/devices'),
+      headers: _headers(),
+    );
+    _check(resp);
+    return (jsonDecode(resp.body) as List<dynamic>)
+        .map((e) => DeviceInfo.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
   Future<List<DrawerItem>> listItems() async {
@@ -521,7 +533,11 @@ class ApiClient {
     final uri = Uri.parse(
       '$wsBase/ws?token=${Uri.encodeQueryComponent(token ?? '')}&device_id=${Uri.encodeQueryComponent(deviceId)}',
     );
-    return WebSocketChannel.connect(uri);
+    return IOWebSocketChannel.connect(
+      uri,
+      pingInterval: const Duration(seconds: 20),
+      connectTimeout: const Duration(seconds: 10),
+    );
   }
 
   void _check(http.Response resp) {

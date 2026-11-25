@@ -206,7 +206,7 @@ impl Database {
 
     pub fn upsert_device(
         &self,
-        id: &str,
+        requested_id: Option<&str>,
         user_id: &str,
         name: &str,
         platform: DevicePlatform,
@@ -218,6 +218,34 @@ impl Database {
         let platform_str = serde_json::to_string(&platform)?;
         let addrs_json = serde_json::to_string(direct_addrs)?;
         let conn = self.conn.lock().unwrap();
+        let requested_id = requested_id.filter(|id| !id.is_empty());
+        let iroh_node_id = iroh_node_id.filter(|id| !id.is_empty());
+        let requested_owner: Option<String> = if let Some(id) = requested_id {
+            conn.query_row("SELECT user_id FROM devices WHERE id = ?1", [id], |row| {
+                row.get(0)
+            })
+            .optional()?
+        } else {
+            None
+        };
+        let id = if let Some(id) = requested_id.filter(|_| requested_owner.as_deref() == Some(user_id)) {
+            id.to_owned()
+        } else {
+            let matching_device: Option<String> = if let Some(node_id) = iroh_node_id {
+                conn.query_row(
+                    "SELECT id FROM devices WHERE user_id = ?1 AND platform = ?2 AND iroh_node_id = ?3
+                     ORDER BY last_seen_at DESC, id LIMIT 1",
+                    params![user_id, platform_str, node_id],
+                    |row| row.get(0),
+                )
+                .optional()?
+            } else {
+                None
+            };
+            matching_device
+                .or_else(|| requested_id.filter(|_| requested_owner.is_none()).map(str::to_owned))
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+        };
         conn.execute(
             "INSERT INTO devices (id, user_id, name, platform, iroh_node_id, iroh_relay_url, direct_addrs_json, last_seen_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
@@ -240,17 +268,13 @@ impl Database {
                 now.to_rfc3339()
             ],
         )?;
-        Ok(DeviceInfo {
-            id: id.to_string(),
-            user_id: user_id.to_string(),
-            name: name.to_string(),
-            platform,
-            iroh_node_id: iroh_node_id.map(str::to_string),
-            iroh_relay_url: iroh_relay_url.map(str::to_string),
-            direct_addrs: direct_addrs.to_vec(),
-            online: false,
-            last_seen_at: now,
-        })
+        conn.query_row(
+            "SELECT id, user_id, name, platform, iroh_node_id, iroh_relay_url, direct_addrs_json, last_seen_at
+             FROM devices WHERE id = ?1 AND user_id = ?2",
+            params![id, user_id],
+            Self::map_device_row,
+        )
+        .map_err(Into::into)
     }
 
     pub fn update_device_node_addr(

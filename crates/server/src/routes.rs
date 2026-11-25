@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration as StdDuration};
 
 use axum::{
     body::Body,
@@ -159,11 +159,11 @@ async fn register_device(
     State(state): State<Arc<AppState>>,
     Json(req): Json<RegisterDeviceRequest>,
 ) -> Result<Json<DeviceInfo>, (StatusCode, String)> {
-    let device_id = req.device_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+    let _presence = state.presence_changes.lock().await;
     let mut device = state
         .db
         .upsert_device(
-            &device_id,
+            req.device_id.as_deref(),
             &auth.user_id,
             &req.name,
             req.platform,
@@ -1516,81 +1516,119 @@ async fn ws_upgrade(
     let claims = decode_jwt(&query.token, &state.jwt_secret)
         .map_err(|_| (StatusCode::UNAUTHORIZED, "invalid ws token".to_string()))?;
 
+    if state
+        .db
+        .get_device(&query.device_id, &claims.sub)
+        .map_err(internal_err)?
+        .is_none()
+    {
+        return Err((StatusCode::NOT_FOUND, "device not registered".to_string()));
+    }
+
     Ok(ws.on_upgrade(move |socket| handle_ws(socket, state, claims.sub, query.device_id)))
 }
 
 async fn handle_ws(socket: WebSocket, state: Arc<AppState>, user_id: String, device_id: String) {
+    const PING_INTERVAL: StdDuration = StdDuration::from_secs(20);
+    const READ_TIMEOUT: StdDuration = StdDuration::from_secs(60);
     let (mut ws_sink, mut ws_stream) = socket.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<WsEvent>();
+    let key = (user_id.clone(), device_id.clone());
+    let is_current = || {
+        state
+            .connections
+            .get(&key)
+            .is_some_and(|current| current.same_channel(&tx))
+    };
 
-    state
-        .connections
-        .insert((user_id.clone(), device_id.clone()), tx.clone());
+    {
+        let _presence = state.presence_changes.lock().await;
+        state.connections.insert(key.clone(), tx.clone());
 
-    // Notify peers that this device is now online.
-    if let Ok(Some(mut dev)) = state.db.get_device(&device_id, &user_id) {
-        dev.online = true;
-        state.broadcast_user(&user_id, WsEvent::DeviceUpdated(dev));
+        if let (Ok(devices), Ok(items)) = (
+            state.list_devices_with_presence(&user_id),
+            state.list_hydrated_items(&user_id),
+        ) {
+            let _ = tx.send(WsEvent::Snapshot { devices, items });
+        }
+
+        if let Ok(Some(mut dev)) = state.db.get_device(&device_id, &user_id) {
+            dev.online = true;
+            state.broadcast_user(&user_id, WsEvent::DeviceUpdated(dev));
+        }
     }
 
-    // Send initial snapshot.
-    if let (Ok(devices), Ok(items)) = (
-        state.list_devices_with_presence(&user_id),
-        state.list_hydrated_items(&user_id),
-    ) {
-        let _ = tx.send(WsEvent::Snapshot { devices, items });
-    }
-
-    let send_task = tokio::spawn(async move {
-        while let Some(event) = rx.recv().await {
-            if let Ok(json) = serde_json::to_string(&event) {
-                if ws_sink.send(Message::Text(json.into())).await.is_err() {
-                    break;
+    let mut send_task = tokio::spawn(async move {
+        let start = tokio::time::Instant::now() + PING_INTERVAL;
+        let mut heartbeat = tokio::time::interval_at(start, PING_INTERVAL);
+        heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            let message = tokio::select! {
+                event = rx.recv() => {
+                    let Some(event) = event else { break };
+                    let Ok(json) = serde_json::to_string(&event) else { continue };
+                    Message::Text(json.into())
                 }
+                _ = heartbeat.tick() => Message::Ping(Default::default()),
+            };
+            if ws_sink.send(message).await.is_err() {
+                break;
             }
         }
     });
 
-    while let Some(Ok(msg)) = ws_stream.next().await {
-        match msg {
-            Message::Text(text) => {
-                if let Ok(cmd) = serde_json::from_str::<WsClientCommand>(&text) {
-                    match cmd {
-                        WsClientCommand::Ping => {
-                            let _ = tx.send(WsEvent::Pong);
-                        }
-                        WsClientCommand::UpdateNodeAddr {
-                            iroh_node_id,
-                            iroh_relay_url,
-                            direct_addrs,
-                        } => {
-                            if let Ok(Some(mut dev)) = state.db.update_device_node_addr(
-                                &device_id,
-                                &user_id,
-                                &iroh_node_id,
-                                iroh_relay_url.as_deref(),
-                                &direct_addrs,
-                            ) {
-                                dev.online = true;
-                                state.broadcast_user(&user_id, WsEvent::DeviceUpdated(dev));
-                            }
-                        }
+    loop {
+        let incoming = tokio::select! {
+            incoming = tokio::time::timeout(READ_TIMEOUT, ws_stream.next()) => incoming,
+            _ = &mut send_task => break,
+        };
+        let Ok(Some(Ok(message))) = incoming else { break };
+        if !is_current() {
+            break;
+        }
+        match message {
+            Message::Text(text) => match serde_json::from_str::<WsClientCommand>(&text) {
+                Ok(WsClientCommand::Ping) => {
+                    let _ = tx.send(WsEvent::Pong);
+                }
+                Ok(WsClientCommand::UpdateNodeAddr {
+                    iroh_node_id,
+                    iroh_relay_url,
+                    direct_addrs,
+                }) => {
+                    let _presence = state.presence_changes.lock().await;
+                    if !is_current() {
+                        break;
+                    }
+                    if let Ok(Some(mut dev)) = state.db.update_device_node_addr(
+                        &device_id,
+                        &user_id,
+                        &iroh_node_id,
+                        iroh_relay_url.as_deref(),
+                        &direct_addrs,
+                    ) {
+                        dev.online = true;
+                        state.broadcast_user(&user_id, WsEvent::DeviceUpdated(dev));
                     }
                 }
-            }
+                Err(_) => {}
+            },
             Message::Close(_) => break,
             _ => {}
         }
     }
 
     send_task.abort();
-    state
+    let _presence = state.presence_changes.lock().await;
+    if state
         .connections
-        .remove(&(user_id.clone(), device_id.clone()));
-
-    if let Ok(Some(mut dev)) = state.db.get_device(&device_id, &user_id) {
-        dev.online = false;
-        state.broadcast_user(&user_id, WsEvent::DeviceUpdated(dev));
+        .remove_if(&key, |_, current| current.same_channel(&tx))
+        .is_some()
+    {
+        if let Ok(Some(mut dev)) = state.db.get_device(&device_id, &user_id) {
+            dev.online = false;
+            state.broadcast_user(&user_id, WsEvent::DeviceUpdated(dev));
+        }
     }
 }
 
