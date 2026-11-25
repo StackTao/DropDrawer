@@ -15,6 +15,12 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/StackTao/DropDrawer/actions/workflows/windows-installer.yml"><img src="https://github.com/StackTao/DropDrawer/actions/workflows/windows-installer.yml/badge.svg?branch=main" alt="Windows 构建状态" /></a>
+  <a href="https://github.com/StackTao/DropDrawer/actions/workflows/android-apk.yml"><img src="https://github.com/StackTao/DropDrawer/actions/workflows/android-apk.yml/badge.svg?branch=main" alt="Android 构建状态" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT 许可证" /></a>
+</p>
+
+<p align="center">
   <a href="#安装客户端">安装客户端</a> ·
   <a href="#自托管服务端">自托管服务端</a> ·
   <a href="docs/ARCHITECTURE.md">架构文档</a> ·

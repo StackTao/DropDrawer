@@ -15,6 +15,12 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/StackTao/DropDrawer/actions/workflows/windows-installer.yml"><img src="https://github.com/StackTao/DropDrawer/actions/workflows/windows-installer.yml/badge.svg?branch=main" alt="Windows 빌드 상태" /></a>
+  <a href="https://github.com/StackTao/DropDrawer/actions/workflows/android-apk.yml"><img src="https://github.com/StackTao/DropDrawer/actions/workflows/android-apk.yml/badge.svg?branch=main" alt="Android 빌드 상태" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT 라이선스" /></a>
+</p>
+
+<p align="center">
   <a href="#클라이언트-설치">설치</a> ·
   <a href="#서버-자체-호스팅">자체 호스팅</a> ·
   <a href="docs/ARCHITECTURE.md">아키텍처 (중국어)</a> ·

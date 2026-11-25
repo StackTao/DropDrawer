@@ -15,6 +15,12 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/StackTao/DropDrawer/actions/workflows/windows-installer.yml"><img src="https://github.com/StackTao/DropDrawer/actions/workflows/windows-installer.yml/badge.svg?branch=main" alt="Windows のビルド状況" /></a>
+  <a href="https://github.com/StackTao/DropDrawer/actions/workflows/android-apk.yml"><img src="https://github.com/StackTao/DropDrawer/actions/workflows/android-apk.yml/badge.svg?branch=main" alt="Android のビルド状況" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT ライセンス" /></a>
+</p>
+
+<p align="center">
   <a href="#クライアントのインストール">インストール</a> ·
   <a href="#サーバーをセルフホストする">セルフホスト</a> ·
   <a href="docs/ARCHITECTURE.md">アーキテクチャ（中国語）</a> ·

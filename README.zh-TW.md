@@ -15,6 +15,12 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/StackTao/DropDrawer/actions/workflows/windows-installer.yml"><img src="https://github.com/StackTao/DropDrawer/actions/workflows/windows-installer.yml/badge.svg?branch=main" alt="Windows 建置狀態" /></a>
+  <a href="https://github.com/StackTao/DropDrawer/actions/workflows/android-apk.yml"><img src="https://github.com/StackTao/DropDrawer/actions/workflows/android-apk.yml/badge.svg?branch=main" alt="Android 建置狀態" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT 授權條款" /></a>
+</p>
+
+<p align="center">
   <a href="#安裝用戶端">安裝用戶端</a> ·
   <a href="#自行架設伺服器">自行架設伺服器</a> ·
   <a href="docs/ARCHITECTURE.md">架構文件（簡體中文）</a> ·
