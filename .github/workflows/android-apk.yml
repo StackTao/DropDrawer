@@ -62,10 +62,11 @@ jobs:
         run: |
           flutter pub get --enforce-lockfile
 
-          # Patch pub-cache plugins for Gradle 9 (Project.exec -> ExecOperations) and
-          # super_native_extensions LTO+panic=abort on modern Rust without affecting no_std crates.
+          # Patch pub-cache plugins for Gradle 9 (Project.exec -> ExecOperations),
+          # AGP 9 AAR metadata check (compileSdk >= 35), and super_native_extensions LTO+panic=abort
+          # on modern Rust without affecting no_std crates.
           python3 - <<'PY'
-          import glob, os
+          import glob, os, re
           pub_cache = os.environ.get("PUB_CACHE", os.path.expanduser("~/.pub-cache"))
           for path in glob.glob(os.path.join(pub_cache, "hosted", "pub.dev", "*", "cargokit", "gradle", "plugin.gradle")):
               with open(path, "r", encoding="utf-8") as f:
@@ -91,6 +92,15 @@ jobs:
                   with open(path, "w", encoding="utf-8") as f:
                       f.write(patched)
                   print("Patched super_native_extensions Cargo.toml:", path)
+
+          for path in glob.glob(os.path.join(pub_cache, "hosted", "pub.dev", "*", "android", "build.gradle")):
+              with open(path, "r", encoding="utf-8") as f:
+                  src = f.read()
+              patched = re.sub(r"\bcompileSdk(?:Version)?\s*=?\s*([12]\d|3[0-4])\b", "compileSdk 36", src)
+              if patched != src:
+                  with open(path, "w", encoding="utf-8") as f:
+                      f.write(patched)
+                  print("Bumped compileSdk to 36:", path)
           PY
 
           flutter analyze --no-pub
