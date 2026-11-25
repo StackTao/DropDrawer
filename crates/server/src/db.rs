@@ -83,6 +83,11 @@ impl Database {
                  created_at TEXT NOT NULL
              );
 
+             CREATE TABLE IF NOT EXISTS google_accounts (
+                 subject TEXT PRIMARY KEY,
+                 user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE
+             );
+
              CREATE TABLE IF NOT EXISTS devices (
                  id TEXT PRIMARY KEY,
                  user_id TEXT NOT NULL,
@@ -181,6 +186,53 @@ impl Database {
             username: username.to_string(),
             created_at: now,
         })
+    }
+
+    pub fn resolve_google_user(
+        &self,
+        subject: &str,
+        email: &str,
+        registration_open: bool,
+    ) -> anyhow::Result<Option<UserProfile>> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let existing = tx.query_row(
+            "SELECT u.id, u.username, u.created_at FROM google_accounts g
+             JOIN users u ON u.id = g.user_id WHERE g.subject = ?1",
+            [subject],
+            |row| {
+                let created: String = row.get(2)?;
+                Ok(UserProfile {
+                    id: row.get(0)?,
+                    username: row.get(1)?,
+                    created_at: DateTime::parse_from_rfc3339(&created)
+                        .map(|d| d.with_timezone(&Utc))
+                        .unwrap_or_else(|_| Utc::now()),
+                })
+            },
+        ).optional()?;
+        if existing.is_some() || !registration_open {
+            return Ok(existing);
+        }
+
+        let id = uuid::Uuid::new_v4().to_string();
+        let created_at = Utc::now();
+        let username_taken: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM users WHERE username = ?1)",
+            [email],
+            |row| row.get(0),
+        )?;
+        let username = if username_taken { format!("{email} ({id})") } else { email.to_owned() };
+        tx.execute(
+            "INSERT INTO users (id, username, password_hash, created_at) VALUES (?1, ?2, '', ?3)",
+            params![id, username, created_at.to_rfc3339()],
+        )?;
+        tx.execute(
+            "INSERT INTO google_accounts (subject, user_id) VALUES (?1, ?2)",
+            params![subject, id],
+        )?;
+        tx.commit()?;
+        Ok(Some(UserProfile { id, username, created_at }))
     }
 
     pub fn find_user_by_username(&self, username: &str) -> anyhow::Result<Option<UserRecord>> {

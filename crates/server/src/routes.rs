@@ -42,6 +42,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // Auth
         .route("/api/auth/register", post(register))
         .route("/api/auth/login", post(login))
+        .route("/api/auth/google/start", post(crate::google_login::start))
+        .route("/api/auth/google/callback", get(crate::google_login::callback))
+        .route("/api/auth/google/poll", post(crate::google_login::poll))
         // Devices
         .route("/api/devices", get(list_devices).post(register_device))
         // Storage backends & built-in OAuth helpers

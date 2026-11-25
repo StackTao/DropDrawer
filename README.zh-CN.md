@@ -112,8 +112,8 @@ Windows 和 Android 的构建产物保留 30 天。需要新的安装包时，�
 在仓库根目录执行以下任一方式。Docker Compose 会使用 `deploy/data/server` 保存数据，直接运行则默认使用 `./data`。
 
 ```bash
-DROPDRAWER_JWT_SECRET="$(openssl rand -hex 32)" \
-  docker compose -f deploy/docker-compose.yml up -d --build
+cp -n .env.example .env
+docker compose --env-file .env -f deploy/docker-compose.yml up -d --build
 
 curl -fsS http://localhost:8080/health
 ```
@@ -121,6 +121,8 @@ curl -fsS http://localhost:8080/health
 也可运行 `cargo run --bin dropdrawer-server` 启动本地开发实例。局域网中的其他设备填写运行服务端的主机地址，例如 `http://192.168.1.10:8080`。
 
 未设置 `DROPDRAWER_JWT_SECRET` 时，服务端会在首次启动时生成随机密钥并保存在数据库旁的 `jwt_secret` 文件中；也可以自行设置足够长的随机值。所需账号都创建好后，请设置 `DROPDRAWER_ALLOW_REGISTRATION=false` 关闭注册。生产部署请使用支持 WebSocket 升级的 HTTPS 反向代理。大文件传输需关闭代理缓冲，并按实际需求调整上传大小上限。外链下载要求收件人能够访问服务端。[生产 Compose 模板](deploy/compose.baota.yml) · [架构文档](docs/ARCHITECTURE.md)
+
+按 [Google 登录配置指南](docs/GOOGLE_SIGN_IN.md) 启用 Google 登录。在各设备使用同一 Google 账号即可访问同一个抽屉。
 
 ## 从源码构建
 

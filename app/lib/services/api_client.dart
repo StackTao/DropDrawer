@@ -79,6 +79,55 @@ class ApiClient {
     return (token!, UserProfile.fromJson(data['user'] as Map<String, dynamic>));
   }
 
+  Future<({String url, String state, String pollKey, int expiresIn})>
+      startGoogleSignIn() async {
+    final server = Uri.parse(_cleanBase);
+    final loopback = const ['localhost', '127.0.0.1', '::1'].contains(
+      server.host,
+    );
+    if (server.scheme != 'https' && !(server.scheme == 'http' && loopback)) {
+      throw const HttpException('Google 登录需要 HTTPS 服务器地址。');
+    }
+    final response = await http
+        .post(Uri.parse('$_cleanBase/api/auth/google/start'))
+        .timeout(const Duration(seconds: 10));
+    if (response.statusCode == 404 || response.statusCode == 503) {
+      throw const HttpException('此服务器尚未启用 Google 登录。');
+    }
+    _check(response);
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    final url = Uri.parse(data['authorization_url'] as String);
+    if (url.scheme != 'https' ||
+        url.host != 'accounts.google.com' ||
+        url.userInfo.isNotEmpty) {
+      throw const HttpException('服务器返回了无效的 Google 授权地址。');
+    }
+    return (
+      url: url.toString(),
+      state: data['state'] as String,
+      pollKey: data['poll_key'] as String,
+      expiresIn: data['expires_in'] as int,
+    );
+  }
+
+  Future<(String, UserProfile)?> pollGoogleSignIn({
+    required String state,
+    required String pollKey,
+  }) async {
+    final response = await http
+        .post(
+          Uri.parse('$_cleanBase/api/auth/google/poll'),
+          headers: _headers(),
+          body: jsonEncode({'state': state, 'poll_key': pollKey}),
+        )
+        .timeout(const Duration(seconds: 10));
+    _check(response);
+    final data = jsonDecode(response.body) as Map<String, dynamic>?;
+    if (data == null) return null;
+    token = data['token'] as String;
+    return (token!, UserProfile.fromJson(data['user'] as Map<String, dynamic>));
+  }
+
   Future<DeviceInfo> registerDevice({
     String? deviceId,
     required String name,

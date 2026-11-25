@@ -112,8 +112,8 @@ Windows와 Android 빌드 결과물은 30일 동안 보관됩니다. 권한이 �
 저장소 루트에서 Docker Compose 또는 Cargo를 실행합니다. Docker Compose는 기본적으로 `deploy/data/server`에 데이터를 저장합니다. 서버를 직접 실행하면 `./data`를 사용합니다.
 
 ```bash
-DROPDRAWER_JWT_SECRET="$(openssl rand -hex 32)" \
-  docker compose -f deploy/docker-compose.yml up -d --build
+cp -n .env.example .env
+docker compose --env-file .env -f deploy/docker-compose.yml up -d --build
 
 curl -fsS http://localhost:8080/health
 ```
@@ -121,6 +121,8 @@ curl -fsS http://localhost:8080/health
 로컬 개발에는 `cargo run --bin dropdrawer-server`를 사용할 수 있습니다. 같은 로컬 네트워크의 다른 기기에서는 `http://192.168.1.10:8080`처럼 서버를 실행하는 호스트의 주소를 입력하세요.
 
 `DROPDRAWER_JWT_SECRET`을 설정하지 않으면 서버가 처음 시작할 때 무작위 비밀 값을 생성해 데이터베이스 옆의 `jwt_secret` 파일에 저장합니다. 충분히 긴 무작위 값을 직접 설정할 수도 있습니다. 필요한 계정을 모두 만든 뒤에는 `DROPDRAWER_ALLOW_REGISTRATION=false`로 새 가입을 막으세요. 운영 환경에서는 WebSocket 업그레이드를 지원하는 HTTPS 리버스 프록시도 필요합니다. 대용량 파일을 전송할 때는 프록시 버퍼링을 끄고 환경에 맞게 업로드 크기 제한을 조정하세요. 공유 링크를 받은 사람도 서버에 접속할 수 있어야 합니다. [운영용 Compose 템플릿](deploy/compose.baota.yml) · [아키텍처 (중국어)](docs/ARCHITECTURE.md)
+
+[Google 로그인 설정 가이드](docs/GOOGLE_SIGN_IN.md)에 따라 Google 로그인을 활성화할 수 있습니다. 모든 기기에서 같은 Google 계정으로 로그인하면 같은 서랍에 접근할 수 있습니다.
 
 ## 소스에서 빌드
 

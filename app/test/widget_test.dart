@@ -7,5 +7,6 @@ void main() {
       (WidgetTester tester) async {
     await tester.pumpWidget(const DropDrawerApp());
     expect(find.text('DropDrawer'), findsOneWidget);
+    expect(find.text('使用 Google 登录'), findsOneWidget);
   });
 }

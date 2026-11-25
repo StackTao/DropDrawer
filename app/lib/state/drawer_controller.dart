@@ -162,12 +162,50 @@ class DropDrawerController extends ChangeNotifier {
     required String password,
     required bool isRegister,
   }) async {
-    serverUrl = url.trim().replaceAll(RegExp(r'/+$'), '');
-    final api = ApiClient(baseUrl: serverUrl);
+    final api = ApiClient(baseUrl: url.trim().replaceAll(RegExp(r'/+$'), ''));
     final (tok, profile) = isRegister
         ? await api.register(username, password)
         : await api.login(username, password);
+    await _finishAuthentication(api, tok, profile);
+  }
 
+  Future<void> authenticateWithGoogle({
+    required String url,
+    required bool Function() isCancelled,
+    required void Function() onBrowserOpened,
+  }) async {
+    final api = ApiClient(baseUrl: url.trim().replaceAll(RegExp(r'/+$'), ''));
+    final clock = Stopwatch()..start();
+    final attempt = await api.startGoogleSignIn();
+    if (isCancelled()) return;
+    if (!await windowService.openExternalUrl(attempt.url)) {
+      throw const HttpException('无法打开系统浏览器。');
+    }
+    if (isCancelled()) return;
+    onBrowserOpened();
+    final expires = Duration(seconds: attempt.expiresIn);
+    while (!isCancelled() && clock.elapsed < expires) {
+      final session = await api.pollGoogleSignIn(
+        state: attempt.state,
+        pollKey: attempt.pollKey,
+      );
+      if (isCancelled()) return;
+      if (session != null) {
+        final (tok, profile) = session;
+        await _finishAuthentication(api, tok, profile);
+        return;
+      }
+      await Future<void>.delayed(const Duration(seconds: 1));
+    }
+    if (!isCancelled()) throw const HttpException('Google 登录已超时，请重试。');
+  }
+
+  Future<void> _finishAuthentication(
+    ApiClient api,
+    String tok,
+    UserProfile profile,
+  ) async {
+    serverUrl = api.baseUrl;
     _api = api;
     token = tok;
     user = profile;

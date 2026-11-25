@@ -8,6 +8,7 @@ use protocol::{DeviceInfo, DrawerItem, StorageBackendConfig, WsEvent};
 use tokio::sync::{mpsc, Mutex};
 
 use crate::db::{hydrate_drawer_item, Database, StorageBackendRecord};
+use crate::google_login::{GoogleLogin, GoogleLoginConfig};
 use crate::storage::{build_provider, local::LocalProvider, StorageProvider};
 
 #[derive(Clone)]
@@ -37,6 +38,7 @@ pub struct AppState {
     pub connections: DashMap<(String, String), mpsc::UnboundedSender<WsEvent>>,
     // Order connection replacement, removal and the corresponding presence events.
     pub(crate) presence_changes: Mutex<()>,
+    pub(crate) google_login: Option<GoogleLogin>,
     /// Short-lived Google OAuth2 authorization flows keyed by `state` nonce.
     pub pending_google_oauth: DashMap<String, PendingGoogleOAuth>,
     /// Whether `POST /api/auth/register` accepts new accounts (`DROPDRAWER_ALLOW_REGISTRATION`).
@@ -93,6 +95,15 @@ impl AttemptLimiter {
 
 impl AppState {
     pub fn new(db: Database, jwt_secret: String, default_local_storage_dir: PathBuf) -> Arc<Self> {
+        Self::with_google_login(db, jwt_secret, default_local_storage_dir, None)
+    }
+
+    pub fn with_google_login(
+        db: Database,
+        jwt_secret: String,
+        default_local_storage_dir: PathBuf,
+        google_config: Option<GoogleLoginConfig>,
+    ) -> Arc<Self> {
         let http = reqwest::Client::builder()
             .pool_idle_timeout(std::time::Duration::from_secs(60))
             .build()
@@ -104,6 +115,7 @@ impl AppState {
             default_local_storage_dir,
             connections: DashMap::new(),
             presence_changes: Mutex::new(()),
+            google_login: google_config.map(GoogleLogin::new),
             pending_google_oauth: DashMap::new(),
             registration_open: AtomicBool::new(true),
             failed_logins: AttemptLimiter::new(10, Duration::from_secs(15 * 60)),

@@ -1,34 +1,45 @@
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    env,
+    path::{Path, PathBuf},
+};
 
 use dropdrawer_server::{
-    db::Database, routes::build_router, spawn_ttl_cleanup_task, state::AppState,
+    db::Database, google_login::GoogleLoginConfig, routes::build_router, spawn_ttl_cleanup_task,
+    state::AppState,
 };
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let settings = load_env_file()?;
+    let get = |key: &str| env::var(key).ok().or_else(|| settings.get(key).cloned());
     tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
+        .with_env_filter(EnvFilter::new(get("RUST_LOG").as_deref().unwrap_or("info")))
         .init();
 
-    let bind_addr =
-        std::env::var("DROPDRAWER_BIND").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
-    let db_path =
-        std::env::var("DROPDRAWER_DB_PATH").unwrap_or_else(|_| "./data/dropdrawer.db".to_string());
-    let local_storage = std::env::var("DROPDRAWER_LOCAL_STORAGE")
-        .unwrap_or_else(|_| "./data/blobs".to_string());
-    let jwt_secret = resolve_jwt_secret(&db_path)?;
-    let cleanup_secs: u64 = std::env::var("DROPDRAWER_TTL_CLEANUP_SECS")
-        .ok()
+    let bind_addr = get("DROPDRAWER_BIND").unwrap_or_else(|| "0.0.0.0:8080".to_string());
+    let db_path = get("DROPDRAWER_DB_PATH").unwrap_or_else(|| "./data/dropdrawer.db".to_string());
+    let local_storage =
+        get("DROPDRAWER_LOCAL_STORAGE").unwrap_or_else(|| "./data/blobs".to_string());
+    let jwt_secret = resolve_jwt_secret(&db_path, get("DROPDRAWER_JWT_SECRET").as_deref())?;
+    let cleanup_secs: u64 = get("DROPDRAWER_TTL_CLEANUP_SECS")
         .and_then(|v| v.parse().ok())
         .unwrap_or(300);
-
+    let google_config = GoogleLoginConfig::from_settings(get)?;
+    if google_config.is_some() {
+        tracing::info!("Google sign-in is enabled");
+    }
     let db = Database::open(&db_path)?;
-    let state = AppState::new(db, jwt_secret, PathBuf::from(local_storage));
-    let allow_registration = std::env::var("DROPDRAWER_ALLOW_REGISTRATION")
-        .map(|v| !matches!(v.trim().to_ascii_lowercase().as_str(), "0" | "false" | "no" | "off"))
+    let state =
+        AppState::with_google_login(db, jwt_secret, PathBuf::from(local_storage), google_config);
+    let allow_registration = get("DROPDRAWER_ALLOW_REGISTRATION")
+        .map(|v| {
+            !matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "0" | "false" | "no" | "off"
+            )
+        })
         .unwrap_or(true);
     state.set_registration_open(allow_registration);
     if !allow_registration {
@@ -43,6 +54,32 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+fn load_env_file() -> anyhow::Result<HashMap<String, String>> {
+    let explicit = env::var_os("DROPDRAWER_ENV_FILE");
+    let path = explicit
+        .as_deref()
+        .map(Path::new)
+        .unwrap_or(Path::new(".env"));
+    let entries = match dotenvy::from_path_iter(path) {
+        Ok(entries) => entries,
+        Err(dotenvy::Error::Io(err))
+            if explicit.is_none() && err.kind() == std::io::ErrorKind::NotFound =>
+        {
+            return Ok(HashMap::new());
+        }
+        Err(_) => anyhow::bail!(
+            "Could not open the DropDrawer environment file {}",
+            path.display()
+        ),
+    };
+    entries.collect::<Result<_, _>>().map_err(|_| {
+        anyhow::anyhow!(
+            "Invalid setting in the DropDrawer environment file {}",
+            path.display()
+        )
+    })
+}
+
 /// Placeholder secrets that once shipped as defaults; anyone could forge sessions with them.
 const KNOWN_PLACEHOLDER_SECRETS: &[&str] = &[
     "dropdrawer-dev-secret-please-change-in-prod",
@@ -51,20 +88,25 @@ const KNOWN_PLACEHOLDER_SECRETS: &[&str] = &[
 
 /// Uses `DROPDRAWER_JWT_SECRET` when it is set to a real value. Otherwise generates a
 /// random secret once and keeps it next to the database so sessions survive restarts.
-fn resolve_jwt_secret(db_path: &str) -> anyhow::Result<String> {
-    let configured = std::env::var("DROPDRAWER_JWT_SECRET").unwrap_or_default();
-    let configured = configured.trim();
+fn resolve_jwt_secret(db_path: &str, configured: Option<&str>) -> anyhow::Result<String> {
+    let configured = configured.unwrap_or_default().trim();
     if !configured.is_empty() && !KNOWN_PLACEHOLDER_SECRETS.contains(&configured) {
         if configured.len() < 32 {
-            tracing::warn!("DROPDRAWER_JWT_SECRET is shorter than 32 characters; use a longer random value");
+            tracing::warn!(
+                "DROPDRAWER_JWT_SECRET is shorter than 32 characters; use a longer random value"
+            );
         }
         return Ok(configured.to_string());
     }
     if !configured.is_empty() {
-        tracing::warn!("ignoring the placeholder DROPDRAWER_JWT_SECRET; using a generated secret instead");
+        tracing::warn!(
+            "ignoring the placeholder DROPDRAWER_JWT_SECRET; using a generated secret instead"
+        );
     }
 
-    let dir = Path::new(db_path).parent().filter(|p| !p.as_os_str().is_empty());
+    let dir = Path::new(db_path)
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty());
     let path = dir.unwrap_or(Path::new(".")).join("jwt_secret");
     if let Ok(existing) = std::fs::read_to_string(&path) {
         let existing = existing.trim();

@@ -1,0 +1,8 @@
+.env
+**/.env
+.git
+target
+app/build
+dist
+deploy/data
+data

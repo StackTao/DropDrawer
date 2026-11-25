@@ -112,8 +112,8 @@ Windows 和 Android 的建置產物保留 30 天。具有權限的儲存庫成�
 在儲存庫根目錄執行 Docker Compose 或 Cargo。Docker Compose 預設將資料儲存在 `deploy/data/server`，直接執行伺服器則使用 `./data`。
 
 ```bash
-DROPDRAWER_JWT_SECRET="$(openssl rand -hex 32)" \
-  docker compose -f deploy/docker-compose.yml up -d --build
+cp -n .env.example .env
+docker compose --env-file .env -f deploy/docker-compose.yml up -d --build
 
 curl -fsS http://localhost:8080/health
 ```
@@ -121,6 +121,8 @@ curl -fsS http://localhost:8080/health
 如需在本機開發，可執行 `cargo run --bin dropdrawer-server`。在相同區域網路上的其他裝置輸入伺服器主機的位址，例如 `http://192.168.1.10:8080`。
 
 未設定 `DROPDRAWER_JWT_SECRET` 時，伺服器會在首次啟動時產生隨機金鑰，並儲存在資料庫旁的 `jwt_secret` 檔案中；也可以自行設定足夠長的隨機值。所需帳號都建立完成後，請設定 `DROPDRAWER_ALLOW_REGISTRATION=false` 關閉註冊。正式部署時，請使用支援 WebSocket 升級的 HTTPS 反向代理。傳輸大型檔案時，需關閉代理緩衝，並依實際需求調整上傳大小上限。使用分享連結下載的收件人須能連線至伺服器。[正式環境 Compose 範本](deploy/compose.baota.yml) · [架構文件（簡體中文）](docs/ARCHITECTURE.md)
+
+依照 [Google 登入設定指南](docs/GOOGLE_SIGN_IN.md) 啟用 Google 登入。在各裝置使用相同 Google 帳號即可存取同一個抽屜。
 
 ## 從原始碼建置
 

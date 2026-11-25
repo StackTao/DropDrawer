@@ -18,6 +18,8 @@ class _LoginScreenState extends State<LoginScreen> {
   final _passCtrl = TextEditingController();
   bool _isRegister = false;
   bool _loading = false;
+  bool _waitingForGoogle = false;
+  bool _cancelGoogle = false;
   String? _error;
 
   @override
@@ -35,6 +37,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _submit() async {
+    if (_loading) return;
     setState(() {
       _loading = true;
       _error = null;
@@ -47,9 +50,42 @@ class _LoginScreenState extends State<LoginScreen> {
         isRegister: _isRegister,
       );
     } catch (e) {
-      setState(() => _error = e.toString().replaceFirst('HttpException: ', ''));
+      if (mounted) {
+        setState(
+          () => _error = e.toString().replaceFirst('HttpException: ', ''),
+        );
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _signInWithGoogle() async {
+    if (_loading) return;
+    setState(() {
+      _loading = true;
+      _cancelGoogle = false;
+      _error = null;
+    });
+    try {
+      await widget.controller.authenticateWithGoogle(
+        url: _serverCtrl.text,
+        isCancelled: () => !mounted || _cancelGoogle,
+        onBrowserOpened: () => setState(() => _waitingForGoogle = true),
+      );
+    } catch (e) {
+      if (mounted && !_cancelGoogle) {
+        setState(
+          () => _error = e.toString().replaceFirst('HttpException: ', ''),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _waitingForGoogle = false;
+        });
+      }
     }
   }
 
@@ -183,13 +219,39 @@ class _LoginScreenState extends State<LoginScreen> {
                           : Text(_isRegister ? '创建账号并连接' : '继续'),
                     ),
                   ),
+                  const SizedBox(height: 8),
+                  if (_waitingForGoogle) ...[
+                    const Text(
+                      '请在系统浏览器完成 Google 授权，然后返回 DropDrawer。',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: MacPalette.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: _cancelGoogle
+                          ? null
+                          : () => setState(() => _cancelGoogle = true),
+                      child: const Text('取消等待'),
+                    ),
+                  ] else
+                    SizedBox(
+                      height: 36,
+                      child: OutlinedButton(
+                        onPressed: _loading ? null : _signInWithGoogle,
+                        child: const Text('使用 Google 登录'),
+                      ),
+                    ),
                   const SizedBox(height: 12),
                   Center(
                     child: GestureDetector(
-                      onTap: () => setState(() {
-                        _isRegister = !_isRegister;
-                        _error = null;
-                      }),
+                      onTap: _loading
+                          ? null
+                          : () => setState(() {
+                              _isRegister = !_isRegister;
+                              _error = null;
+                            }),
                       child: MouseRegion(
                         cursor: SystemMouseCursors.click,
                         child: Padding(
