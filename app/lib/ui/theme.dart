@@ -26,6 +26,7 @@ class MacIconButton extends StatefulWidget {
   final VoidCallback? onPressed;
   final Color? color;
   final double size;
+  final double boxSize;
   final bool active;
 
   const MacIconButton({
@@ -35,6 +36,7 @@ class MacIconButton extends StatefulWidget {
     this.onPressed,
     this.color,
     this.size = 15,
+    this.boxSize = 26,
     this.active = false,
   });
 
@@ -69,12 +71,12 @@ class _MacIconButtonState extends State<MacIconButton> {
           behavior: HitTestBehavior.opaque,
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 120),
-            width: 26,
-            height: 26,
+            width: widget.boxSize,
+            height: widget.boxSize,
             alignment: Alignment.center,
             decoration: BoxDecoration(
               color: bg,
-              borderRadius: BorderRadius.circular(6),
+              borderRadius: BorderRadius.circular(widget.boxSize > 30 ? 8 : 6),
             ),
             child: Icon(widget.icon, size: widget.size, color: fg),
           ),

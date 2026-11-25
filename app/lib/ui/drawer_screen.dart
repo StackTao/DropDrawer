@@ -118,10 +118,37 @@ class _DrawerScreenState extends State<DrawerScreen> {
       _switchPage(_DrawerPage.share);
     } else if (val == 'preferences') {
       _switchPage(_DrawerPage.preferences);
+    } else if (val == 'clear_drawer') {
+      _confirmAndClearDrawer(c);
     } else if (val == 'logout') {
       c.logout();
     } else if (val == 'quit') {
       c.windowService.quitApp();
+    }
+  }
+
+  Future<void> _confirmAndClearDrawer(DropDrawerController c) async {
+    if (c.items.isEmpty) return;
+    final confirmed = await showCupertinoDialog<bool>(
+      context: context,
+      builder: (ctx) => CupertinoAlertDialog(
+        title: const Text('清空抽屉'),
+        content: Text('确定要移出当前抽屉中的全部 ${c.items.length} 项内容吗？'),
+        actions: [
+          CupertinoDialogAction(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          CupertinoDialogAction(
+            isDestructiveAction: true,
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('清空'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await c.clearDrawer();
     }
   }
 
@@ -566,18 +593,21 @@ class _DrawerScreenState extends State<DrawerScreen> {
 
   Widget _buildToolbar(BuildContext context, DropDrawerController c) {
     final isEdge = c.windowService.edgeMode;
+    final isMobile = c.windowService.isMobile;
     return Padding(
       padding: c.windowService.needsMacTrafficLightPadding
           ? const EdgeInsets.fromLTRB(78, 1, 10, 3)
-          : const EdgeInsets.fromLTRB(14, 10, 10, 9),
+          : isMobile
+              ? const EdgeInsets.fromLTRB(16, 10, 10, 10)
+              : const EdgeInsets.fromLTRB(14, 10, 10, 9),
       child: SizedBox(
-        height: 26,
+        height: isMobile ? 36 : 26,
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Container(
-              width: 7,
-              height: 7,
+              width: isMobile ? 8 : 7,
+              height: isMobile ? 8 : 7,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: c.wsConnected
@@ -586,10 +616,10 @@ class _DrawerScreenState extends State<DrawerScreen> {
               ),
             ),
             const SizedBox(width: 8),
-            const Text(
+            Text(
               'DropDrawer',
               style: TextStyle(
-                fontSize: 13,
+                fontSize: isMobile ? 16 : 13,
                 fontWeight: FontWeight.w600,
                 letterSpacing: -0.2,
               ),
@@ -600,15 +630,18 @@ class _DrawerScreenState extends State<DrawerScreen> {
               child: MouseRegion(
                 cursor: SystemMouseCursors.click,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isMobile ? 8 : 6,
+                    vertical: isMobile ? 3.5 : 2,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.white.withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(5),
+                    borderRadius: BorderRadius.circular(isMobile ? 6 : 5),
                   ),
                   child: Text(
                     '${c.onlineDeviceCount} 设备在线',
-                    style: const TextStyle(
-                      fontSize: 10.5,
+                    style: TextStyle(
+                      fontSize: isMobile ? 11.5 : 10.5,
                       color: MacPalette.textSecondary,
                     ),
                   ),
@@ -656,10 +689,11 @@ class _DrawerScreenState extends State<DrawerScreen> {
             MacIconButton(
               icon: CupertinoIcons.cloud,
               tooltip: '多云盘与中转存储',
-              size: 14.5,
+              size: isMobile ? 19 : 14.5,
+              boxSize: isMobile ? 36 : 26,
               onPressed: () => _switchPage(_DrawerPage.storage),
             ),
-            const SizedBox(width: 2),
+            SizedBox(width: isMobile ? 4 : 2),
             if (c.windowService.isWindows)
               _buildWindowsMoreMenu(c)
             else if (c.windowService.supportsEdgeDrawer)
@@ -676,49 +710,87 @@ class _DrawerScreenState extends State<DrawerScreen> {
               PopupMenuButton<String>(
                 tooltip: '更多',
                 padding: EdgeInsets.zero,
-                offset: const Offset(0, 30),
+                offset: Offset(0, isMobile ? 40 : 30),
                 color: MacPalette.elevatedBg,
-                elevation: 8,
+                elevation: 10,
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  side: const BorderSide(color: MacPalette.hairline, width: 0.8),
+                  borderRadius: BorderRadius.circular(12),
+                  side: const BorderSide(color: MacPalette.strongHairline, width: 0.8),
                 ),
                 onSelected: (val) => _handleMoreMenuAction(c, val),
                 itemBuilder: (_) => [
-                  const PopupMenuItem(
+                  PopupMenuItem(
                     value: 'shares',
-                    height: 30,
-                    child: Text('外链管理', style: TextStyle(fontSize: 12)),
+                    height: isMobile ? 40 : 30,
+                    child: Row(
+                      children: [
+                        Icon(CupertinoIcons.link, size: isMobile ? 16 : 13.5, color: MacPalette.textSecondary),
+                        const SizedBox(width: 10),
+                        Text('外链管理', style: TextStyle(fontSize: isMobile ? 14 : 12)),
+                      ],
+                    ),
                   ),
-                  const PopupMenuItem(
-                    value: 'preferences',
-                    height: 30,
-                    child: Text('偏好设置', style: TextStyle(fontSize: 12)),
-                  ),
-                  const PopupMenuItem(
+                  PopupMenuItem(
                     value: 'devices',
-                    height: 30,
-                    child: Text('设备状态', style: TextStyle(fontSize: 12)),
+                    height: isMobile ? 40 : 30,
+                    child: Row(
+                      children: [
+                        Icon(CupertinoIcons.device_laptop, size: isMobile ? 16 : 13.5, color: MacPalette.textSecondary),
+                        const SizedBox(width: 10),
+                        Text('设备状态', style: TextStyle(fontSize: isMobile ? 14 : 12)),
+                      ],
+                    ),
                   ),
-                  const PopupMenuDivider(height: 6),
-                  const PopupMenuItem(
-                    value: 'logout',
-                    height: 30,
-                    child: Text(
-                      '退出登录',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: MacPalette.red,
+                  PopupMenuItem(
+                    value: 'preferences',
+                    height: isMobile ? 40 : 30,
+                    child: Row(
+                      children: [
+                        Icon(CupertinoIcons.gear_alt, size: isMobile ? 16 : 13.5, color: MacPalette.textSecondary),
+                        const SizedBox(width: 10),
+                        Text('偏好设置', style: TextStyle(fontSize: isMobile ? 14 : 12)),
+                      ],
+                    ),
+                  ),
+                  if (isMobile && c.items.isNotEmpty) ...[
+                    const PopupMenuDivider(height: 8),
+                    PopupMenuItem(
+                      value: 'clear_drawer',
+                      height: 40,
+                      child: Row(
+                        children: const [
+                          Icon(CupertinoIcons.trash, size: 16, color: MacPalette.red),
+                          SizedBox(width: 10),
+                          Text('清空抽屉', style: TextStyle(fontSize: 14, color: MacPalette.red)),
+                        ],
                       ),
+                    ),
+                  ],
+                  const PopupMenuDivider(height: 8),
+                  PopupMenuItem(
+                    value: 'logout',
+                    height: isMobile ? 40 : 30,
+                    child: Row(
+                      children: [
+                        Icon(CupertinoIcons.square_arrow_right, size: isMobile ? 16 : 13.5, color: MacPalette.red),
+                        const SizedBox(width: 10),
+                        Text(
+                          '退出登录',
+                          style: TextStyle(
+                            fontSize: isMobile ? 14 : 12,
+                            color: MacPalette.red,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
-                child: const SizedBox(
-                  width: 26,
-                  height: 26,
+                child: SizedBox(
+                  width: isMobile ? 36 : 26,
+                  height: isMobile ? 36 : 26,
                   child: Icon(
                     CupertinoIcons.ellipsis,
-                    size: 15,
+                    size: isMobile ? 19 : 15,
                     color: MacPalette.textSecondary,
                   ),
                 ),
@@ -985,13 +1057,17 @@ class _DrawerScreenState extends State<DrawerScreen> {
     final isFiltering =
         _filterKind != 'all' || _searchCtrl.text.trim().isNotEmpty;
 
+    final isMobile = c.windowService.isMobile;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 2, 12, 4),
+      padding: isMobile
+          ? const EdgeInsets.fromLTRB(16, 4, 14, 6)
+          : const EdgeInsets.fromLTRB(14, 2, 12, 4),
       child: Row(
         children: [
           if (_selectionMode) ...[
             _miniTextAction(
               label: allSelected ? '取消全选' : '全选 (${visibleItems.length})',
+              isMobile: isMobile,
               onTap: () {
                 setState(() {
                   if (allSelected) {
@@ -1005,8 +1081,8 @@ class _DrawerScreenState extends State<DrawerScreen> {
             const SizedBox(width: 8),
             Text(
               '已选 ${_selectedIds.length} 项',
-              style: const TextStyle(
-                fontSize: 10.5,
+              style: TextStyle(
+                fontSize: isMobile ? 12 : 10.5,
                 color: MacPalette.textTertiary,
               ),
             ),
@@ -1014,6 +1090,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
             _miniTextAction(
               label: '完成',
               color: MacPalette.textPrimary,
+              isMobile: isMobile,
               onTap: () => setState(() {
                 _selectionMode = false;
                 _selectedIds.clear();
@@ -1024,8 +1101,8 @@ class _DrawerScreenState extends State<DrawerScreen> {
               isFiltering
                   ? '筛选结果 · ${visibleItems.length}/${c.items.length}'
                   : '抽屉内容 · ${c.items.length} 项',
-              style: const TextStyle(
-                fontSize: 10.5,
+              style: TextStyle(
+                fontSize: isMobile ? 12 : 10.5,
                 color: MacPalette.textTertiary,
               ),
             ),
@@ -1050,10 +1127,13 @@ class _DrawerScreenState extends State<DrawerScreen> {
               child: MouseRegion(
                 cursor: SystemMouseCursors.click,
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isMobile ? 8 : 4,
+                    vertical: isMobile ? 6 : 2,
+                  ),
                   child: Icon(
                     CupertinoIcons.search,
-                    size: 12.5,
+                    size: isMobile ? 16 : 12.5,
                     color: (_searchOpen || isFiltering)
                         ? MacPalette.textPrimary
                         : MacPalette.textSecondary,
@@ -1061,48 +1141,52 @@ class _DrawerScreenState extends State<DrawerScreen> {
                 ),
               ),
             ),
-            const SizedBox(width: 8),
+            SizedBox(width: isMobile ? 8 : 8),
             _miniTextAction(
               label: '多选',
+              isMobile: isMobile,
               onTap: () => setState(() {
                 _selectionMode = true;
                 _confirmingClear = false;
                 _selectedIds.clear();
               }),
             ),
-            const SizedBox(width: 10),
+            SizedBox(width: isMobile ? 10 : 10),
             _miniTextAction(
               label: '全部下载',
+              isMobile: isMobile,
               onTap: () => c.batchDownloadItems(visibleItems),
             ),
-            const SizedBox(width: 10),
-            if (_confirmingClear) ...[
-              _miniTextAction(
-                label: '确认清空',
-                color: MacPalette.red,
-                onTap: () async {
-                  setState(() => _confirmingClear = false);
-                  await c.clearDrawer();
-                },
-              ),
-              const SizedBox(width: 6),
-              _miniTextAction(
-                label: '取消',
-                onTap: () => setState(() => _confirmingClear = false),
-              ),
-            ] else
-              _miniTextAction(
-                label: '清空',
-                color: MacPalette.textSecondary,
-                onTap: () {
-                  setState(() => _confirmingClear = true);
-                  Future.delayed(const Duration(seconds: 4), () {
-                    if (mounted && _confirmingClear) {
-                      setState(() => _confirmingClear = false);
-                    }
-                  });
-                },
-              ),
+            if (!isMobile) ...[
+              const SizedBox(width: 10),
+              if (_confirmingClear) ...[
+                _miniTextAction(
+                  label: '确认清空',
+                  color: MacPalette.red,
+                  onTap: () async {
+                    setState(() => _confirmingClear = false);
+                    await c.clearDrawer();
+                  },
+                ),
+                const SizedBox(width: 6),
+                _miniTextAction(
+                  label: '取消',
+                  onTap: () => setState(() => _confirmingClear = false),
+                ),
+              ] else
+                _miniTextAction(
+                  label: '清空',
+                  color: MacPalette.textSecondary,
+                  onTap: () {
+                    setState(() => _confirmingClear = true);
+                    Future.delayed(const Duration(seconds: 4), () {
+                      if (mounted && _confirmingClear) {
+                        setState(() => _confirmingClear = false);
+                      }
+                    });
+                  },
+                ),
+            ],
           ],
         ],
       ),
@@ -1222,25 +1306,25 @@ class _DrawerScreenState extends State<DrawerScreen> {
   }) {
     return Material(
       color: Colors.white.withValues(alpha: 0.06),
-      borderRadius: BorderRadius.circular(10),
+      borderRadius: BorderRadius.circular(11),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(11),
         child: Container(
-          height: 40,
+          height: 44,
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(11),
             border: Border.all(color: MacPalette.hairline, width: 0.7),
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 15, color: MacPalette.textPrimary),
+              Icon(icon, size: 16, color: MacPalette.textPrimary),
               const SizedBox(width: 6),
               Text(
                 label,
                 style: const TextStyle(
-                  fontSize: 12.5,
+                  fontSize: 13,
                   fontWeight: FontWeight.w500,
                   color: MacPalette.textPrimary,
                 ),
@@ -1256,6 +1340,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
     required String label,
     required VoidCallback onTap,
     Color color = MacPalette.textSecondary,
+    bool isMobile = false,
   }) {
     return GestureDetector(
       onTap: onTap,
@@ -1263,11 +1348,14 @@ class _DrawerScreenState extends State<DrawerScreen> {
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+          padding: EdgeInsets.symmetric(
+            horizontal: isMobile ? 6 : 2,
+            vertical: isMobile ? 6 : 2,
+          ),
           child: Text(
             label,
             style: TextStyle(
-              fontSize: 11,
+              fontSize: isMobile ? 12.5 : 11,
               fontWeight: FontWeight.w500,
               color: color,
             ),
@@ -1465,13 +1553,17 @@ class _DrawerScreenState extends State<DrawerScreen> {
       );
     }
 
+    final isMobile = c.windowService.isMobile;
     final listView = ListView.separated(
-      physics: c.windowService.isMobile
-          ? const AlwaysScrollableScrollPhysics()
-          : null,
-      padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+      physics: isMobile ? const AlwaysScrollableScrollPhysics() : null,
+      padding: EdgeInsets.fromLTRB(
+        isMobile ? 14 : 12,
+        isMobile ? 6 : 4,
+        isMobile ? 14 : 12,
+        isMobile ? 12 : 8,
+      ),
       itemCount: visibleItems.length,
-      separatorBuilder: (_, _) => const SizedBox(height: 6),
+      separatorBuilder: (_, _) => SizedBox(height: isMobile ? 8 : 6),
       itemBuilder: (context, index) {
         final item = visibleItems[index];
         final localPath = c.localFilePaths[item.id];
@@ -1498,7 +1590,39 @@ class _DrawerScreenState extends State<DrawerScreen> {
           },
         );
 
-        if (!c.windowService.isMobile &&
+        if (isMobile && !_selectionMode) {
+          return Dismissible(
+            key: ValueKey('mobile_item_${item.id}'),
+            direction: DismissDirection.endToStart,
+            background: Container(
+              alignment: Alignment.centerRight,
+              padding: const EdgeInsets.symmetric(horizontal: 18),
+              decoration: BoxDecoration(
+                color: MacPalette.red.withValues(alpha: 0.85),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(CupertinoIcons.trash, size: 16, color: Colors.white),
+                  SizedBox(width: 6),
+                  Text(
+                    '移出抽屉',
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            onDismissed: (_) => unawaited(c.deleteItem(item.id)),
+            child: tile,
+          );
+        }
+
+        if (!isMobile &&
             !_selectionMode &&
             localPath != null &&
             item.kind == 'file') {
@@ -1767,6 +1891,8 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
         cleanDeviceName,
     ];
 
+    final isMobile = c.windowService.isMobile;
+    final actionBox = isMobile ? 34.0 : 26.0;
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
@@ -1777,12 +1903,15 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
         behavior: HitTestBehavior.opaque,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 120),
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+          padding: EdgeInsets.symmetric(
+            horizontal: isMobile ? 12 : 10,
+            vertical: isMobile ? 11 : 9,
+          ),
           decoration: BoxDecoration(
             color: widget.selected
                 ? MacPalette.accent.withValues(alpha: 0.16)
                 : (_hovered ? MacPalette.cardHoverBg : MacPalette.cardBg),
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(isMobile ? 12 : 10),
             border: Border.all(
               color: widget.selected
                   ? MacPalette.accent.withValues(alpha: 0.65)
@@ -1799,7 +1928,7 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                       widget.selected
                           ? CupertinoIcons.checkmark_circle_fill
                           : CupertinoIcons.circle,
-                      size: 17,
+                      size: isMobile ? 20 : 17,
                       color: widget.selected
                           ? MacPalette.accent
                           : MacPalette.textTertiary,
@@ -1818,15 +1947,15 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                     children: [
                       Text(
                         item.name,
-                        style: const TextStyle(
-                          fontSize: 12.5,
+                        style: TextStyle(
+                          fontSize: isMobile ? 13.5 : 12.5,
                           fontWeight: FontWeight.w500,
                           color: MacPalette.textPrimary,
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      const SizedBox(height: 2),
+                      SizedBox(height: isMobile ? 3 : 2),
                       Row(
                         children: [
                           Container(
@@ -1845,8 +1974,8 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                           Expanded(
                             child: Text(
                               metaParts.join(' · '),
-                              style: const TextStyle(
-                                fontSize: 10.5,
+                              style: TextStyle(
+                                fontSize: isMobile ? 11.5 : 10.5,
                                 color: MacPalette.textSecondary,
                               ),
                               maxLines: 1,
@@ -1864,13 +1993,15 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                     MacIconButton(
                       icon: CupertinoIcons.link,
                       tooltip: '创建外链分享',
-                      size: 13.5,
+                      size: isMobile ? 16 : 13.5,
+                      boxSize: actionBox,
                       onPressed: widget.onShare,
                     ),
                     MacIconButton(
                       icon: CupertinoIcons.doc_on_doc,
                       tooltip: '复制文本',
-                      size: 14,
+                      size: isMobile ? 16.5 : 14,
+                      boxSize: actionBox,
                       onPressed: () {
                         Clipboard.setData(
                           ClipboardData(text: item.textContent ?? item.name),
@@ -1882,14 +2013,16 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                     MacIconButton(
                       icon: CupertinoIcons.link,
                       tooltip: '创建外链分享',
-                      size: 13.5,
+                      size: isMobile ? 16 : 13.5,
+                      boxSize: actionBox,
                       onPressed: widget.onShare,
                     ),
                     if (isMine && !item.cloudReady && localPath != null)
                       MacIconButton(
                         icon: CupertinoIcons.cloud_upload,
                         tooltip: '转存到云盘 (离线可下)',
-                        size: 14.5,
+                        size: isMobile ? 17 : 14.5,
+                        boxSize: actionBox,
                         onPressed: () => c.cacheItemToCloud(item.id, localPath),
                       ),
                     if (localPath != null && c.windowService.supportsEdgeDrawer) ...[
@@ -1913,11 +2046,12 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                         size: 14.5,
                         onPressed: () => c.windowService.revealInFinder(localPath),
                       ),
-                    ] else if (localPath != null && c.windowService.isMobile) ...[
+                    ] else if (localPath != null && isMobile) ...[
                       MacIconButton(
                         icon: CupertinoIcons.share,
                         tooltip: '系统分享 / 其他应用打开',
-                        size: 15,
+                        size: 17.5,
+                        boxSize: actionBox,
                         onPressed: () async {
                           final ok = await c.windowService
                               .shareFilesNative([localPath]);
@@ -1929,7 +2063,8 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                         icon: CupertinoIcons.arrow_down_circle,
                         tooltip: item.canP2p ? 'P2P 优先下载' : '从云端下载',
                         color: MacPalette.textPrimary,
-                        size: 16,
+                        size: isMobile ? 19 : 16,
+                        boxSize: actionBox,
                         onPressed: () => c.downloadItem(item),
                       ),
                   ],
