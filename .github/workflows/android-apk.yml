@@ -35,9 +35,7 @@ jobs:
       - name: Install Android Rust targets & cargo-ndk
         run: |
           rustup target add aarch64-linux-android armv7-linux-androideabi
-
-      - name: Install prebuilt cargo-ndk
-        uses: taiki-e/install-action@cargo-ndk
+          cargo install cargo-ndk --locked
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
