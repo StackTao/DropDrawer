@@ -16,15 +16,18 @@ class LocalNodeInfo {
   final String nodeId;
   final String? relayUrl;
   final List<String> directAddrs;
+  final Map<String, String> readyFiles;
 
   LocalNodeInfo({
     required this.nodeId,
     this.relayUrl,
     required this.directAddrs,
+    this.readyFiles = const {},
   });
 
   factory LocalNodeInfo.fromJson(Map<String, dynamic> json) => LocalNodeInfo(
         nodeId: json['node_id'] as String,
+        readyFiles: Map<String, String>.from(json['ready_files'] as Map? ?? {}),
         relayUrl: json['relay_url'] as String?,
         directAddrs: (json['direct_addrs'] as List<dynamic>? ?? [])
             .map((e) => e.toString())
@@ -207,6 +210,7 @@ class P2pFfiBridge {
     required String transferToken,
     required String destPath,
     bool skipLegacyResume = false,
+    String? replicaHash,
   }) {
     final result = _callJson(_downloadFile!, {
       'item_id': itemId,
@@ -216,6 +220,7 @@ class P2pFfiBridge {
       'transfer_token': transferToken,
       'dest_path': destPath,
       'skip_legacy_resume': skipLegacyResume,
+      'replica_hash': ?replicaHash,
     });
     return result['data'] as String;
   }

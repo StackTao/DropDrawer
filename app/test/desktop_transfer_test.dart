@@ -32,7 +32,8 @@ class Bridge extends P2pFfiBridge {
     bool disableRelay = false,
   }) => nodeInfo();
   @override
-  LocalNodeInfo nodeInfo() => LocalNodeInfo(nodeId: 'local', directAddrs: []);
+  LocalNodeInfo nodeInfo() => address;
+  LocalNodeInfo address = LocalNodeInfo(nodeId: 'local', directAddrs: []);
   @override
   List<Map<String, dynamic>> pollEvents() {
     final batch = [...events];
@@ -49,6 +50,7 @@ class Bridge extends P2pFfiBridge {
     required String transferToken,
     required String destPath,
     bool skipLegacyResume = false,
+    String? replicaHash,
   }) {
     skippedLegacyResume = skipLegacyResume;
     return '${++sequence}';
@@ -125,7 +127,7 @@ void main() {
   });
 
   test(
-    'a late cancel retains ownership until the native terminal event',
+    'a connected client publishes new P2P addresses and retains a late download',
     () async {
       await HttpOverrides.runWithHttpOverrides(() async {
         final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -134,12 +136,20 @@ void main() {
         );
         final root = 'http://127.0.0.1:${server.port}';
         var plans = 0;
+        var offerReplica = false;
+        final preferences = <String?>[];
         WebSocket? socket;
+        final addresses = <List<dynamic>>[];
         server.listen((r) async {
           final path = r.uri.path;
           if (path == '/ws') {
             socket = await WebSocketTransformer.upgrade(r);
-            socket!.listen((_) {});
+            socket!.listen((message) {
+              final event = jsonDecode(message as String);
+              if (event['type'] == 'update_node_addr') {
+                addresses.add(event['payload']['direct_addrs'] as List<dynamic>);
+              }
+            });
             return;
           }
           await r.drain<void>();
@@ -153,12 +163,15 @@ void main() {
             };
           } else if (path.endsWith('download-plan')) {
             plans++;
+            preferences.add(r.uri.queryParameters['prefer_replica']);
             body = {
               'item_id': 'item',
               'p2p': {
                 'device_id': 'src',
                 'iroh_node_id': 'fake',
                 'transfer_token': 'test',
+                if (offerReplica && preferences.last == 'true')
+                  'replica_hash': 'fixture-hash',
               },
               'cloud': {
                 'url': '/data',
@@ -206,7 +219,7 @@ void main() {
             }),
           ];
           Future<void> until(bool Function() predicate) async {
-            for (var i = 0; i < 100; i++) {
+            for (var i = 0; i < 200; i++) {
               if (predicate()) return;
               await Future<void>.delayed(const Duration(milliseconds: 30));
             }
@@ -231,6 +244,25 @@ void main() {
           expect(await dest.exists(), true);
           expect(ctrl.localFilePaths[item.id], dest.path);
           expect(ctrl.activeTransfers[item.id]?.finished, true);
+
+          await until(() => addresses.isNotEmpty);
+          expect(addresses.single, isEmpty);
+          ctrl.p2p.address = LocalNodeInfo(
+            nodeId: 'local',
+            relayUrl: 'https://relay.example',
+            directAddrs: ['192.0.2.5:1234'],
+          );
+          await until(() => addresses.length == 2);
+          expect(addresses.last, ['192.0.2.5:1234']);
+
+          offerReplica = true;
+          await ctrl.downloadItem(item);
+          ctrl.p2p.events.add({
+            'item_id': 'item', 'transfer_id': '2',
+            'finished': true, 'error': 'LAN replica unreachable',
+          });
+          await until(() => ctrl.p2p.sequence == 3);
+          expect(preferences, ['true', 'true', 'false']);
         } finally {
           await ctrl.logout();
           await socket?.close();

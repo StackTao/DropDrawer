@@ -236,6 +236,119 @@ async fn test_replaced_websocket_cannot_mark_device_offline() {
 }
 
 #[tokio::test]
+async fn same_account_lan_replica_requires_original_digest_and_a_live_session() {
+    use futures_util::SinkExt;
+    use tokio_tungstenite::{connect_async, tungstenite::Message};
+
+    let (app, state, _tmp) = spawn_test_server().await;
+    let (_, auth): (_, AuthResponse) = send_json(
+        &app,
+        "POST",
+        "/api/auth/register",
+        None,
+        Some(json!({"username": "replica-test", "password": "test-password"})),
+    )
+    .await;
+    let token = Some(auth.token.as_str());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let router = app.clone();
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let mut peers = Vec::new();
+    for (name, ip) in [
+        ("source", "10.1.1.1"),
+        ("copy", "192.168.1.2"),
+        ("phone", "192.168.1.3"),
+    ] {
+        let (_, device): (_, DeviceInfo) = send_json(
+            &app,
+            "POST",
+            "/api/devices",
+            token,
+            Some(
+                json!({"name":name, "platform":"android", "iroh_node_id":name,
+                "direct_addrs":[format!("{ip}:1234")]}),
+            ),
+        )
+        .await;
+        let url = format!(
+            "ws://127.0.0.1:{port}/ws?token={}&device_id={}",
+            auth.token, device.id
+        );
+        let (ws, _) = connect_async(url).await.unwrap();
+        peers.push((device.id, ws));
+    }
+    let (_, item): (_, DrawerItem) = send_json(&app, "POST", "/api/drawer/items", token,
+        Some(json!({"device_id":peers[0].0, "kind":"file", "name":"test", "size":4, "transfer_mode":"p2p_only"}))).await;
+    let path = format!(
+        "/api/drawer/items/{}/download-plan?requester_device_id={}",
+        item.id, peers[2].0
+    );
+    let get = |prefer| {
+        let url = format!("{path}&prefer_replica={prefer}");
+        let app = &app;
+        async move {
+            send_json::<DownloadPlan>(app, "GET", &url, token, None)
+                .await
+                .1
+                .p2p
+        }
+    };
+    let hash = "a".repeat(64);
+    let advertise = |hash: &str| {
+        Message::text(
+            json!({"type":"update_ready_files",
+        "payload":{"files":{item.id.clone():hash}}})
+            .to_string(),
+        )
+    };
+    peers[1].1.send(advertise(&hash)).await.unwrap();
+    // A ping/pong after the report is a barrier on the same WebSocket.
+    async fn sync(
+        ws: &mut tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+    ) {
+        ws.send(Message::text(r#"{"type":"ping"}"#)).await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            while let Some(Ok(Message::Text(m))) = ws.next().await {
+                if serde_json::from_str::<serde_json::Value>(&m).unwrap()["type"] == "pong" {
+                    return;
+                }
+            }
+            panic!("session closed");
+        })
+        .await
+        .unwrap()
+    }
+    sync(&mut peers[1].1).await;
+    assert_eq!(get(true).await.unwrap().device_id, peers[0].0); // unconfirmed digest
+    peers[0].1.send(advertise(&hash)).await.unwrap();
+    sync(&mut peers[0].1).await;
+    let replica = get(true).await.unwrap();
+    assert_eq!(replica.device_id, peers[1].0);
+    assert_eq!(replica.replica_hash.as_ref(), Some(&hash));
+    assert_eq!(replica.direct_addrs, ["192.168.1.2:1234"]);
+    assert_eq!(get(false).await.unwrap().device_id, peers[0].0);
+    peers[1].1.send(advertise(&"b".repeat(64))).await.unwrap();
+    sync(&mut peers[1].1).await;
+    assert_eq!(get(true).await.unwrap().device_id, peers[0].0);
+    peers[1].1.send(advertise(&hash)).await.unwrap();
+    sync(&mut peers[1].1).await;
+    peers[0].1.close(None).await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        while state.is_device_online(&auth.user.id, &peers[0].0) {
+            tokio::task::yield_now().await;
+        }
+    }).await.unwrap();
+    assert_eq!(get(true).await.unwrap().device_id, peers[1].0);
+    assert!(get(false).await.is_none());
+    peers[1].1.close(None).await.unwrap();
+    peers[2].1.close(None).await.unwrap();
+    server.abort();
+}
+
+#[tokio::test]
 async fn test_auth_device_local_storage_and_ttl_cleanup() {
     let (app, state, _tmp) = spawn_test_server().await;
 

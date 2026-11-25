@@ -358,9 +358,10 @@ class ApiClient {
   Future<DownloadPlan> getDownloadPlan(
     String itemId, {
     required String requesterDeviceId,
+    bool preferReplica = true,
   }) async {
     final uri = Uri.parse(
-      '$_cleanBase/api/drawer/items/$itemId/download-plan?requester_device_id=${Uri.encodeQueryComponent(requesterDeviceId)}',
+      '$_cleanBase/api/drawer/items/$itemId/download-plan?prefer_replica=$preferReplica&requester_device_id=${Uri.encodeQueryComponent(requesterDeviceId)}',
     );
     final resp = await http.get(uri, headers: _headers());
     _check(resp);

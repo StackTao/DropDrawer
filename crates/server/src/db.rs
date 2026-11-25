@@ -387,6 +387,7 @@ impl Database {
         let addrs_json: String = row.get(6)?;
         let last_seen: String = row.get(7)?;
         Ok(DeviceInfo {
+            replica_items: Vec::new(),
             id: row.get(0)?,
             user_id: row.get(1)?,
             name: row.get(2)?,
@@ -569,6 +570,40 @@ impl Database {
             ],
         )?;
         Ok(affected > 0)
+    }
+
+    /// Scope a session's complete files to this account. Only the original
+    /// device can establish an item's canonical digest for replica downloads.
+    pub fn ready_replicas(
+        &self,
+        user: &str,
+        device: &str,
+        files: &std::collections::BTreeMap<String, String>,
+    ) -> anyhow::Result<std::collections::BTreeMap<String, String>> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let mut replicas = std::collections::BTreeMap::new();
+        {
+            let mut catalog = tx.prepare("SELECT id, owner_device_id FROM drawer_items WHERE user_id = ?1")?;
+            let mut rows = catalog.query([user])?;
+            let mut set_hash = tx.prepare(
+                "UPDATE drawer_items SET blake3_hash = ?1 WHERE id = ?2 AND user_id = ?3
+                 AND (blake3_hash IS NULL OR blake3_hash = '')",
+            )?;
+            while let Some(row) = rows.next()? {
+                let id: String = row.get(0)?;
+                let Some(hash) = files.get(&id) else { continue };
+                if hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) { continue; }
+                let source: String = row.get(1)?;
+                if source == device {
+                    set_hash.execute(params![hash, id, user])?;
+                } else {
+                    replicas.insert(id, hash.clone());
+                }
+            }
+        }
+        tx.commit()?;
+        Ok(replicas)
     }
 
     pub fn get_drawer_item(

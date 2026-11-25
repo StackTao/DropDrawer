@@ -1,3 +1,6 @@
+#[cfg(target_os = "android")]
+mod android;
+
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::sync::{Arc, Mutex, OnceLock};

@@ -48,7 +48,9 @@ DropDrawer 将**控制面**与**数据面**解耦：
 ### 2.2 C-ABI FFI 接口 (`crates/p2p-core/src/ffi.rs`)
 所有函数返回堆分配的 UTF-8 JSON 字符串（`{"ok": bool, "data": ..., "error": ...}`），调用方必须通过 `dropdrawer_p2p_free_string` 释放：
 - `dropdrawer_p2p_start(config_json)`
-- `dropdrawer_p2p_node_info()`
+- `dropdrawer_p2p_node_info()` — WebSocket 连接时上报，此后仅在中继或直连候选变化时重发。Android 在 Application 启动时通过 JNI 提供系统 DNS 上下文，并将默认网络变化通知现有 iroh 节点。
+  - 安卓和 iOS 共用节点地址更新机制。iOS 通过 iroh 的 BSD 路由监听感知换网。原设备首次 QUIC 握手超时后，客户端重新发现同一节点并重试一次。
+  - 原设备上报 BLAKE3 后，服务端可为同账号在线设备上报的匹配副本签发单次令牌。下载方最多用 3 秒确认候选局域网地址上的 QUIC 直连，接收时核对原文件摘要。副本失败时重新请求原设备的授权，已取消的任务不会自动重试。
 - `dropdrawer_p2p_register_file(req_json)`：只做 `stat` 并按路径登记后立即返回（`blake3_hash` 为空字符串），BLAKE3 在后台计算（最多 2 个并发），首个拉取请求会等待其完成。
 - `dropdrawer_p2p_unregister_file(item_id)`
 - `dropdrawer_p2p_authorize_token(req_json)`：可选字段 `requester_node_id` 将 token 绑定到请求方节点；每次登记时顺带清理过期 token。

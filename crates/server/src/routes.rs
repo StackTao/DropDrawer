@@ -195,7 +195,7 @@ async fn register_device(
             &req.direct_addrs,
         )
         .map_err(internal_err)?;
-    device.online = state.is_device_online(&auth.user_id, &device.id);
+    state.fill_device_presence(&mut device);
     state.broadcast_user(&auth.user_id, WsEvent::DeviceUpdated(device.clone()));
     Ok(Json(device))
 }
@@ -734,7 +734,50 @@ async fn confirm_direct_upload(
 #[derive(Debug, Deserialize)]
 struct DownloadPlanQuery {
     #[serde(default)]
+    prefer_replica: bool,
+    #[serde(default)]
     requester_device_id: Option<String>,
+}
+
+// Private addresses can be routed on a wider LAN than /24. Prefer subnet
+// matches, and let QUIC authenticate the peer and confirm actual reachability.
+fn lan_candidates(requester: &[String], source: &[String]) -> (bool, Vec<String>) {
+    use std::net::{IpAddr, SocketAddr};
+    let ips: Vec<_> = requester
+        .iter()
+        .filter_map(|s| s.parse::<SocketAddr>().ok().map(|a| a.ip()))
+        .collect();
+    let mut same_prefix = false;
+    let mut addresses = Vec::new();
+    for address in source {
+        let Ok(socket) = address.parse::<SocketAddr>() else {
+            continue;
+        };
+        let mut usable = false;
+        for ip in &ips {
+            match (*ip, socket.ip()) {
+                (IpAddr::V4(a), IpAddr::V4(b)) if a != b && a.is_private() && b.is_private() => {
+                    usable = true;
+                    same_prefix |= a.octets()[..3] == b.octets()[..3];
+                }
+                (IpAddr::V6(a), IpAddr::V6(b))
+                    if a != b
+                        && !a.is_unicast_link_local()
+                        && !a.is_loopback()
+                        && !a.is_unspecified()
+                        && a.octets()[..8] == b.octets()[..8] =>
+                {
+                    usable = true;
+                    same_prefix = true;
+                }
+                _ => {}
+            }
+        }
+        if usable {
+            addresses.push(address.clone());
+        }
+    }
+    (same_prefix, addresses)
 }
 
 async fn get_download_plan(
@@ -750,48 +793,77 @@ async fn get_download_plan(
         .ok_or_else(|| (StatusCode::NOT_FOUND, "item not found".to_string()))?;
 
     let mut p2p = None;
-    if item.transfer_mode != TransferMode::CloudCached
-        && state.is_device_online(&auth.user_id, &item.owner_device_id)
-    {
-        if let Ok(Some(owner_dev)) = state.db.get_device(&item.owner_device_id, &auth.user_id) {
-            if let Some(node_id) = owner_dev.iroh_node_id {
-                let token = Uuid::new_v4().to_string();
-                let expires_at = Utc::now() + Duration::minutes(10);
-                let requester_node_id = query.requester_device_id.as_deref().and_then(|id| {
-                    state
-                        .db
-                        .get_device(id, &auth.user_id)
-                        .ok()
-                        .flatten()
-                        .and_then(|d| d.iroh_node_id)
-                });
-                // Pre-authorize this single-use transfer token on the source device over
-                // WebSocket. If the push cannot be queued the source would reject the
-                // pull, so only offer P2P when it was.
-                let pushed = state.send_to_device(
-                    &auth.user_id,
-                    &item.owner_device_id,
-                    WsEvent::AuthorizeP2pToken {
-                        item_id: item.id.clone(),
-                        token: token.clone(),
-                        requester_device_id: query
-                            .requester_device_id
-                            .clone()
-                            .unwrap_or_else(|| "unknown".to_string()),
-                        expires_at,
-                        requester_node_id,
-                    },
-                );
-                p2p = pushed.then(|| P2pSourceInfo {
-                    device_id: owner_dev.id,
+    if item.transfer_mode != TransferMode::CloudCached {
+        let devices = state
+            .list_devices_with_presence(&auth.user_id)
+            .map_err(internal_err)?;
+        let requester = devices
+            .iter()
+            .find(|d| Some(&d.id) == query.requester_device_id.as_ref());
+        let mut candidates = Vec::new();
+        if query.prefer_replica {
+            if let (Some(rx), Some(hash)) = (
+                requester.filter(|d| d.iroh_node_id.is_some()),
+                item.blake3_hash.as_deref(),
+            ) {
+                for d in devices
+                    .iter()
+                    .filter(|d| d.online && d.id != rx.id && d.id != item.owner_device_id)
+                {
+                    if !state
+                        .ready_files
+                        .get(&(auth.user_id.clone(), d.id.clone()))
+                        .is_some_and(|files| files.get(&id).is_some_and(|h| h == hash))
+                    {
+                        continue;
+                    }
+                    let (same_prefix, addresses) =
+                        lan_candidates(&rx.direct_addrs, &d.direct_addrs);
+                    if !addresses.is_empty() {
+                        candidates.push((!same_prefix, d, addresses, Some(hash.to_owned())));
+                    }
+                }
+            }
+        }
+        candidates.sort_by_key(|(less_likely, ..)| *less_likely);
+        if let Some(owner) = devices
+            .iter()
+            .find(|d| d.id == item.owner_device_id && d.online)
+        {
+            candidates.push((false, owner, owner.direct_addrs.clone(), None));
+        }
+        for (_, source, direct_addrs, replica_hash) in candidates {
+            let Some(node_id) = source.iroh_node_id.clone() else {
+                continue;
+            };
+            let token = Uuid::new_v4().to_string();
+            if state.send_to_device(
+                &auth.user_id,
+                &source.id,
+                WsEvent::AuthorizeP2pToken {
+                    item_id: id.clone(),
+                    token: token.clone(),
+                    requester_device_id: query
+                        .requester_device_id
+                        .clone()
+                        .unwrap_or_else(|| "unknown".into()),
+                    expires_at: Utc::now() + Duration::minutes(10),
+                    requester_node_id: requester.and_then(|d| d.iroh_node_id.clone()),
+                },
+            ) {
+                p2p = Some(P2pSourceInfo {
+                    device_id: source.id.clone(),
                     iroh_node_id: node_id,
-                    iroh_relay_url: owner_dev.iroh_relay_url,
-                    direct_addrs: owner_dev.direct_addrs,
+                    iroh_relay_url: source.iroh_relay_url.clone(),
+                    direct_addrs,
                     transfer_token: token,
+                    replica_hash,
                 });
+                break;
             }
         }
     }
+
 
     let mut cloud = None;
     if item.cloud_ready {
@@ -1642,6 +1714,7 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>, user_id: String, dev
 
     {
         let _presence = state.presence_changes.lock().await;
+        state.ready_files.remove(&key);
         state.connections.insert(key.clone(), tx.clone());
 
         if let (Ok(devices), Ok(items)) = (
@@ -1690,6 +1763,20 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>, user_id: String, dev
                 Ok(WsClientCommand::Ping) => {
                     let _ = tx.send(WsEvent::Pong);
                 }
+                Ok(WsClientCommand::UpdateReadyFiles { files }) => {
+                    let _presence = state.presence_changes.lock().await;
+                    if !is_current() {
+                        break;
+                    }
+                    let Ok(replicas) = state.db.ready_replicas(&user_id, &device_id, &files) else {
+                        continue;
+                    };
+                    state.ready_files.insert(key.clone(), replicas);
+                    if let Ok(Some(mut dev)) = state.db.get_device(&device_id, &user_id) {
+                        state.fill_device_presence(&mut dev);
+                        state.broadcast_user(&user_id, WsEvent::DeviceUpdated(dev));
+                    }
+                }
                 Ok(WsClientCommand::UpdateNodeAddr {
                     iroh_node_id,
                     iroh_relay_url,
@@ -1706,7 +1793,7 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>, user_id: String, dev
                         iroh_relay_url.as_deref(),
                         &direct_addrs,
                     ) {
-                        dev.online = true;
+                        state.fill_device_presence(&mut dev);
                         state.broadcast_user(&user_id, WsEvent::DeviceUpdated(dev));
                     }
                 }
@@ -1724,6 +1811,7 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>, user_id: String, dev
         .remove_if(&key, |_, current| current.same_channel(&tx))
         .is_some()
     {
+        state.ready_files.remove(&key);
         if let Ok(Some(mut dev)) = state.db.get_device(&device_id, &user_id) {
             dev.online = false;
             state.broadcast_user(&user_id, WsEvent::DeviceUpdated(dev));

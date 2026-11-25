@@ -36,6 +36,7 @@ pub struct AppState {
     pub default_local_storage_dir: PathBuf,
     /// Active WebSocket connections keyed by `(user_id, device_id)`.
     pub connections: DashMap<(String, String), mpsc::UnboundedSender<WsEvent>>,
+    pub(crate) ready_files: DashMap<(String, String), std::collections::BTreeMap<String, String>>,
     // Order connection replacement, removal and the corresponding presence events.
     pub(crate) presence_changes: Mutex<()>,
     item_mutations: DashMap<String, Weak<Mutex<()>>>,
@@ -115,6 +116,7 @@ impl AppState {
             jwt_secret,
             default_local_storage_dir,
             connections: DashMap::new(),
+            ready_files: DashMap::new(),
             presence_changes: Mutex::new(()),
             item_mutations: DashMap::new(),
             google_login: google_config.map(GoogleLogin::new),
@@ -193,10 +195,19 @@ impl AppState {
             .is_some_and(|tx| !tx.is_closed())
     }
 
+    pub(crate) fn fill_device_presence(&self, device: &mut DeviceInfo) {
+        device.online = self.is_device_online(&device.user_id, &device.id);
+        device.replica_items = self
+            .ready_files
+            .get(&(device.user_id.clone(), device.id.clone()))
+            .map(|files| files.keys().cloned().collect())
+            .unwrap_or_default();
+    }
+
     pub fn list_devices_with_presence(&self, user_id: &str) -> anyhow::Result<Vec<DeviceInfo>> {
         let mut devices = self.db.list_devices(user_id)?;
         for d in &mut devices {
-            d.online = self.is_device_online(user_id, &d.id);
+            self.fill_device_presence(d);
         }
         Ok(devices)
     }

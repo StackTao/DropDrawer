@@ -114,6 +114,8 @@ pub struct DeviceInfo {
     pub iroh_relay_url: Option<String>,
     #[serde(default)]
     pub direct_addrs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub replica_items: Vec<String>,
     pub online: bool,
     pub last_seen_at: DateTime<Utc>,
 }
@@ -330,6 +332,8 @@ pub struct P2pSourceInfo {
     pub direct_addrs: Vec<String>,
     /// Short-lived token that receiver presents to sender over QUIC to authorize pulling this item.
     pub transfer_token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replica_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -429,6 +433,9 @@ pub enum WsEvent {
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum WsClientCommand {
     Ping,
+    UpdateReadyFiles {
+        files: std::collections::BTreeMap<String, String>,
+    },
     UpdateNodeAddr {
         iroh_node_id: String,
         iroh_relay_url: Option<String>,

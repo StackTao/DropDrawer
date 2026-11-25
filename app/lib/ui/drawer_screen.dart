@@ -2209,14 +2209,14 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
             relativeTimeLabel(item.createdAt),
             if (hasDevice) '来自 $cleanDeviceName',
             // Text lives on the server, so it never depends on the source device.
-            if (item.kind == 'file' && !item.canP2p && !item.cloudReady)
+            if (item.kind == 'file' && !c.canDownloadP2p(item) && !item.cloudReady)
               '来源离线',
           ]
         : <String>[
             formatBytes(item.size),
-            if (item.canP2p && item.cloudReady)
+            if (c.canDownloadP2p(item) && item.cloudReady)
               'P2P · 云端'
-            else if (item.canP2p)
+            else if (c.canDownloadP2p(item))
               'P2P 直连'
             else if (item.cloudReady)
               item.storageBackendName ?? '已存云盘'
@@ -2301,7 +2301,7 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                             margin: EdgeInsets.only(right: isMobile ? 6 : 5),
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              color: item.canP2p
+                              color: c.canDownloadP2p(item)
                                   ? MacPalette.green
                                   : (item.cloudReady
                                       ? MacPalette.accent
@@ -2411,7 +2411,7 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                     ] else
                       MacIconButton(
                         icon: CupertinoIcons.arrow_down_circle,
-                        tooltip: item.canP2p ? 'P2P 优先下载' : '从云端下载',
+                        tooltip: c.canDownloadP2p(item) ? 'P2P 优先下载' : '从云端下载',
                         color: MacPalette.textPrimary,
                         size: isMobile ? 19 : 16,
                         boxSize: actionBox,
@@ -2481,6 +2481,7 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                   'preparing' => '正在准备下载',
                   'upload' => '正在上传到云盘',
                   'p2p_connecting' => '正在建立 P2P 连接',
+                  'p2p_replica' => 'P2P 局域网副本',
                   'p2p_direct' => 'P2P 端到端直连',
                   'p2p_relay' => 'P2P 加密中继',
                   _ => '云端高速下载',

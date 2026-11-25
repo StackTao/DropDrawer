@@ -28,6 +28,9 @@ class DropDrawerController extends ChangeNotifier {
   StreamSubscription<dynamic>? _wsSub;
   Timer? _p2pPollTimer;
   Timer? _wsReconnectTimer;
+  Timer? _nodeAddressTimer;
+  Map<String, String> _publishedFiles = const {};
+  final Set<String> _replicaDownloads = {};
   int _deviceRevision = 0;
 
   String serverUrl = 'http://127.0.0.1:8080';
@@ -104,6 +107,10 @@ class DropDrawerController extends ChangeNotifier {
   }
 
   bool get isLoggedIn => token != null && user != null;
+  bool canDownloadP2p(DrawerItem item) => item.canP2p ||
+      (item.transferMode != 'cloud_cached' && devices.any((d) =>
+          d.id != deviceId && d.online && d.replicaItems.contains(item.id)));
+
   int get onlineDeviceCount => displayedDevices.where((d) => d.online).length;
 
   List<DeviceInfo> get displayedDevices {
@@ -270,6 +277,7 @@ class DropDrawerController extends ChangeNotifier {
       _activeCancelTokens.remove(id);
     }
     _p2pDownloadIds.clear();
+    _replicaDownloads.clear();
     _cancellingSends.clear();
     outgoingTransfers.clear();
     activeTransfers.clear();
@@ -369,6 +377,8 @@ class DropDrawerController extends ChangeNotifier {
       }
       return;
     }
+    final channel = _ws;
+    if (wsConnected && channel != null) _publishNodeAddress(channel);
     await manualRefresh();
     if (windowService.isMobile) {
       await checkPendingMobileShares();
@@ -459,6 +469,7 @@ class DropDrawerController extends ChangeNotifier {
       final itemId = ev['item_id'] as String;
       final pathKind = ev['path_kind'] as String? ?? 'unknown';
       final channel = switch (pathKind) {
+        'direct' when ev['sending_to'] == null && _replicaDownloads.contains(itemId) => 'p2p_replica',
         'direct' => 'p2p_direct',
         'relay' => 'p2p_relay',
         _ => _tracksLiveP2pPath ? 'p2p_connecting' : 'p2p_relay',
@@ -499,6 +510,7 @@ class DropDrawerController extends ChangeNotifier {
       if (_p2pDownloadIds[itemId] != transferId) continue;
       final token = _activeCancelTokens[itemId];
       if (finished || savedPath != null) structural = true;
+      final wasReplica = finished && _replicaDownloads.remove(itemId);
       if (finished) {
         _p2pDownloadIds.remove(itemId);
         _activeCancelTokens.remove(itemId);
@@ -516,11 +528,14 @@ class DropDrawerController extends ChangeNotifier {
       }
       if (finished && err != null) {
         final item = items.where((i) => i.id == itemId).firstOrNull;
-        if (item != null && item.cloudReady && token?.isCancelled != true) {
+        if (item != null && wasReplica && token?.isCancelled != true) {
+          unawaited(downloadItem(item, preferReplica: false));
+        } else if (item != null && item.cloudReady && token?.isCancelled != true) {
           unawaited(downloadItem(item, cloudOnly: true));
         }
       } else if (finished && savedPath != null) {
         final transport = switch (channel) {
+          'p2p_replica' => '局域网副本',
           'p2p_direct' => 'P2P Direct',
           'p2p_relay' => 'P2P Relay',
           _ => 'P2P',
@@ -562,23 +577,47 @@ class DropDrawerController extends ChangeNotifier {
     notifyListeners();
     if (!p2pReady) return;
 
-    // Let the P2P node discover its relay and direct addresses.
-    await Future<void>.delayed(const Duration(milliseconds: 900));
+    _publishNodeAddress(channel, force: true);
+    _nodeAddressTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      _publishNodeAddress(channel);
+    });
+  }
+
+  void _publishNodeAddress(WebSocketChannel channel, {bool force = false}) {
     if (!p2pReady || !identical(_ws, channel)) return;
     try {
-      localNodeInfo = p2p.nodeInfo();
+      final info = p2p.nodeInfo();
+      final visible = {for (final item in items) item.id};
+      final files = Map<String, String>.fromEntries(
+        info.readyFiles.entries.where((entry) => visible.contains(entry.key)),
+      );
+      if (force || !mapEquals(_publishedFiles, files)) {
+        channel.sink.add(jsonEncode({
+          'type': 'update_ready_files',
+          'payload': {'files': files},
+        }));
+        _publishedFiles = files;
+      }
+      final previous = localNodeInfo;
+      if (!force && previous?.nodeId == info.nodeId &&
+          previous?.relayUrl == info.relayUrl &&
+          listEquals(previous?.directAddrs, info.directAddrs)) {
+        return;
+      }
       channel.sink.add(jsonEncode({
         'type': 'update_node_addr',
         'payload': {
-          'iroh_node_id': localNodeInfo!.nodeId,
-          'iroh_relay_url': localNodeInfo!.relayUrl,
-          'direct_addrs': localNodeInfo!.directAddrs,
+          'iroh_node_id': info.nodeId,
+          'iroh_relay_url': info.relayUrl,
+          'direct_addrs': info.directAddrs,
         },
       }));
+      localNodeInfo = info;
     } catch (_) {}
   }
 
   void _closeWs() {
+    _nodeAddressTimer?.cancel();
     final channel = _ws;
     _ws = null;
     final subscription = _wsSub;
@@ -959,7 +998,10 @@ class DropDrawerController extends ChangeNotifier {
   }
 
   /// Downloads an item using P2P-first strategy, automatically falling back to cloud storage.
-  Future<void> downloadItem(DrawerItem item, {bool cloudOnly = false}) async {
+  Future<void> downloadItem(DrawerItem item, {
+    bool cloudOnly = false,
+    bool preferReplica = true,
+  }) async {
     if (_api == null || deviceId == null ||
         _activeCancelTokens.containsKey(item.id)) {
       return;
@@ -995,6 +1037,7 @@ class DropDrawerController extends ChangeNotifier {
       final plan = await _api!.getDownloadPlan(
         item.id,
         requesterDeviceId: deviceId!,
+        preferReplica: preferReplica && !cloudOnly,
       );
       if (cancel.isCancelled) return;
 
@@ -1006,10 +1049,12 @@ class DropDrawerController extends ChangeNotifier {
           remoteRelayUrl: plan.p2p!.irohRelayUrl,
           remoteDirectAddrs: plan.p2p!.directAddrs,
           transferToken: plan.p2p!.transferToken,
+          replicaHash: plan.p2p!.replicaHash,
           destPath: destPath,
           skipLegacyResume: _legacyNameIsShared(item, destPath),
         );
         _p2pDownloadIds[item.id] = id;
+        if (plan.p2p!.replicaHash != null) _replicaDownloads.add(item.id);
         cancel.attach(() {
           try {
             p2p.cancelTransfer(id);
@@ -1096,6 +1141,11 @@ class DropDrawerController extends ChangeNotifier {
       );
 
       localFilePaths[itemId] = saved;
+      if (p2pReady) {
+        try {
+          p2p.registerFile(itemId, saved);
+        } catch (_) {}
+      }
       unawaited(_persistLocalFilePaths());
       activeTransfers[itemId] = TransferProgress(
         itemId: itemId,
@@ -1140,7 +1190,7 @@ class DropDrawerController extends ChangeNotifier {
   /// Batch downloads the given file items (or all downloadable files in drawer).
   Future<void> batchDownloadItems(List<DrawerItem> targets) async {
     final files = targets
-        .where((it) => it.kind == 'file' && (it.canP2p || it.cloudReady))
+        .where((it) => it.kind == 'file' && (canDownloadP2p(it) || it.cloudReady))
         .toList();
     if (files.isEmpty) {
       statusBanner = '没有可下载的文件（纯文本或离线未上云文件已跳过）';

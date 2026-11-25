@@ -261,9 +261,9 @@ class ItemPreviewView extends StatelessWidget {
       if (item.ownerDeviceName != null) ('来源设备', item.ownerDeviceName!),
       (
         '传输状态',
-        item.canP2p && item.cloudReady
+        controller.canDownloadP2p(item) && item.cloudReady
             ? 'P2P 直连 + ${item.storageBackendName ?? '云端缓存'}'
-            : (item.canP2p
+            : (controller.canDownloadP2p(item)
                 ? '仅 P2P 端到端直连'
                 : (item.cloudReady
                     ? (item.storageBackendName ?? '已存云盘')
@@ -356,6 +356,7 @@ class ItemPreviewView extends StatelessWidget {
                     'preparing' => '正在准备下载',
                     'upload' => '正在上传到云盘',
                     'p2p_connecting' => '正在建立 P2P 连接',
+                    'p2p_replica' => 'P2P 局域网副本',
                     'p2p_direct' => 'P2P 端到端直连',
                     'p2p_relay' => 'P2P 加密中继',
                     _ => '云端高速下载',
@@ -489,7 +490,7 @@ class ItemPreviewView extends StatelessWidget {
         ] else
           _primaryButton(
             icon: CupertinoIcons.arrow_down_circle,
-            label: item.canP2p ? 'P2P 优先下载' : '云端下载',
+            label: controller.canDownloadP2p(item) ? 'P2P 优先下载' : '云端下载',
             onTap: () => c.downloadItem(item),
           ),
         if (isMine && !item.cloudReady && localPath != null)

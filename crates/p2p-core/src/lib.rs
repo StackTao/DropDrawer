@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 use dashmap::{DashMap, DashSet};
+use futures_util::StreamExt;
 use iroh::{
     Endpoint, EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr,
     endpoint::{Connection, ConnectionError, RelayMode, StoppedError, VarInt},
@@ -48,6 +49,8 @@ pub struct LocalNodeInfo {
     pub node_id: String,
     pub relay_url: Option<String>,
     pub direct_addrs: Vec<String>,
+    #[serde(default)]
+    pub ready_files: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,6 +168,8 @@ struct DownloadFileReq {
     remote_relay_url: Option<String>,
     #[serde(default)]
     remote_direct_addrs: Vec<String>,
+    #[serde(default)]
+    replica_hash: Option<String>,
     transfer_token: String,
     dest_path: PathBuf,
     #[serde(default)]
@@ -264,6 +269,15 @@ impl P2pNode {
             node_id: self.endpoint.id().to_string(),
             relay_url,
             direct_addrs,
+            ready_files: self
+                .source
+                .shared_files
+                .iter()
+                .filter_map(|entry| {
+                    let (_, hash) = entry.digest.get()?;
+                    Some((entry.key().clone(), hash.clone()))
+                })
+                .collect(),
         }
     }
 
@@ -371,6 +385,7 @@ impl P2pNode {
                 remote_node_id,
                 remote_relay_url,
                 remote_direct_addrs,
+                replica_hash: None,
                 transfer_token,
                 dest_path,
                 skip_legacy_resume: false,
@@ -387,6 +402,77 @@ impl P2pNode {
         let result = self.receive_file(&mut transfer, req).await;
         transfer.finish(&result);
         result.map(|()| transfer.progress.clone())
+    }
+
+    async fn connect_source(
+        &self,
+        addr: &EndpointAddr,
+        replica: bool,
+    ) -> anyhow::Result<Connection> {
+        if replica {
+            // Two unrelated Wi-Fi networks can use the same subnet. Verify the
+            // selected socket before sending the single-use file request.
+            return tokio::time::timeout(Duration::from_secs(3), async {
+                let conn = self.endpoint.connect(addr.clone(), DROPDRAWER_ALPN).await?;
+                while !conn.paths().iter().any(|path| {
+                    path.is_selected()
+                        && matches!(path.remote_addr(), TransportAddr::Ip(ip)
+                        if addr.ip_addrs().any(|candidate| candidate == ip))
+                }) {
+                    tokio::select! {
+                        _ = conn.closed() => anyhow::bail!("LAN replica connection closed"),
+                        _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+                    }
+                }
+                Ok(conn)
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!("LAN replica unreachable"))?;
+        }
+
+        use iroh::endpoint::{ConnectError, ConnectingError};
+        let first = self.endpoint.connect(addr.clone(), DROPDRAWER_ALPN).await;
+        let timed_out = matches!(
+            &first,
+            Err(ConnectError::Connection {
+                source: ConnectionError::TimedOut,
+                ..
+            }) | Err(ConnectError::Connecting {
+                source: ConnectingError::ConnectionError {
+                    source: ConnectionError::TimedOut,
+                    ..
+                },
+                ..
+            })
+        );
+        if !timed_out {
+            return first.map_err(|e| anyhow::anyhow!("P2P connection: {e}"));
+        }
+
+        // The signaling snapshot may predate a network change on either peer.
+        // Rediscover the same node and retry once, before a file token is used.
+        self.endpoint.network_change().await;
+        let lookup = async {
+            let mut results = self.endpoint.address_lookup().ok()?.resolve(addr.id);
+            while let Some(result) = results.next().await {
+                if let Ok(Ok(item)) = result {
+                    let fresh = item.into_endpoint_addr();
+                    if fresh.id == addr.id && !fresh.addrs.is_empty() {
+                        return Some(fresh);
+                    }
+                }
+            }
+            None
+        };
+        let fresh = tokio::time::timeout(Duration::from_secs(3), lookup)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| addr.clone());
+        self.endpoint
+            .connect(fresh, DROPDRAWER_ALPN)
+            .await
+            .map_err(|e| anyhow::anyhow!("P2P connection after rediscovery: {e}"))
     }
 
     async fn receive_file(
@@ -412,7 +498,7 @@ impl P2pNode {
         let conn = tokio::select! {
             biased;
             _ = &mut transfer.cancel => return Err(Cancelled.into()),
-            conn = self.endpoint.connect(remote_addr.clone(), DROPDRAWER_ALPN) => conn?,
+            conn = self.connect_source(&remote_addr, req.replica_hash.is_some()) => conn?,
         };
 
         let progress = &mut transfer.progress;
@@ -475,7 +561,9 @@ impl P2pNode {
             write_frame(&mut send, &serde_json::to_vec(&req_header)?).await?;
             send.finish()?;
 
-            let resp_bytes = read_frame(&mut recv).await?;
+            let resp_bytes = read_frame(&mut recv)
+                .await
+                .map_err(|e| anyhow::anyhow!("waiting for P2P source: {e}"))?;
             let resp_header: PullResponseHeader = serde_json::from_slice(&resp_bytes)?;
             if !resp_header.ok {
                 anyhow::bail!(
@@ -484,6 +572,12 @@ impl P2pNode {
                 );
             }
 
+            if let Some(expected) = &req.replica_hash {
+                anyhow::ensure!(
+                    expected == &resp_header.blake3_hash,
+                    "replica content has changed"
+                );
+            }
             if resp_header.resumed_legacy {
                 let prefix = req_header
                     .legacy_prefix
@@ -543,7 +637,7 @@ impl P2pNode {
                     read = recv.read(&mut buf) => read,
                 };
 
-                match read? {
+                match read.map_err(|e| anyhow::anyhow!("receiving P2P file: {e}"))? {
                     Some(n) if n > 0 => {
                         anyhow::ensure!(
                             offset + n as u64 <= total_bytes,
@@ -616,6 +710,15 @@ impl P2pNode {
         }
         progress.bytes_transferred = total_bytes;
         progress.speed_bps = 0;
+        // Only publish files after the digest check and final rename succeeded.
+        let digest = OnceCell::new_with(Some((actual_size, actual_hash)));
+        self.source.shared_files.insert(
+            progress.item_id.clone(),
+            SharedFileEntry {
+                path: dest_path.clone(),
+                digest: Arc::new(digest),
+            },
+        );
         progress.saved_path = Some(dest_path.to_string_lossy().to_string());
         Ok(())
     }
@@ -969,6 +1072,7 @@ mod tests {
                                 remote_node_id: info.node_id,
                                 remote_relay_url: info.relay_url,
                                 remote_direct_addrs: info.direct_addrs,
+                                replica_hash: None,
                                 transfer_token: token,
                                 dest_path: dest,
                                 skip_legacy_resume: false,
@@ -1128,6 +1232,51 @@ mod tests {
         }
 
         node_a.shutdown().await;
+        let phone = lan_node(dir_a.path(), "phone").await;
+        let copy = node_b.node_info();
+        let expected = copy.ready_files["item-42"].clone();
+        let phone_dest = dir_a.path().join("from-replica.bin");
+        for valid in [false, true] {
+            let token = Uuid::new_v4().to_string();
+            node_b.authorize_token_for(
+                "item-42".into(),
+                token.clone(),
+                Utc::now() + chrono::Duration::minutes(1),
+                Some(phone.node_info().node_id),
+            );
+            let result = phone
+                .run_download(
+                    phone.transfers.begin("item-42".into(), None),
+                    DownloadFileReq {
+                        item_id: "item-42".into(),
+                        remote_node_id: copy.node_id.clone(),
+                        remote_direct_addrs: copy.direct_addrs.clone(),
+                        remote_relay_url: None,
+                        replica_hash: Some(if valid {
+                            expected.clone()
+                        } else {
+                            "bad".into()
+                        }),
+                        dest_path: phone_dest.clone(),
+                        transfer_token: token,
+                        skip_legacy_resume: false,
+                    },
+                )
+                .await;
+            if valid {
+                assert_eq!(result.unwrap().path_kind, P2pPathKind::Direct);
+                assert_eq!(tokio::fs::read(&phone_dest).await.unwrap(), payload);
+            } else {
+                assert!(
+                    result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("replica content has changed")
+                );
+                assert!(!phone_dest.exists());
+            }
+        }
+        phone.shutdown().await;
         node_b.shutdown().await;
     }
 

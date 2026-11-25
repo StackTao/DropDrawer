@@ -19,6 +19,7 @@ class DeviceInfo {
   final String? irohRelayUrl;
   final List<String> directAddrs;
   final bool online;
+  final Set<String> replicaItems;
 
   DeviceInfo({
     required this.id,
@@ -29,6 +30,7 @@ class DeviceInfo {
     this.irohRelayUrl,
     required this.directAddrs,
     required this.online,
+    this.replicaItems = const {},
   });
 
   factory DeviceInfo.fromJson(Map<String, dynamic> json) => DeviceInfo(
@@ -42,6 +44,7 @@ class DeviceInfo {
             .map((e) => e.toString())
             .toList(),
         online: json['online'] as bool? ?? false,
+        replicaItems: (json['replica_items'] as List? ?? []).cast<String>().toSet(),
       );
 }
 
@@ -159,6 +162,7 @@ class P2pSourceInfo {
   final String? irohRelayUrl;
   final List<String> directAddrs;
   final String transferToken;
+  final String? replicaHash;
 
   P2pSourceInfo({
     required this.deviceId,
@@ -166,6 +170,7 @@ class P2pSourceInfo {
     this.irohRelayUrl,
     required this.directAddrs,
     required this.transferToken,
+    this.replicaHash,
   });
 
   factory P2pSourceInfo.fromJson(Map<String, dynamic> json) => P2pSourceInfo(
@@ -176,6 +181,7 @@ class P2pSourceInfo {
             .map((e) => e.toString())
             .toList(),
         transferToken: json['transfer_token'] as String,
+        replicaHash: json['replica_hash'] as String?,
       );
 }
 
