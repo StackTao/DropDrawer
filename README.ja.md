@@ -22,6 +22,7 @@
 
 <p align="center">
   <a href="#操作デモ">操作デモ</a> ·
+  <a href="https://github.com/StackTao/DropDrawer/releases">ダウンロード</a> ·
   <a href="#クライアントのインストール">インストール</a> ·
   <a href="#サーバーをセルフホストする">セルフホスト</a> ·
   <a href="docs/ARCHITECTURE.md">アーキテクチャ（中国語）</a> ·

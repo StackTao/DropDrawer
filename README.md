@@ -22,6 +22,7 @@
 
 <p align="center">
   <a href="#see-dropdrawer-in-action">Demo</a> ·
+  <a href="https://github.com/StackTao/DropDrawer/releases">Download</a> ·
   <a href="#install-the-client">Install</a> ·
   <a href="#self-host-the-server">Self-host</a> ·
   <a href="docs/ARCHITECTURE.md">Architecture (Chinese)</a> ·

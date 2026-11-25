@@ -22,6 +22,7 @@
 
 <p align="center">
   <a href="#操作示範">操作示範</a> ·
+  <a href="https://github.com/StackTao/DropDrawer/releases">下載安裝套件</a> ·
   <a href="#安裝用戶端">安裝用戶端</a> ·
   <a href="#自行架設伺服器">自行架設伺服器</a> ·
   <a href="docs/ARCHITECTURE.md">架構文件（簡體中文）</a> ·

@@ -22,6 +22,7 @@
 
 <p align="center">
   <a href="#사용-예시">사용 예시</a> ·
+  <a href="https://github.com/StackTao/DropDrawer/releases">다운로드</a> ·
   <a href="#클라이언트-설치">설치</a> ·
   <a href="#서버-자체-호스팅">자체 호스팅</a> ·
   <a href="docs/ARCHITECTURE.md">아키텍처 (중국어)</a> ·
