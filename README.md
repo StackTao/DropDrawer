@@ -1,140 +1,104 @@
-# DropDrawer — 跨端文件暂存抽屉
+<p align="center">
+  <img src="app/assets/dropdrawer-icon.png" alt="DropDrawer 应用图标" width="112" />
+</p>
 
-DropDrawer 是一款跨平台文件传输与暂存助手，采用 **Rust（Axum + SQLite + iroh QUIC P2P）+ Flutter（macOS / Windows 原生边缘抽屉，移动端规划中）** 架构。
+<h1 align="center">DropDrawer</h1>
 
-核心理念：**像系统抽屉一样贴在屏幕边缘，拖入即跨端可见；同网/直连优先走 P2P 不耗服务器流量，离线或大场景无缝衔接多云盘中转与公网外链分享。**
+<p align="center"><strong>把文件拖进屏幕边缘的抽屉，在另一台设备上取走。</strong></p>
 
----
+<p align="center">
+  <a href="#安装客户端">安装客户端</a> ·
+  <a href="#自托管服务端">自托管服务端</a> ·
+  <a href="docs/ARCHITECTURE.md">架构文档</a> ·
+  <a href="https://github.com/StackTao/DropDrawer/issues">问题反馈</a> ·
+  <a href="LICENSE">MIT License</a>
+</p>
 
-## 功能现状（v1.0）
+DropDrawer 是一款可自托管的跨平台文件传输与暂存工具。桌面端在屏幕边缘提供随时可打开的抽屉，手机端也能收取和发送文件、图片与文本。设备在线时优先尝试 P2P 直连，已缓存的文件可以通过云盘中转离线取用。需要发给其他人时，可生成浏览器下载链接。
 
-| 模块 | 状态 | 核心能力 |
-|---|---|---|
-| **服务端 (`crates/server`)** | 已上线 | 账号注册/登录（JWT）、设备在线状态与 WebSocket 实时同步、智能下载路由（P2P 优先 + 云端回退）、TTL 过期自动清理、单文件/多选打包公网外链分享（`/s/{code}`，支持提取码、有效期、次数上限与撤销） |
-| **原生多云盘中转（零 Sidecar）** | 已完成 | 内置原生适配器，无需任何第三方 sidecar：Google Drive（内置 OAuth2）、夸克网盘、百度网盘、S3 / Cloudflare R2（Presigned URL 直传直下）、WebDAV、服务器本地磁盘 |
-| **P2P 内核 (`crates/p2p-core`)** | 已完成 | 基于 `iroh` QUIC（局域网直连 → 公网打洞 → 加密中继）、实时传输路径显示、中继自动打洞重试（`RelayProbe`）、断点续传（`.dropdrawer.part` + `PartialLease`）、BLAKE3 完整性校验、送达回执确认、收发双向独立取消 |
-| **macOS 桌面端** | 第一版完成 | 贴边悬浮抽屉与常规窗口切换、折叠手柄与展开态抽屉均可拖拽停靠（左右切边/跨屏）、拖入文件自动弹出引导条、卡片直接拖出到其他应用、原生 `NSMenu`、状态栏常驻、`CGEventTap` 全局快捷键与录制、图片缩略图与抽屉内快捷预览、剪贴板智能粘贴（文件/截图/文本）与复制文件、搜索筛选、开机自启、Apple Development 签名与 DMG 打包 |
-| **Windows 桌面端** | 第一版完成 | Win32 原生边缘抽屉与常规窗口切换、折叠手柄与展开态拖拽移动/跨屏切边、资源管理器/桌面文件拖动自动弹引导条、单实例互斥与系统托盘常驻、全局热键与录制、剪贴板文件/截图/文本读写、文件夹 UTF-8 ZIP 打包、Inno Setup 静默安装/托盘态自动覆盖升级/卸载清理、GitHub Actions 自动构建与端到端烟测 |
-| **移动端（iOS / Android）** | 第一版完成 | 移动端触控 UI（`SafeArea`、快捷选文件/选相册/粘贴、下拉刷新、系统分享与存相册）、Android `ACTION_SEND`/`ACTION_SEND_MULTIPLE` 分享接入 + `FileProvider` + `MediaStore`、iOS `Open in DropDrawer` / `dropdrawer://` / App Group 分享队列 + `UIActivityViewController` + `PHPhotoLibrary`、全平台原生 `iroh` P2P（Android `.so` CI 自动编译 + iOS `DropDrawerP2P.xcframework` 脚本） |
+## 主要功能
 
----
+- **桌面贴边抽屉**：macOS 和 Windows 支持拖入文件、拖出到其他应用、跨屏停靠、全局快捷键、剪贴板粘贴和图片预览，也可切换为普通窗口。
+- **移动端收发**：Android 和 iOS 支持选取文件或照片、粘贴内容、使用系统分享发送内容，以及将图片保存到相册。Android 支持从系统分享菜单导入，iOS 支持通过「用 DropDrawer 打开」导入文件。
+- **P2P 优先**：基于 iroh QUIC，优先尝试局域网或公网直连，必要时可走加密中继。支持断点续传、BLAKE3 完整性校验、送达回执和双向取消。
+- **自托管和离线取用**：Rust 服务端负责账号、设备在线状态和抽屉同步，可配置 Google Drive、夸克网盘、百度网盘、S3 兼容存储（含 Cloudflare R2）、WebDAV 或服务器本地磁盘。
+- **外链分享**：支持分享单个文件或把多个文件打包。收件人可在浏览器下载，可以设置提取码、有效期、下载次数上限，也可随时撤销链接。
 
-## 目录结构
+## 安装客户端
 
-```text
-├── crates/
-│   ├── protocol/               # 服务端、P2P 与客户端共享协议类型
-│   ├── p2p-core/               # iroh QUIC P2P 核心 (rlib + C-ABI cdylib/staticlib)
-│   │   └── src/
-│   │       ├── lib.rs          # P2pNode、断点续传、BLAKE3 校验、送达回执
-│   │       ├── ffi.rs          # C-ABI FFI 导出接口
-│   │       ├── transfers.rs    # 双向取消与活进度/终态分离事件队列
-│   │       └── relay_probe.rs  # 中继连接自动辅助打洞重试
-│   ├── p2p-cli/                # P2P 双节点独立命令行调试工具
-│   └── server/                 # Axum + SQLite 服务端
-│       └── src/
-│           ├── routes.rs       # REST API、WebSocket /ws、外链分享页 /s/{code}
-│           ├── db.rs           # SQLite Schema 与数据访问
-│           ├── auth.rs         # JWT 与密码哈希
-│           └── storage/        # 原生多云盘适配器 (google_drive/quark/baidu/s3/webdav/local)
-├── app/                        # Flutter 跨端客户端
-│   ├── lib/                    # 共享状态管理、API 客户端、P2P FFI 桥与 UI
-│   ├── macos/Runner/           # macOS 原生窗口、状态栏、热键、NSMenu、缩略图
-│   ├── windows/runner/         # Windows Win32 抽屉窗口、托盘、热键、剪贴板/文件操作
-│   ├── ios/ & android/         # iOS (Swift + DropDrawerP2P XCFramework) 与 Android (Kotlin + FileProvider)
-│   └── test/                   # Flutter 单元测试与传输/拖拽/移动端回归测试
-├── deploy/
-│   ├── Dockerfile              # 服务端多阶段构建镜像（非 root 运行）
-│   ├── docker-compose.yml      # 本地/通用 Docker 部署模板
-│   ├── compose.baota.yml       # 生产环境（宝塔 + Nginx 反代）Docker Compose
-│   └── windows/DropDrawer.iss  # Windows Inno Setup 安装包脚本
-├── scripts/
-│   ├── build_macos_p2p.sh      # 编译 macOS 本地调试用 libdropdrawer_p2p.dylib
-│   ├── build_macos_release.sh  # 一键编译、签名、打 DMG 并可选安装 macOS Release
-│   └── build_ios_p2p.sh        # 交叉编译 iOS 真机 + 模拟器 DropDrawerP2P.xcframework
-├── .github/workflows/
-│   ├── windows-installer.yml   # Windows Release 构建、单测、Inno Setup 打包与升级/卸载烟测
-│   └── android-apk.yml         # Android NDK 编译 P2P .so + Flutter 单测 + Release APK 打包
-├── docs/ARCHITECTURE.md        # 详细架构、协议、原生桥与部署说明
-└── AGENTS.md                   # AI 编程智能体协作与工程约束手册
-```
+| 平台 | 安装包或构建入口 |
+| --- | --- |
+| macOS（Apple silicon） | 运行 [macOS 打包脚本](scripts/build_macos_release.sh) 生成 `dist/DropDrawer-macOS.dmg`，打开后拖入「应用程序」 |
+| Windows（x64） | 在 [Windows installer](https://github.com/StackTao/DropDrawer/actions/workflows/windows-installer.yml) 的成功运行中下载 `DropDrawer-Windows-x64` 构建产物，解压后运行安装程序 |
+| Android | 在 [Android APK](https://github.com/StackTao/DropDrawer/actions/workflows/android-apk.yml) 的成功运行中下载 `DropDrawer-Android-APK` 构建产物，解压后安装对应 APK |
+| iOS | 在 macOS 上通过 Flutter 和 Xcode [从源码构建](#从源码构建)，真机安装需要配置签名 |
 
----
+Windows 和 Android 的构建产物保留 30 天。需要新的安装包时，有权限的仓库成员可以手动触发工作流。
 
-## 快速开发与构建
+### 第一次传输
 
-### 1. 启动服务端（本地开发）
+1. 启动一个 [DropDrawer 服务端](#自托管服务端)，确保两台设备都能访问它。
+2. 在两台设备的客户端填写相同的服务端地址，创建账号后使用同一账号登录。
+3. 在桌面端将文件拖入抽屉，或在移动端选择文件。在另一台设备打开抽屉并下载。
+
+如果接收设备需要在发送设备离线时取用文件，请先开启云端缓存，并确保文件已上传到所选存储。
+
+## 自托管服务端
+
+在仓库根目录执行以下任一方式。Docker Compose 会使用 `deploy/data/server` 保存数据，直接运行则默认使用 `./data`。
 
 ```bash
-cargo run --bin dropdrawer-server
-# 默认监听 http://0.0.0.0:8080，数据保存在 ./data
+DROPDRAWER_JWT_SECRET="$(openssl rand -hex 32)" \
+  docker compose -f deploy/docker-compose.yml up -d --build
+
+curl -fsS http://localhost:8080/health
 ```
 
-或使用 Docker Compose：
+也可运行 `cargo run --bin dropdrawer-server` 启动本地开发实例。局域网中的其他设备填写运行服务端的主机地址，例如 `http://192.168.1.10:8080`。
+
+生产部署请固定配置独立的 `DROPDRAWER_JWT_SECRET`，以便重启后维持会话，并使用支持 WebSocket 升级的 HTTPS 反向代理。大文件传输需关闭代理缓冲，并按实际需求调整上传大小上限。外链下载要求收件人能够访问服务端。[生产 Compose 模板](deploy/compose.baota.yml) · [架构文档](docs/ARCHITECTURE.md)
+
+## 从源码构建
+
+准备 Rust stable 和 Flutter stable。macOS 与 iOS 需要 Xcode，Windows 和 Android 可以使用上表中的 GitHub Actions 工作流。
+
+### macOS
 
 ```bash
-cd deploy
-DROPDRAWER_JWT_SECRET="replace-with-a-long-random-secret" docker compose up -d --build
-```
-
-### 2. 运行与打包 macOS 客户端
-
-```bash
-# 本地开发运行
 ./scripts/build_macos_p2p.sh
-cd app && flutter run -d macos
-
-# 构建正式签名版并生成 dist/DropDrawer-macOS.dmg（加 --install 自动装入 /Applications）
-./scripts/build_macos_release.sh --install
+(cd app && flutter pub get --enforce-lockfile && flutter run -d macos)
 ```
 
-### 3. 构建 Windows 客户端与安装包
+运行 `./scripts/build_macos_release.sh` 打包 DMG，或加上 `--install` 更新本机「应用程序」中的 DropDrawer。使用全局快捷键时，可按系统提示授予辅助功能和输入监控权限。
 
-在 GitHub Actions 中手动触发 [windows-installer.yml](.github/workflows/windows-installer.yml) 即可在 `windows-2025` runner 上自动完成：
-1. `flutter pub get --enforce-lockfile` + `flutter test` + `flutter build windows --release`
-2. `cargo build --locked --release -p p2p-core` + `cargo test --locked --release -p p2p-core`
-3. 打包 MSVC CRT + `dropdrawer_p2p.dll` 生成 `dist/DropDrawer-Windows-x64-Setup.exe`
-4. 端到端烟测：托盘驻留态静默覆盖升级 → 验证 DLL 导出与单实例 → 托盘驻留态静默卸载并验证自启清理
-
-### 4. 构建与运行移动端（iOS / Android）
-
-- **iOS（macOS + Xcode 本地构建）**：
-  ```bash
-  # 编译真机 + 模拟器 Rust P2P XCFramework
-  ./scripts/build_ios_p2p.sh
-  # 模拟器构建/运行（或连接 iPhone 后用 Xcode / flutter run -d <iphone>）
-  cd app && flutter build ios --simulator --no-codesign
-  ```
-- **Android（GitHub Actions 自动产出 APK）**：
-  手动触发 [.github/workflows/android-apk.yml](.github/workflows/android-apk.yml)，自动用 `cargo-ndk` 编译 `arm64-v8a` / `armeabi-v7a` 的 `libdropdrawer_p2p.so` 并产出 `DropDrawer-Android-arm64.apk` 与 `DropDrawer-Android-universal.apk`。
-
-### 5. 运行全量自动化测试
+### iOS
 
 ```bash
-# Rust 服务端集成测试 + P2P 单元测试
+./scripts/build_ios_p2p.sh
+(cd app && flutter pub get --enforce-lockfile && flutter build ios --simulator --no-codesign)
+```
+
+真机调试可在 Xcode 中打开 `app/ios/Runner.xcworkspace`，配置签名后运行。
+
+## 项目结构与贡献
+
+| 路径 | 用途 |
+| --- | --- |
+| [app](app) | Flutter 客户端及 macOS、Windows、iOS、Android 原生集成 |
+| [crates/server](crates/server) | Axum、SQLite、WebSocket、存储适配器和外链下载 |
+| [crates/p2p-core](crates/p2p-core) | iroh QUIC 传输核心及原生 FFI |
+| [crates/protocol](crates/protocol) · [crates/p2p-cli](crates/p2p-cli) | 共享协议和 P2P 调试工具 |
+| [deploy](deploy) · [scripts](scripts) | 容器部署、安装包和平台构建脚本 |
+
+欢迎在 [GitHub Issues](https://github.com/StackTao/DropDrawer/issues) 反馈问题或提交功能建议。报告问题时，请附上平台、版本和复现步骤。提交代码前，请按 [工程指南](AGENTS.md) 运行相关检查。
+
+```bash
 cargo test --workspace
-
-# Flutter 静态分析与单元测试
-cd app && flutter analyze && flutter test
+(cd app && flutter analyze && flutter test)
 ```
 
-### 5. 命令行独立测试 P2P 直传
+如需独立验证 P2P，可用 `cargo run --bin dropdrawer-p2p-cli -- seed ./sample.zip` 生成传输票据，再在另一端运行 `cargo run --bin dropdrawer-p2p-cli -- pull '<TICKET_JSON>' ./received.zip`。
 
-```bash
-# 做种端
-cargo run --bin dropdrawer-p2p-cli -- seed ./sample.zip
+## 许可证
 
-# 拉取端（粘贴做种端输出的 Ticket JSON）
-cargo run --bin dropdrawer-p2p-cli -- pull '<TICKET_JSON>' ./received.zip
-```
-
----
-
-## 生产部署要点
-
-服务端使用 [deploy/compose.baota.yml](deploy/compose.baota.yml) 监听本机回环端口（默认 `127.0.0.1:18088:8080`），前置于 Nginx HTTPS 反向代理。Nginx 反代需确保：
-- 支持 `/ws` 的 `Upgrade` / `Connection` WebSocket 升级头；
-- 关闭缓冲（`proxy_request_buffering off;`、`proxy_buffering off;`）并放宽 `client_max_body_size`（如 `2g`）以支持大文件流式传输；
-- 保留 `/.well-known/acme-challenge/` 以确保 Let's Encrypt 证书自动续签。
-
-更多架构细节、通信协议与移动端路线图见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+DropDrawer 采用 [MIT License](LICENSE)。
