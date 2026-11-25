@@ -107,6 +107,28 @@ void main() {
     expect(payload['texts'], ['https://example.com']);
   });
 
+  test('Android pickMediaNative uses native com.dropdrawer/mobile photo picker', () async {
+    const channel = MethodChannel('com.dropdrawer/mobile');
+    String? invokedMethod;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      invokedMethod = call.method;
+      if (call.method == 'pickMedia') {
+        return ['/tmp/photo_1.jpg', '/tmp/video_2.mp4'];
+      }
+      return null;
+    });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    final service = _FakeMobileWindowService(ios: false);
+    final paths = await service.pickMediaNative();
+    expect(invokedMethod, 'pickMedia');
+    expect(paths, ['/tmp/photo_1.jpg', '/tmp/video_2.mp4']);
+  });
+
   testWidgets('Mobile DrawerScreen renders touch quick actions and mobile empty copy', (tester) async {
     final ctrl = _MobileTestController();
     ctrl.user = UserProfile(id: 'u1', username: 'alice');

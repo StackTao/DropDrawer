@@ -187,6 +187,13 @@ class DrawerWindowService {
   }
 
   Future<List<String>> pickMediaNative() async {
+    if (isAndroid) {
+      final raw = await _mobileChannel.invokeMethod<List<dynamic>>('pickMedia');
+      return (raw ?? const [])
+          .map((e) => e.toString())
+          .where((e) => e.isNotEmpty)
+          .toList();
+    }
     final files = await FilePicker.platform.pickFiles(
       type: FileType.media,
       allowMultiple: true,

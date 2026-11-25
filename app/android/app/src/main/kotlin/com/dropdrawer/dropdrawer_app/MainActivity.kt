@@ -1,5 +1,7 @@
 package com.dropdrawer.dropdrawer_app
 
+import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ContentValues
@@ -9,6 +11,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.ext.SdkExtensions
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
@@ -24,9 +27,11 @@ import java.io.FileOutputStream
 class MainActivity : FlutterActivity() {
     companion object {
         private const val MOBILE_CHANNEL = "com.dropdrawer/mobile"
+        private const val REQUEST_PICK_MEDIA = 4102
     }
 
     private var mobileChannel: MethodChannel? = null
+    private var pendingMediaResult: MethodChannel.Result? = null
     private val pendingFiles = mutableListOf<String>()
     private val pendingTexts = mutableListOf<String>()
 
@@ -39,6 +44,11 @@ class MainActivity : FlutterActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleShareIntent(intent, pushLive = true)
+    }
+
+    override fun onDestroy() {
+        pendingMediaResult = null
+        super.onDestroy()
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -60,6 +70,7 @@ class MainActivity : FlutterActivity() {
                 pendingTexts.clear()
                 result.success(payload)
             }
+            "pickMedia" -> pickMedia(result)
             "shareFiles" -> {
                 val raw = call.argument<List<*>>("paths") ?: emptyList<Any>()
                 val paths = raw.mapNotNull { it?.toString() }.filter { it.isNotEmpty() }
@@ -83,6 +94,89 @@ class MainActivity : FlutterActivity() {
             }
             else -> result.notImplemented()
         }
+    }
+
+    private fun supportsAndroidPhotoPicker(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            true
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            SdkExtensions.getExtensionVersion(Build.VERSION_CODES.R) >= 2
+        } else {
+            false
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun pickMedia(result: MethodChannel.Result) {
+        pendingMediaResult?.success(emptyList<String>())
+        pendingMediaResult = result
+
+        if (supportsAndroidPhotoPicker()) {
+            try {
+                val maxLimit = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    minOf(50, MediaStore.getPickImagesMaxLimit())
+                } else {
+                    50
+                }
+                val photoPicker = Intent(MediaStore.ACTION_PICK_IMAGES).apply {
+                    putExtra(MediaStore.EXTRA_PICK_IMAGES_MAX, maxLimit)
+                }
+                startActivityForResult(photoPicker, REQUEST_PICK_MEDIA)
+                return
+            } catch (_: ActivityNotFoundException) {
+                // Fall back to system gallery picker below.
+            }
+        }
+
+        try {
+            val gallery = Intent(Intent.ACTION_PICK).apply {
+                setDataAndType(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "image/*")
+                putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*"))
+                putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+            }
+            startActivityForResult(gallery, REQUEST_PICK_MEDIA)
+        } catch (_: Exception) {
+            pendingMediaResult = null
+            result.success(emptyList<String>())
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode == REQUEST_PICK_MEDIA) {
+            val result = pendingMediaResult
+            pendingMediaResult = null
+            if (result == null) return
+            if (resultCode != Activity.RESULT_OK || data == null) {
+                result.success(emptyList<String>())
+                return
+            }
+
+            val uris = mutableListOf<Uri>()
+            val clip = data.clipData
+            if (clip != null && clip.itemCount > 0) {
+                for (i in 0 until clip.itemCount) {
+                    clip.getItemAt(i)?.uri?.let { uris.add(it) }
+                }
+            } else {
+                data.data?.let { uris.add(it) }
+            }
+            if (uris.isEmpty()) {
+                result.success(emptyList<String>())
+                return
+            }
+
+            Thread {
+                val paths = uris.mapNotNull { copyUriToCacheDir(it, "picked_media") }
+                runOnUiThread {
+                    try {
+                        result.success(paths)
+                    } catch (_: Exception) {}
+                }
+            }.start()
+            return
+        }
+        super.onActivityResult(requestCode, resultCode, data)
     }
 
     private fun handleShareIntent(intent: Intent?, pushLive: Boolean) {
@@ -143,12 +237,16 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun copyUriToIncomingCache(uri: Uri): String? {
+    private fun copyUriToIncomingCache(uri: Uri): String? =
+        copyUriToCacheDir(uri, "shared_incoming")
+
+    private fun copyUriToCacheDir(uri: Uri, subDir: String): String? {
         return try {
-            val dir = File(cacheDir, "shared_incoming").apply { mkdirs() }
-            val rawName = queryDisplayName(uri) ?: "shared_${System.currentTimeMillis()}"
-            val safeName = rawName.replace(Regex("[/\\\\:*?\"<>|]"), "_").ifBlank {
-                "shared_${System.currentTimeMillis()}"
+            val dir = File(cacheDir, subDir).apply { mkdirs() }
+            val rawName = queryDisplayName(uri) ?: "media_${System.currentTimeMillis()}"
+            val withExt = ensureExtension(rawName, uri)
+            val safeName = withExt.replace(Regex("[/\\\\:*?\"<>|]"), "_").ifBlank {
+                "media_${System.currentTimeMillis()}"
             }
             val dest = uniqueFile(dir, safeName)
             contentResolver.openInputStream(uri)?.use { input ->
@@ -160,6 +258,15 @@ class MainActivity : FlutterActivity() {
         } catch (_: Exception) {
             null
         }
+    }
+
+    private fun ensureExtension(name: String, uri: Uri): String {
+        val dot = name.lastIndexOf('.')
+        if (dot > 0 && dot < name.length - 1) return name
+        val ext = contentResolver.getType(uri)?.let {
+            MimeTypeMap.getSingleton().getExtensionFromMimeType(it)
+        }
+        return if (!ext.isNullOrBlank()) "$name.$ext" else name
     }
 
     private fun queryDisplayName(uri: Uri): String? {
