@@ -225,29 +225,32 @@ bool OpenWebUrl(HWND window, const std::string& url) {
          Open(window, Wide(url));
 }
 
-bool OpenUpdatePackage(HWND window, const std::string& path) {
-  const auto wide = Wide(path);
-  if (wide.size() < 4 || wide.compare(wide.size() - 4, 4, L".exe") != 0) {
+bool InstallUpdate(HWND window, const std::string& path) {
+  // Only the installer DropDrawer itself downloaded into its update cache.
+  const std::filesystem::path package(Wide(path));
+  std::error_code error;
+  if (package.filename() != L"DropDrawer-Windows-x64-Setup.exe" ||
+      !std::filesystem::is_regular_file(package, error)) {
     return false;
   }
-  const DWORD attributes = GetFileAttributesW(wide.c_str());
-  if (attributes == INVALID_FILE_ATTRIBUTES ||
-      (attributes & FILE_ATTRIBUTE_DIRECTORY)) {
-    return false;
+  bool in_cache = false;
+  for (const auto& part : package.parent_path()) {
+    if (CompareStringOrdinal(part.c_str(), -1, L"dropdrawer-updates", -1, TRUE) ==
+        CSTR_EQUAL) {
+      in_cache = true;
+    }
   }
+  if (!in_cache) return false;
 
-  // Preserve Windows' Internet-zone checks when ShellExecute opens the installer.
-  const auto zone_path = wide + L":Zone.Identifier";
-  const HANDLE zone = CreateFileW(zone_path.c_str(), GENERIC_WRITE, 0, nullptr,
-                                  CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-  if (zone != INVALID_HANDLE_VALUE) {
-    constexpr char zone_data[] = "[ZoneTransfer]\r\nZoneId=3\r\n";
-    DWORD written = 0;
-    WriteFile(zone, zone_data, static_cast<DWORD>(sizeof(zone_data) - 1),
-              &written, nullptr);
-    CloseHandle(zone);
-  }
-  return Open(window, wide);
+  // The package's size and SHA-256 were checked against the release before
+  // this point. No Mark-of-the-Web is added: the installer is not
+  // Authenticode-signed yet, so SmartScreen would stop every update.
+  // /UPDATE=1 makes the installer relaunch DropDrawer (see DropDrawer.iss);
+  // it closes this instance itself with the tray quit message.
+  return reinterpret_cast<INT_PTR>(ShellExecuteW(
+             window, L"open", package.c_str(),
+             L"/SILENT /SUPPRESSMSGBOXES /NORESTART /UPDATE=1", nullptr,
+             SW_SHOWNORMAL)) > 32;
 }
 
 }  // namespace drawer_files

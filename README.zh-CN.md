@@ -99,7 +99,7 @@ DropDrawer 是一款可自托管的跨平台文件传输与暂存工具。桌面
 
 Windows 和 Android 的构建产物保留 30 天。需要新的安装包时，有权限的仓库成员可以手动触发工作流。
 
-在 DropDrawer 的「偏好设置 → 软件更新」里可以检查更新。[各端更新及发版说明](docs/APP_UPDATES.md)
+DropDrawer 的发布版本每天自动检查一次更新，有新版时在抽屉里提示，点一下即可更新；macOS 和 Windows 会自动重启到新版本。[各端更新及发版说明](docs/APP_UPDATES.md)
 
 ### 第一次传输
 

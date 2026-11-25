@@ -149,10 +149,6 @@ class _PreferencesViewState extends State<PreferencesView> {
           child: ListView(
             padding: const EdgeInsets.all(14),
             children: [
-              const _SectionLabel('软件更新'),
-              const SizedBox(height: 6),
-              _GroupBox(children: [UpdateSettings(windowService: c.windowService)]),
-              const SizedBox(height: 16),
               const _SectionLabel('传输与自动清理'),
               const SizedBox(height: 6),
               _GroupBox(
@@ -715,6 +711,18 @@ class _PreferencesViewState extends State<PreferencesView> {
                   ],
                 ),
               ],
+              // Rarely needed, so last: the version and updates.
+              const SizedBox(height: 16),
+              const _SectionLabel('关于与更新'),
+              const SizedBox(height: 6),
+              _GroupBox(
+                children: [
+                  UpdateSettings(
+                    updates: c.updates,
+                    mobile: c.windowService.isMobile,
+                  ),
+                ],
+              ),
             ],
           ),
         ),

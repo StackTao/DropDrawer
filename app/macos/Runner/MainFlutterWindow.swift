@@ -3,6 +3,7 @@ import Cocoa
 import FlutterMacOS
 import ImageIO
 import QuartzCore
+import Security
 
 /// Custom macOS window implementing a unified 3-state floating edge drawer (left or right, draggable vertically):
 /// 1. `collapsed` (10x88): Quiet minimal edge handle; click to open, drag vertically or across screen to move/flip side.
@@ -543,6 +544,25 @@ class MainFlutterWindow: NSWindow {
           return
         }
         result(NSWorkspace.shared.open(URL(fileURLWithPath: path)) ? "opened" : "unavailable")
+      case "installUpdate":
+        guard let path = (call.arguments as? [String: Any])?["path"] as? String else {
+          result("unavailable")
+          return
+        }
+        // Mounting and copying take a few seconds; keep the UI responsive.
+        DispatchQueue.global(qos: .userInitiated).async {
+          let outcome = UpdateInstaller.prepare(diskImage: URL(fileURLWithPath: path))
+          DispatchQueue.main.async {
+            result(outcome)
+            if outcome == "installing" {
+              // Let Flutter show "正在安装" before the app quits; the helper
+              // swaps the bundle once this process has exited.
+              DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                NSApp.terminate(nil)
+              }
+            }
+          }
+        }
       default:
         result(FlutterMethodNotImplemented)
       }
@@ -1741,6 +1761,132 @@ class MainFlutterWindow: NSWindow {
     }
     if let mon = globalClickMonitor {
       NSEvent.removeMonitor(mon)
+    }
+  }
+}
+
+/// Replaces the running app with the one inside a verified update disk image.
+///
+/// The new bundle must satisfy the running app's designated requirement (same
+/// bundle identifier, same signing certificate). That rejects a tampered
+/// package even when its download checksum matches, and it keeps macOS
+/// privacy permissions such as Accessibility, which are tied to that identity.
+/// An ad-hoc signed app has no stable identity, so it cannot update itself.
+private enum UpdateInstaller {
+  static func prepare(diskImage: URL) -> String {
+    guard diskImage.pathExtension == "dmg",
+          FileManager.default.fileExists(atPath: diskImage.path) else {
+      return "unavailable"
+    }
+    let current = Bundle.main.bundleURL.resolvingSymlinksInPath()
+    let parent = current.deletingLastPathComponent()
+    guard FileManager.default.isWritableFile(atPath: parent.path),
+          FileManager.default.isWritableFile(atPath: current.path) else {
+      return "not_writable"
+    }
+
+    let mountPoint = FileManager.default.temporaryDirectory
+      .appendingPathComponent("dropdrawer-update-mount-\(UUID().uuidString)")
+    do {
+      try FileManager.default.createDirectory(at: mountPoint, withIntermediateDirectories: true)
+    } catch {
+      return "unavailable"
+    }
+    guard run("/usr/bin/hdiutil", ["attach", diskImage.path, "-nobrowse", "-readonly",
+                                   "-noautoopen", "-mountpoint", mountPoint.path]) else {
+      try? FileManager.default.removeItem(at: mountPoint)
+      return "unavailable"
+    }
+    defer {
+      _ = run("/usr/bin/hdiutil", ["detach", mountPoint.path, "-force"])
+      try? FileManager.default.removeItem(at: mountPoint)
+    }
+
+    let contents = (try? FileManager.default.contentsOfDirectory(
+      at: mountPoint, includingPropertiesForKeys: nil)) ?? []
+    guard let newApp = contents.first(where: { $0.pathExtension == "app" }) else {
+      return "unavailable"
+    }
+    guard satisfiesOwnRequirement(newApp) else { return "signature_mismatch" }
+
+    // Stage next to the current bundle so the final swap is a same-volume rename.
+    let staged = parent.appendingPathComponent(".DropDrawer-update-\(UUID().uuidString).app")
+    guard run("/usr/bin/ditto", [newApp.path, staged.path]) else {
+      try? FileManager.default.removeItem(at: staged)
+      return "unavailable"
+    }
+    guard satisfiesOwnRequirement(staged), launchSwap(staged: staged, target: current) else {
+      try? FileManager.default.removeItem(at: staged)
+      return "unavailable"
+    }
+    return "installing"
+  }
+
+  private static func satisfiesOwnRequirement(_ app: URL) -> Bool {
+    var selfCode: SecCode?
+    var selfStatic: SecStaticCode?
+    var requirement: SecRequirement?
+    guard SecCodeCopySelf([], &selfCode) == errSecSuccess, let selfCode,
+          SecCodeCopyStaticCode(selfCode, [], &selfStatic) == errSecSuccess, let selfStatic,
+          SecCodeCopyDesignatedRequirement(selfStatic, [], &requirement) == errSecSuccess,
+          let requirement else {
+      return false
+    }
+    var candidate: SecStaticCode?
+    guard SecStaticCodeCreateWithPath(app as CFURL, [], &candidate) == errSecSuccess,
+          let candidate else {
+      return false
+    }
+    return SecStaticCodeCheckValidity(candidate, [], requirement) == errSecSuccess
+  }
+
+  /// Starts a detached helper that waits for this process to exit, swaps the
+  /// bundles (restoring the old one if the swap fails) and relaunches the app.
+  private static func launchSwap(staged: URL, target: URL) -> Bool {
+    let backup = target.deletingLastPathComponent()
+      .appendingPathComponent(".DropDrawer-previous-\(UUID().uuidString).app")
+    let script = """
+      while /bin/kill -0 "$1" 2>/dev/null; do /bin/sleep 0.2; done
+      if /bin/mv "$3" "$4"; then
+        if /bin/mv "$2" "$3"; then
+          /bin/rm -rf "$4"
+        else
+          /bin/mv "$4" "$3"
+          /bin/rm -rf "$2"
+        fi
+      else
+        /bin/rm -rf "$2"
+      fi
+      /usr/bin/open "$3"
+      """
+    let helper = Process()
+    helper.executableURL = URL(fileURLWithPath: "/bin/sh")
+    helper.arguments = ["-c", script, "dropdrawer-update",
+                        String(ProcessInfo.processInfo.processIdentifier),
+                        staged.path, target.path, backup.path]
+    helper.standardInput = FileHandle.nullDevice
+    helper.standardOutput = FileHandle.nullDevice
+    helper.standardError = FileHandle.nullDevice
+    do {
+      try helper.run()
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  private static func run(_ tool: String, _ arguments: [String]) -> Bool {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: tool)
+    process.arguments = arguments
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.nullDevice
+    do {
+      try process.run()
+      process.waitUntilExit()
+      return process.terminationStatus == 0
+    } catch {
+      return false
     }
   }
 }

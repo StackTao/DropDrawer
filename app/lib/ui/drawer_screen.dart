@@ -16,6 +16,7 @@ import 'preferences_view.dart';
 import 'share_view.dart';
 import 'storage_settings_view.dart';
 import 'theme.dart';
+import 'update_banner.dart';
 
 enum _DrawerPage { drawer, storage, devices, share, preview, preferences }
 
@@ -677,6 +678,8 @@ class _DrawerScreenState extends State<DrawerScreen> {
                 if (c.items.isNotEmpty && _searchOpen)
                   _buildSearchFilterBar(isMobile),
                 Expanded(child: _buildItemList(context, c, visibleItems)),
+                if (!_selectionMode)
+                  UpdateBanner(updates: c.updates, mobile: isMobile),
                 if (_selectionMode)
                   _buildBatchFooter(c)
                 // Phones show status messages as toasts instead of a footer.

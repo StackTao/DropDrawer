@@ -14,6 +14,7 @@ import '../models/models.dart';
 import '../services/api_client.dart';
 import '../services/drawer_window_service.dart';
 import '../services/p2p_ffi.dart';
+import 'app_update_controller.dart';
 
 class DropDrawerController extends ChangeNotifier {
   static final bool _tracksLiveP2pPath =
@@ -83,6 +84,16 @@ class DropDrawerController extends ChangeNotifier {
   /// area of each item listens to it, so a progress stream (every 120 ms, or
   /// every P2P poll) no longer rebuilds the whole drawer.
   final ValueNotifier<int> transferTicks = ValueNotifier(0);
+
+  /// App updates. Started by [bootstrap], so tests that never bootstrap make
+  /// no update requests.
+  late final AppUpdateController updates = _createUpdates();
+  bool _updatesCreated = false;
+
+  AppUpdateController _createUpdates() {
+    _updatesCreated = true;
+    return AppUpdateController(window: windowService);
+  }
   void _tickTransfers() => transferTicks.value++;
 
   DropDrawerController() {
@@ -124,6 +135,7 @@ class DropDrawerController extends ChangeNotifier {
   }
 
   Future<void> bootstrap() async {
+    unawaited(updates.start());
     final prefs = await SharedPreferences.getInstance();
     serverUrl = prefs.getString('server_url') ?? serverUrl;
     token = prefs.getString('auth_token');
@@ -594,6 +606,7 @@ class DropDrawerController extends ChangeNotifier {
     _p2pPollTimer?.cancel();
     _closeWs();
     transferTicks.dispose();
+    if (_updatesCreated) updates.dispose();
     super.dispose();
   }
 

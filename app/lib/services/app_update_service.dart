@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
@@ -11,12 +10,13 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:pub_semver/pub_semver.dart';
 
+/// Platforms that can install an update package themselves. iOS is absent on
+/// purpose: the App Store and TestFlight deliver their own updates.
 enum UpdatePlatform {
   macosArm64,
   windowsX64,
   androidArm64,
   androidArm,
-  ios,
   unsupported;
 
   static UpdatePlatform get current => switch (Abi.current()) {
@@ -24,44 +24,89 @@ enum UpdatePlatform {
     Abi.windowsX64 => windowsX64,
     Abi.androidArm64 => androidArm64,
     Abi.androidArm => androidArm,
-    Abi.iosArm64 || Abi.iosX64 => ios,
     _ => unsupported,
   };
+
+  bool get isDesktop => this == macosArm64 || this == windowsX64;
 
   List<String> get assetNames => switch (this) {
     macosArm64 => const ['DropDrawer-macOS-arm64.dmg', 'DropDrawer-macOS.dmg'],
     windowsX64 => const ['DropDrawer-Windows-x64-Setup.exe'],
+    // An arm64 install from the split APK has a higher version code than the
+    // universal APK, so it must keep updating from the split APK.
     androidArm64 => const [
       'DropDrawer-Android-arm64.apk',
       'DropDrawer-Android-universal.apk',
     ],
     androidArm => const ['DropDrawer-Android-universal.apk'],
-    ios => const ['DropDrawer-iOS-update.json'],
     unsupported => const [],
   };
+}
+
+/// The version this build reports, and whether it is a tagged release build.
+///
+/// Only release builds take part in updates. A build made without
+/// `--dart-define=DROPDRAWER_RELEASE_TAG=vX.Y.Z[-pre]` (local development, an
+/// untagged CI run) cannot tell which release it corresponds to: `0.1.0` would
+/// otherwise rank above every `0.1.0-preview.N` and never be offered one.
+class InstalledBuild {
+  final Version? version;
+  final bool isRelease;
+
+  const InstalledBuild(this.version, {required this.isRelease});
+
+  static const _tag = String.fromEnvironment('DROPDRAWER_RELEASE_TAG');
+
+  static InstalledBuild fromPackage(PackageInfo info, {String releaseTag = _tag}) {
+    final base = AppUpdateService.parseVersion(info.version);
+    final tagged = AppUpdateService.parseVersion(releaseTag);
+    if (base == null || tagged == null) {
+      return InstalledBuild(base, isRelease: false);
+    }
+    final sameRelease = (tagged.major, tagged.minor, tagged.patch) ==
+        (base.major, base.minor, base.patch);
+    return InstalledBuild(
+      sameRelease ? tagged : base,
+      isRelease: sameRelease,
+    );
+  }
 }
 
 class AppUpdate {
   final Version version;
   final Uri releasePage;
-  final Uri? storeUrl;
-  final _ReleaseAsset? _package;
+  final ReleaseAsset package;
 
-  const AppUpdate._(
-    this.version,
-    this.releasePage, {
-    this.storeUrl,
-    this._package,
-  });
+  const AppUpdate(this.version, this.releasePage, this.package);
+}
 
-  int? get packageSize => _package?.size;
+class ReleaseAsset {
+  final String name;
+  final Uri url;
+  final int size;
+  final String sha256Digest;
+
+  const ReleaseAsset(this.name, this.url, this.size, this.sha256Digest);
+}
+
+/// Why a check or download failed, in terms a person can act on.
+enum UpdateFailure { offline, rateLimited, unavailable, corrupted }
+
+class UpdateException implements Exception {
+  final UpdateFailure reason;
+  final DateTime? retryAfter;
+
+  const UpdateException(this.reason, {this.retryAfter});
+
+  @override
+  String toString() => 'UpdateException($reason)';
 }
 
 typedef UpdateCheck = ({AppUpdate? update, bool hasNewerRelease});
 
 class AppUpdateService {
   static const _repo = '/StackTao/DropDrawer/releases';
-  static const _cacheName = 'dropdrawer-updates';
+  static const cacheFolder = 'dropdrawer-updates';
   static const _timeout = Duration(seconds: 20);
   static const _assetHosts = {
     'github.com',
@@ -73,30 +118,22 @@ class AppUpdateService {
   });
   static final releasesPage = Uri.https('github.com', _repo);
   static final _sha256Digest = RegExp(r'^sha256:([a-f0-9]{64})$');
+  static final _safeTag = RegExp(r'^[A-Za-z0-9.+-]+$');
 
   final http.Client _http;
+  final Future<Directory> Function() _tempDir;
 
-  AppUpdateService({http.Client? client}) : _http = client ?? http.Client();
+  AppUpdateService({http.Client? client, Future<Directory> Function()? tempDir})
+      : _http = client ?? http.Client(),
+        _tempDir = tempDir ?? getTemporaryDirectory;
 
   void close() => _http.close();
 
-  static Version? installedVersion(
-    PackageInfo info, {
-    String releaseTag = const String.fromEnvironment('DROPDRAWER_RELEASE_TAG'),
-  }) {
-    final base = _parseVersion(info.version);
-    final tagged = _parseVersion(releaseTag);
-    if (base == null || tagged == null) return base;
-    if ((tagged.major, tagged.minor, tagged.patch) ==
-        (base.major, base.minor, base.patch)) {
-      return tagged;
-    }
-    return base;
-  }
-
-  static Version? _parseVersion(String raw) {
+  static Version? parseVersion(String raw) {
+    if (raw.isEmpty) return null;
     try {
       final version = Version.parse(raw.replaceFirst(RegExp(r'^v'), ''));
+      // Build metadata (+N) never orders releases.
       return Version(
         version.major,
         version.minor,
@@ -108,30 +145,45 @@ class AppUpdateService {
     }
   }
 
-  Future<UpdateCheck> check(
-    Version installed,
-    UpdatePlatform platform, {
-    String? iosInstaller,
-  }) async {
-    final response = await _http
-        .get(_releases, headers: {'Accept': 'application/vnd.github+json'})
-        .timeout(_timeout);
+  Future<UpdateCheck> check(Version installed, UpdatePlatform platform) async {
+    final http.Response response;
+    try {
+      response = await _http
+          .get(_releases, headers: {'Accept': 'application/vnd.github+json'})
+          .timeout(_timeout);
+    } on TimeoutException {
+      throw const UpdateException(UpdateFailure.offline);
+    } on SocketException {
+      throw const UpdateException(UpdateFailure.offline);
+    } on http.ClientException {
+      throw const UpdateException(UpdateFailure.offline);
+    }
+    if (response.statusCode == 403 || response.statusCode == 429) {
+      throw UpdateException(
+        UpdateFailure.rateLimited,
+        retryAfter: _rateLimitReset(response.headers),
+      );
+    }
     if (response.statusCode != 200) {
-      throw HttpException('GitHub Releases HTTP ${response.statusCode}');
+      throw const UpdateException(UpdateFailure.unavailable);
     }
 
+    final List<dynamic> rows;
+    try {
+      rows = jsonDecode(response.body) as List<dynamic>;
+    } on FormatException {
+      throw const UpdateException(UpdateFailure.unavailable);
+    }
     final releases = <({String tag, Version version, List<dynamic> assets})>[];
-    for (final row in jsonDecode(response.body) as List<dynamic>) {
+    for (final row in rows) {
       if (row is! Map<String, dynamic> || row['draft'] == true) continue;
       final tag = row['tag_name'];
       final assets = row['assets'];
-      if (tag is! String || assets is! List<dynamic>) continue;
-      final version = _parseVersion(tag);
-      if (version == null ||
-          version <= installed ||
-          !RegExp(r'^[A-Za-z0-9.+-]+$').hasMatch(tag)) {
+      if (tag is! String || assets is! List<dynamic> || !_safeTag.hasMatch(tag)) {
         continue;
       }
+      final version = parseVersion(tag);
+      if (version == null || version <= installed) continue;
       releases.add((tag: tag, version: version, assets: assets));
     }
     releases.sort((a, b) => b.version.compareTo(a.version));
@@ -141,26 +193,25 @@ class AppUpdateService {
         final asset = _findAsset(release.tag, name, release.assets);
         if (asset == null) continue;
         final page = Uri.https('github.com', '$_repo/tag/${release.tag}');
-        if (platform != UpdatePlatform.ios) {
-          return (
-            update: AppUpdate._(release.version, page, package: asset),
-            hasNewerRelease: true,
-          );
-        }
-        final store = await _readIosStore(asset, iosInstaller);
-        if (store != null) {
-          return (
-            update: AppUpdate._(release.version, page, storeUrl: store),
-            hasNewerRelease: true,
-          );
-        }
+        return (
+          update: AppUpdate(release.version, page, asset),
+          hasNewerRelease: true,
+        );
       }
     }
-
     return (update: null, hasNewerRelease: releases.isNotEmpty);
   }
 
-  _ReleaseAsset? _findAsset(String tag, String name, List<dynamic> assets) {
+  static DateTime? _rateLimitReset(Map<String, String> headers) {
+    final reset = int.tryParse(headers['x-ratelimit-reset'] ?? '');
+    if (reset != null) {
+      return DateTime.fromMillisecondsSinceEpoch(reset * 1000);
+    }
+    final after = int.tryParse(headers['retry-after'] ?? '');
+    return after == null ? null : DateTime.now().add(Duration(seconds: after));
+  }
+
+  ReleaseAsset? _findAsset(String tag, String name, List<dynamic> assets) {
     for (final asset in assets) {
       if (asset is! Map<String, dynamic> || asset['name'] != name) continue;
       final size = asset['size'];
@@ -168,7 +219,7 @@ class AppUpdateService {
         asset['digest']?.toString() ?? '',
       );
       if (size is! int || size <= 0 || digest == null) continue;
-      return _ReleaseAsset(
+      return ReleaseAsset(
         name,
         Uri.https('github.com', '$_repo/download/$tag/$name'),
         size,
@@ -178,51 +229,29 @@ class AppUpdateService {
     return null;
   }
 
-  Future<Uri?> _readIosStore(_ReleaseAsset asset, String? installer) async {
-    if (asset.size > 16 * 1024) {
-      throw const FormatException('Invalid iOS release metadata size');
+  Future<Directory> _cache() async =>
+      Directory(p.join((await _tempDir()).path, cacheFolder));
+
+  /// Deletes previously downloaded packages.
+  Future<void> clearDownloads() async {
+    try {
+      final cache = await _cache();
+      if (await cache.exists()) await cache.delete(recursive: true);
+    } catch (_) {
+      // A package still open by an installer is removed next time; a missing
+      // temporary directory means there is nothing to clear.
     }
-    final bytes = BytesBuilder(copy: false);
-    await for (final chunk in _assetBytes(asset)) {
-      bytes.add(chunk);
-    }
-    final body = bytes.takeBytes();
-    if (sha256.convert(body).toString() != asset.sha256Digest) {
-      throw const FormatException('Invalid iOS release metadata digest');
-    }
-    final data = jsonDecode(utf8.decode(body)) as Map<String, dynamic>;
-    final keys = switch (installer) {
-      'com.apple' => const ['appStoreUrl'],
-      'com.apple.testflight' => const ['testFlightUrl'],
-      _ => const ['appStoreUrl', 'testFlightUrl'],
-    };
-    for (final key in keys) {
-      final value = data[key];
-      if (value is! String) continue;
-      final url = Uri.tryParse(value);
-      if (url == null || !_isHttps(url)) continue;
-      final expectedHost = key == 'appStoreUrl'
-          ? 'apps.apple.com'
-          : 'testflight.apple.com';
-      if (url.host == expectedHost &&
-          (key == 'appStoreUrl'
-              ? url.pathSegments.any((s) => RegExp(r'^id\d+$').hasMatch(s))
-              : RegExp(r'^/join/[A-Za-z0-9]+/?$').hasMatch(url.path))) {
-        return url;
-      }
-    }
-    return null;
   }
 
+  /// Downloads the package and checks its size and SHA-256 digest.
   Future<File> download(
     AppUpdate update, {
     required void Function(int received, int total) onProgress,
   }) async {
-    final asset = update._package;
-    if (asset == null) throw StateError('This update uses an app store');
-    final cache = Directory(
-      p.join((await getTemporaryDirectory()).path, _cacheName),
-    );
+    final asset = update.package;
+    // Only the package being installed is kept on disk.
+    await clearDownloads();
+    final cache = await _cache();
     await cache.create(recursive: true);
     final folder = await cache.createTemp('package-');
     final file = File(p.join(folder.path, asset.name));
@@ -233,19 +262,23 @@ class AppUpdateService {
       } finally {
         await sink.close();
       }
-      if ((await sha256.bind(file.openRead()).first).toString() !=
-          asset.sha256Digest) {
-        throw const FormatException('Install package SHA-256 mismatch');
+      final digest = await sha256.bind(file.openRead()).first;
+      if (digest.toString() != asset.sha256Digest) {
+        throw const UpdateException(UpdateFailure.corrupted);
       }
       return file;
-    } catch (_) {
+    } catch (error) {
       await folder.delete(recursive: true);
-      rethrow;
+      if (error is UpdateException) rethrow;
+      if (error is FormatException) {
+        throw const UpdateException(UpdateFailure.corrupted);
+      }
+      throw const UpdateException(UpdateFailure.offline);
     }
   }
 
   Stream<List<int>> _assetBytes(
-    _ReleaseAsset asset, {
+    ReleaseAsset asset, {
     void Function(int received, int total)? onProgress,
   }) async* {
     final response = await _openAsset(asset.url);
@@ -253,15 +286,13 @@ class AppUpdateService {
     await for (final chunk in response.stream.timeout(_timeout)) {
       received += chunk.length;
       if (received > asset.size) {
-        throw const FormatException(
-          'Install package is larger than its release metadata',
-        );
+        throw const FormatException('Package is larger than its release metadata');
       }
       onProgress?.call(received, asset.size);
       yield chunk;
     }
     if (received != asset.size) {
-      throw const FormatException('Incomplete release asset download');
+      throw const FormatException('Incomplete package download');
     }
   }
 
@@ -286,13 +317,4 @@ class AppUpdateService {
 
   static bool _isHttps(Uri url) =>
       url.scheme == 'https' && url.userInfo.isEmpty && url.port == 443;
-}
-
-class _ReleaseAsset {
-  final String name;
-  final Uri url;
-  final int size;
-  final String sha256Digest;
-
-  const _ReleaseAsset(this.name, this.url, this.size, this.sha256Digest);
 }

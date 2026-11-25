@@ -45,6 +45,13 @@ jobs:
           Remove-Item $archive
           Join-Path $env:RUNNER_TEMP 'flutter\bin' | Out-File $env:GITHUB_PATH -Append -Encoding utf8
 
+      - name: Check release tag
+        if: inputs.release_tag != ''
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: scripts/check_release_tag.sh "$RELEASE_TAG"
+
       - name: Build Flutter app
         working-directory: app
         env:

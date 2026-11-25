@@ -11,7 +11,21 @@ import 'package:path_provider/path_provider.dart';
 
 enum DrawerDragPhase { start, update, end }
 
-enum UpdatePackageOpenResult { opened, permissionRequired, incompatibleVersion, unavailable }
+/// Outcome of handing a downloaded, verified package to the platform.
+enum UpdateInstallResult {
+  /// Desktop: the app quits and the new version starts. Android: the system
+  /// installer is showing.
+  installing,
+  /// Android: "install unknown apps" must be allowed for DropDrawer first.
+  permissionRequired,
+  /// The package is signed by a different identity than the running app.
+  signatureMismatch,
+  /// macOS: the app's location cannot be written by this user.
+  notWritable,
+  /// Android: the package's version code is not newer.
+  versionTooOld,
+  unavailable,
+}
 
 class DrawerWindowService {
   static const _channel = MethodChannel('com.dropdrawer/drawer_window');
@@ -362,21 +376,34 @@ class DrawerWindowService {
     return ok ?? false;
   }
 
-  Future<UpdatePackageOpenResult> openUpdatePackage(String path) async {
-    if (!isAndroid && !supportsEdgeDrawer) {
-      return UpdatePackageOpenResult.unavailable;
-    }
+  /// Installs a verified update package: macOS replaces the app bundle and
+  /// relaunches, Windows runs the installer silently and relaunches, Android
+  /// opens the system installer.
+  Future<UpdateInstallResult> installUpdate(String path) async {
+    if (!isAndroid && !supportsEdgeDrawer) return UpdateInstallResult.unavailable;
     final channel = isAndroid ? _mobileChannel : _channel;
     final result = await channel.invokeMethod<String>(
-      'openUpdatePackage',
+      'installUpdate',
       {'path': path},
     );
     return switch (result) {
-      'opened' => UpdatePackageOpenResult.opened,
-      'permission_required' => UpdatePackageOpenResult.permissionRequired,
-      'incompatible_version' => UpdatePackageOpenResult.incompatibleVersion,
-      _ => UpdatePackageOpenResult.unavailable,
+      'installing' => UpdateInstallResult.installing,
+      'permission_required' => UpdateInstallResult.permissionRequired,
+      'signature_mismatch' => UpdateInstallResult.signatureMismatch,
+      'not_writable' => UpdateInstallResult.notWritable,
+      'version_too_old' => UpdateInstallResult.versionTooOld,
+      _ => UpdateInstallResult.unavailable,
     };
+  }
+
+  /// macOS: opens a downloaded disk image in Finder for a manual install.
+  Future<bool> openUpdatePackage(String path) async {
+    if (!supportsEdgeDrawer || isWindows) return false;
+    final result = await _channel.invokeMethod<String>(
+      'openUpdatePackage',
+      {'path': path},
+    );
+    return result == 'opened';
   }
 
   Future<String?> pickDirectoryNative() async {

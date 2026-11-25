@@ -11,6 +11,15 @@ for arg in "$@"; do
   fi
 done
 
+# Release builds embed their tag for in-app updates; untagged builds are
+# development builds and never check for updates.
+RELEASE_TAG="${DROPDRAWER_RELEASE_TAG:-}"
+if [[ -n "$RELEASE_TAG" ]]; then
+  "$ROOT_DIR/scripts/check_release_tag.sh" "$RELEASE_TAG"
+else
+  echo "Development build: DROPDRAWER_RELEASE_TAG is not set, so in-app updates are off in this build."
+fi
+
 echo "[1/5] Building native Rust P2P engine (release)..."
 cargo build --release -p p2p-core --offline
 DYLIB="$ROOT_DIR/target/release/libdropdrawer_p2p.dylib"
@@ -25,7 +34,7 @@ if [[ -n "$SNE_MANIFEST" ]]; then
     --target aarch64-apple-darwin --target-dir "$SNE_TARGET_DIR"
 fi
 (cd "$ROOT_DIR/app" && flutter analyze && CARGO_PROFILE_RELEASE_LTO=false CARGO_PROFILE_RELEASE_PANIC=unwind flutter build macos --release \
-  "--dart-define=DROPDRAWER_RELEASE_TAG=${DROPDRAWER_RELEASE_TAG:-}")
+  "--dart-define=DROPDRAWER_RELEASE_TAG=$RELEASE_TAG")
 
 RAW_APP="$ROOT_DIR/app/build/macos/Build/Products/Release/dropdrawer_app.app"
 DIST_DIR="$ROOT_DIR/dist"
@@ -53,6 +62,12 @@ if [[ -n "$SIGN_ID" ]]; then
     --entitlements "$ROOT_DIR/app/macos/Runner/Release.entitlements" \
     "$APP_BUNDLE"
 else
+  if [[ -n "$RELEASE_TAG" ]]; then
+    # In-app updates only accept a bundle signed by the same certificate as
+    # the running app, and an ad-hoc signature changes with every build.
+    echo "error: release builds need a signing certificate (set DROPDRAWER_SIGN_IDENTITY)" >&2
+    exit 1
+  fi
   echo "  No signing certificate found; using ad-hoc signature"
   codesign --force --deep --sign - \
     --entitlements "$ROOT_DIR/app/macos/Runner/Release.entitlements" \

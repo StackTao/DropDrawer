@@ -1,275 +1,142 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
-import 'package:package_info_plus/package_info_plus.dart';
-import 'package:pub_semver/pub_semver.dart';
 
 import '../services/app_update_service.dart';
-import '../services/drawer_window_service.dart';
+import '../state/app_update_controller.dart';
 import 'theme.dart';
 
-class UpdateSettings extends StatefulWidget {
-  const UpdateSettings({
-    super.key,
-    required this.windowService,
-    this.platform,
-    this.updateService,
-  });
+/// "关于与更新" in Preferences: version, automatic checks and manual actions.
+class UpdateSettings extends StatelessWidget {
+  const UpdateSettings({super.key, required this.updates, required this.mobile});
 
-  final DrawerWindowService windowService;
-  final UpdatePlatform? platform;
-  final AppUpdateService? updateService;
-
-  @override
-  State<UpdateSettings> createState() => _UpdateSettingsState();
-}
-
-class _UpdateSettingsState extends State<UpdateSettings> {
-  late final AppUpdateService _service =
-      widget.updateService ?? AppUpdateService();
-  late final UpdatePlatform _platform =
-      widget.platform ?? UpdatePlatform.current;
-
-  Version? _installed;
-  String? _iosInstaller;
-  AppUpdate? _update;
-  File? _package;
-  String _status = '正在读取当前版本…';
-  bool _checking = false;
-  bool _opening = false;
-  double? _progress;
-
-  bool get _busy => _checking || _opening || _progress != null;
-
-  @override
-  void initState() {
-    super.initState();
-    _readVersion();
-  }
-
-  @override
-  void dispose() {
-    if (widget.updateService == null) _service.close();
-    super.dispose();
-  }
-
-  Future<void> _readVersion() async {
-    try {
-      final info = await PackageInfo.fromPlatform();
-      if (!mounted) return;
-      setState(() {
-        _installed = AppUpdateService.installedVersion(info);
-        _iosInstaller = info.installerStore;
-        _status = _installed == null ? '无法识别当前版本。' : '';
-      });
-    } catch (_) {
-      if (mounted) setState(() => _status = '无法读取当前版本。');
-    }
-  }
-
-  Future<void> _check() async {
-    setState(() {
-      _checking = true;
-      _status = '正在检查更新…';
-      _update = null;
-      _package = null;
-    });
-    try {
-      final result = await _service.check(
-        _installed!,
-        _platform,
-        iosInstaller: _iosInstaller,
-      );
-      if (!mounted) return;
-      setState(() {
-        _update = result.update;
-        _status = switch (result) {
-          (update: AppUpdate update, hasNewerRelease: _) =>
-            '发现版本 ${update.version}',
-          (update: null, hasNewerRelease: true) =>
-            _platform == UpdatePlatform.ios
-                ? '新版本尚未在当前 iOS 分发渠道发布。'
-                : '有新版发布，当前平台暂无可用安装包。',
-          _ => '当前已是最新版本。',
-        };
-      });
-    } catch (_) {
-      if (mounted) setState(() => _status = '检查更新失败，请稍后重试。');
-    } finally {
-      if (mounted) setState(() => _checking = false);
-    }
-  }
-
-  Future<void> _download(AppUpdate update) async {
-    setState(() {
-      _status = '正在下载并校验安装包…';
-      _progress = 0;
-    });
-    try {
-      final file = await _service.download(
-        update,
-        onProgress: (received, total) {
-          if (!mounted) return;
-          final progress = received / total;
-          if ((progress - _progress!).abs() >= 0.01 || received == total) {
-            setState(() => _progress = progress);
-          }
-        },
-      );
-      if (!mounted) return;
-      setState(() {
-        _package = file;
-        _status = _platform == UpdatePlatform.macosArm64
-            ? '安装包已校验。打开后将应用拖入「应用程序」。'
-            : '安装包已校验。请在安装前完成正在进行的传输。';
-      });
-    } catch (_) {
-      if (mounted) setState(() => _status = '下载或校验失败，请重新下载。');
-    } finally {
-      if (mounted) setState(() => _progress = null);
-    }
-  }
-
-  Future<void> _openPackage(File file) async {
-    setState(() => _opening = true);
-    try {
-      if (!await file.exists()) {
-        if (mounted) {
-          setState(() {
-            _package = null;
-            _status = '安装包已被系统清理，请重新下载。';
-          });
-        }
-        return;
-      }
-      final result = await widget.windowService.openUpdatePackage(file.path);
-      if (!mounted) return;
-      setState(() {
-        _status = switch (result) {
-          UpdatePackageOpenResult.opened => '已打开安装包，请按系统提示完成更新。',
-          UpdatePackageOpenResult.permissionRequired =>
-            '请允许 DropDrawer 安装应用，返回后再次点击安装。',
-          UpdatePackageOpenResult.incompatibleVersion =>
-            '此 Android 安装包的构建号过旧，请从发布页选择对应的安装包。',
-          UpdatePackageOpenResult.unavailable => '无法打开安装包，请重试。',
-        };
-      });
-    } catch (_) {
-      if (mounted) setState(() => _status = '无法打开安装包，请重试。');
-    } finally {
-      if (mounted) setState(() => _opening = false);
-    }
-  }
-
-  Future<void> _openPage(Uri url) async {
-    try {
-      if (await widget.windowService.openExternalUrl(url.toString())) return;
-    } catch (_) {}
-    if (mounted) setState(() => _status = '无法打开更新页面，请重试。');
-  }
+  final AppUpdateController updates;
+  final bool mobile;
 
   @override
   Widget build(BuildContext context) {
-    final update = _update;
-    final store = update?.storeUrl;
-    final file = _package;
-    final progress = _progress;
-    final mobile = widget.windowService.isMobile;
-    final minimumHeight = mobile ? 44.0 : 32.0;
-    final packageSize = update?.packageSize;
-    final supported = _platform != UpdatePlatform.unsupported;
-    final status = supported ? _status : '当前平台请从发布页获取更新。';
-    return Padding(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            _installed == null ? '当前版本' : '当前版本 ${_installed!}',
-            style: TextStyle(
-              color: MacPalette.textPrimary,
-              fontSize: mobile ? 14 : 12,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          if (status.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Semantics(
-              liveRegion: true,
-              child: Text(
-                status,
-                style: TextStyle(
-                  color: MacPalette.textSecondary,
-                  fontSize: mobile ? 12 : 11,
+    return ListenableBuilder(
+      listenable: updates,
+      builder: (context, _) {
+        final installed = updates.installed;
+        final version = installed?.version;
+        final titleSize = mobile ? 14.0 : 12.0;
+        final noteSize = mobile ? 12.5 : 10.5;
+        final buttonHeight = mobile ? 44.0 : 30.0;
+        return Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      version == null ? 'DropDrawer' : 'DropDrawer $version',
+                      style: TextStyle(
+                        fontSize: titleSize,
+                        fontWeight: FontWeight.w500,
+                        color: MacPalette.textPrimary,
+                      ),
+                    ),
+                  ),
+                  if (updates.canUpdate)
+                    Text(
+                      '自动检查',
+                      style: TextStyle(fontSize: noteSize, color: MacPalette.textSecondary),
+                    ),
+                  if (updates.canUpdate)
+                    AdaptiveSwitch(
+                      value: updates.autoCheck,
+                      onChanged: updates.setAutoCheck,
+                    ),
+                ],
+              ),
+              const SizedBox(height: 2),
+              Semantics(
+                liveRegion: true,
+                child: Text(
+                  _status(),
+                  style: TextStyle(fontSize: noteSize, color: MacPalette.textTertiary),
                 ),
               ),
-            ),
-          ],
-          if (_checking || progress != null) ...[
-            const SizedBox(height: 8),
-            LinearProgressIndicator(
-              value: progress,
-              semanticsLabel: _checking ? '正在检查更新' : '安装包下载进度',
-              semanticsValue: progress == null
-                  ? null
-                  : '${(progress * 100).round()}%',
-            ),
-          ],
-          const SizedBox(height: 6),
-          Wrap(
-            spacing: 8,
-            runSpacing: 4,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              if (supported)
-                OutlinedButton(
-                  style: OutlinedButton.styleFrom(
-                    minimumSize: Size(0, minimumHeight),
-                  ),
-                  onPressed: _busy || _installed == null ? null : _check,
-                  child: const Text('检查更新'),
-                ),
-              if (store != null)
-                FilledButton(
-                  style: FilledButton.styleFrom(
-                    minimumSize: Size(0, minimumHeight),
-                  ),
-                  onPressed: _busy ? null : () => _openPage(store),
-                  child: Text(
-                    store.host == 'testflight.apple.com'
-                        ? '打开 TestFlight'
-                        : '打开 App Store',
-                  ),
-                )
-              else if (update != null)
-                FilledButton(
-                  style: FilledButton.styleFrom(
-                    minimumSize: Size(0, minimumHeight),
-                  ),
-                  onPressed: _busy
-                      ? null
-                      : file == null
-                      ? () => _download(update)
-                      : () => _openPackage(file),
-                  child: Text(
-                    file != null
-                        ? '打开安装包'
-                        : '下载更新 · ${(packageSize! / 1048576).toStringAsFixed(1)} MB',
+              if (updates.phase == UpdatePhase.checking ||
+                  updates.phase == UpdatePhase.downloading) ...[
+                const SizedBox(height: 8),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(2),
+                  child: LinearProgressIndicator(
+                    value: updates.progress,
+                    minHeight: 3,
+                    backgroundColor: MacPalette.fill(0.1),
+                    color: MacPalette.accent,
                   ),
                 ),
-              TextButton(
-                style: TextButton.styleFrom(
-                  minimumSize: Size(0, minimumHeight),
-                ),
-                onPressed: () => _openPage(
-                  update?.releasePage ?? AppUpdateService.releasesPage,
-                ),
-                child: Text(update == null ? '发布页' : '更新说明'),
+              ],
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                children: [
+                  if (updates.canUpdate)
+                    OutlinedButton(
+                      style: OutlinedButton.styleFrom(minimumSize: Size(0, buttonHeight)),
+                      onPressed: updates.busy ? null : () => updates.check(),
+                      child: const Text('检查更新'),
+                    ),
+                  if (updates.update != null && updates.manualPackage == null)
+                    FilledButton(
+                      style: FilledButton.styleFrom(minimumSize: Size(0, buttonHeight)),
+                      onPressed: updates.busy ? null : updates.install,
+                      child: Text(_installLabel(updates.update!)),
+                    ),
+                  if (updates.manualPackage != null)
+                    FilledButton(
+                      style: FilledButton.styleFrom(minimumSize: Size(0, buttonHeight)),
+                      onPressed: updates.openManualPackage,
+                      child: const Text('打开安装包'),
+                    ),
+                  TextButton(
+                    style: TextButton.styleFrom(minimumSize: Size(0, buttonHeight)),
+                    onPressed: updates.openReleasePage,
+                    child: Text(updates.update == null ? '发布页' : '更新说明'),
+                  ),
+                ],
               ),
             ],
           ),
-        ],
-      ),
+        );
+      },
     );
+  }
+
+  String _installLabel(AppUpdate update) {
+    final mb = (update.package.size / 1048576).toStringAsFixed(1);
+    return updates.platform.isDesktop
+        ? '更新到 ${update.version}（$mb MB）并重启'
+        : '更新到 ${update.version}（$mb MB）';
+  }
+
+  String _status() {
+    final installed = updates.installed;
+    if (installed == null) return '正在读取版本…';
+    if (updates.platform == UpdatePlatform.unsupported) {
+      return '这个平台的新版本请从发布页获取。';
+    }
+    if (!installed.isRelease) {
+      return '开发版本（构建时未指定发布标签），不检查更新。';
+    }
+    return switch (updates.phase) {
+      UpdatePhase.idle => updates.autoCheck ? '每天自动检查一次新版本。' : '已关闭自动检查。',
+      UpdatePhase.checking => '正在检查更新…',
+      UpdatePhase.upToDate => updates.hasNewerReleaseForOtherPlatforms
+          ? '已有新版本发布，但还没有这个平台的安装包。'
+          : '已是最新版本。',
+      UpdatePhase.available => '新版本 ${updates.update!.version} 可以更新。',
+      UpdatePhase.downloading =>
+        '正在下载并校验 ${((updates.progress ?? 0) * 100).round()}%…',
+      UpdatePhase.installing => updates.platform.isDesktop
+          ? '正在安装，DropDrawer 将自动重启。'
+          : (updates.message ?? '正在打开系统安装界面…'),
+      UpdatePhase.failed => updates.message ?? '更新失败，请重试。',
+    };
   }
 }

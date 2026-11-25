@@ -31,8 +31,15 @@ Name: "{autodesktop}\DropDrawer"; Filename: "{app}\{#AppExe}"; WorkingDir: "{app
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "Launch DropDrawer"; Flags: nowait postinstall skipifsilent
+; In-app updates run this installer with /SILENT /UPDATE=1; start the new version afterwards.
+Filename: "{app}\{#AppExe}"; Flags: nowait; Check: IsInAppUpdate
 
 [Code]
+function IsInAppUpdate: Boolean;
+begin
+  Result := ExpandConstant('{param:UPDATE|0}') = '1';
+end;
+
 function FindDrawerWindow(ClassName, WindowName: String): HWND;
   external 'FindWindowW@user32.dll stdcall';
 

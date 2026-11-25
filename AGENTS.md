@@ -45,7 +45,8 @@
 16. **抽屉模式切换必须等 Flutter 画好再显示**：原生层切换 `collapsed` / `drag_pill` / `expanded` 时先隐藏窗口（macOS `alphaValue = 0`，Windows 空 `SetWindowRgn`），改尺寸后再发 `onDrawerStateChanged`，收到 Dart 回传的 `drawerFrameReady {mode}` 才显示（超时 160ms 兜底）。否则旧模式的布局会被拉伸进新尺寸的窗口里（"变形"）。改动该协议时必须同步 `drawer_window_service.dart`、`MainFlutterWindow.swift` 与 `drawer_window.cpp`；动画只用等比缩放与临界阻尼弹簧，不要再用 `sx ≠ sy` 的变换。
 17. **界面配色只用 `MacPalette`，且它不是常量**：手机端跟随系统浅色/深色（`MacPalette.use` + `main.dart` 全量重建），桌面端固定深色（macOS 窗口强制 `darkAqua`）。`MacPalette.*` 是运行时 getter，不能放进 `const` 表达式或参数默认值；不要新增 `Colors.white/black.withValues(...)` 或深色十六进制字面量，改用 `MacPalette.fill()`（中性叠加）、`shade()`（凹陷区域）、`group()`（分组面板）、`background`、`onTextPrimary` 等语义色。Material 3 的分隔线和描边颜色取自 `colorScheme.outlineVariant` / `outline`，不是 `dividerColor`。
 18. **Windows 毛玻璃需要 DWM 确认后才半透明**：`ApplyBackdrop()` 用 `DWMWA_SYSTEMBACKDROP_TYPE`（常规窗口 Mica、边缘抽屉 Acrylic，Windows 11 22H2+）并 `DwmExtendFrameIntoClientArea`；只有原生回报 `backdrop: true` 时 Flutter 才画半透明底色，否则保持不透明 `#202020`。偏好设置里可关闭（注册表 `Backdrop`）。
-19. **macOS Release 构建要点**：
+19. **应用内更新只给打了发布标签的构建**：`DROPDRAWER_RELEASE_TAG` 必须与 `app/pubspec.yaml` 版本一致（`scripts/check_release_tag.sh`，macOS 打包脚本和两个 CI 工作流都会调用）；未打标签的构建是开发版，不检查更新。原生安装入口 `installUpdate` 需同步 `drawer_window_service.dart`、`MainFlutterWindow.swift`（挂载 DMG、校验新包满足当前应用的指定签名要求后退出替换并重启）、`drawer_files.cpp`（`/SILENT /UPDATE=1` 运行安装器，`DropDrawer.iss` 据此重启应用）与 `MainActivity.kt`（比对签名证书）。macOS 发布版必须始终用同一张证书签名，不要给 Windows 更新包加 Mark-of-the-Web。
+20. **macOS Release 构建要点**：
     - 使用 `./scripts/build_macos_release.sh`（已处理 `ARCHS=arm64`、`super_native_extensions` 预编译 `CARGO_PROFILE_RELEASE_LTO=false CARGO_PROFILE_RELEASE_PANIC=unwind` 与 Apple Development 证书签名，避免 TCC 辅助功能权限重建后失效）。
     - 若更改过项目目录路径，需先清理 `app/build/macos` 避免 Xcode stale file 报错。
 

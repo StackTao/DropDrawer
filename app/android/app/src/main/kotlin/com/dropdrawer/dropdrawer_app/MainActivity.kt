@@ -7,6 +7,8 @@ import android.content.ClipboardManager
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInfo
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -25,6 +27,7 @@ import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.security.MessageDigest
 
 class MainActivity : FlutterActivity() {
     companion object {
@@ -90,9 +93,9 @@ class MainActivity : FlutterActivity() {
                 val url = call.argument<String>("url") ?: ""
                 result.success(openExternalUrl(url))
             }
-            "openUpdatePackage" -> {
+            "installUpdate" -> {
                 val path = call.argument<String>("path") ?: ""
-                result.success(openUpdatePackage(path))
+                result.success(installUpdate(path))
             }
             "readClipboard" -> {
                 val imagePath = call.argument<String>("imagePath") ?: ""
@@ -435,18 +438,27 @@ class MainActivity : FlutterActivity() {
     }
 
     @Suppress("DEPRECATION")
-    private fun openUpdatePackage(path: String): String {
+    private fun installUpdate(path: String): String {
         return try {
             val root = File(cacheDir, "dropdrawer-updates").canonicalFile
             val apk = File(path).canonicalFile
             if (!apk.path.startsWith(root.path + File.separator) || !apk.isFile || apk.extension != "apk") {
                 return "unavailable"
             }
-            val update = packageManager.getPackageArchiveInfo(apk.path, 0) ?: return "unavailable"
+            val update = packageManager.getPackageArchiveInfo(apk.path, signingFlags()) ?: return "unavailable"
             if (update.packageName != packageName) return "unavailable"
-            val installed = packageManager.getPackageInfo(packageName, 0)
+            val installed = packageManager.getPackageInfo(packageName, signingFlags())
             if (PackageInfoCompat.getLongVersionCode(update) <= PackageInfoCompat.getLongVersionCode(installed)) {
-                return "incompatible_version"
+                return "version_too_old"
+            }
+            // Android refuses an update signed by another key with a bare
+            // "App not installed"; say why before opening the installer.
+            val updateSigners = signerDigests(update)
+            val installedSigners = signerDigests(installed)
+            if (updateSigners.isNotEmpty() && installedSigners.isNotEmpty() &&
+                updateSigners != installedSigners
+            ) {
+                return "signature_mismatch"
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
                 !packageManager.canRequestPackageInstalls()
@@ -461,10 +473,32 @@ class MainActivity : FlutterActivity() {
                 setDataAndType(uri, "application/vnd.android.package-archive")
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             })
-            "opened"
+            "installing"
         } catch (_: Exception) {
             "unavailable"
         }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun signingFlags(): Int =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            PackageManager.GET_SIGNING_CERTIFICATES
+        } else {
+            PackageManager.GET_SIGNATURES
+        }
+
+    /** SHA-256 digests of the certificates that signed [info]; empty if unknown. */
+    @Suppress("DEPRECATION")
+    private fun signerDigests(info: PackageInfo): Set<String> {
+        val signatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            info.signingInfo?.apkContentsSigners
+        } else {
+            info.signatures
+        } ?: return emptySet()
+        val sha = MessageDigest.getInstance("SHA-256")
+        return signatures.map { signature ->
+            sha.digest(signature.toByteArray()).joinToString("") { "%02x".format(it) }
+        }.toSet()
     }
 
     private fun readClipboard(imagePath: String): Map<String, Any> {
