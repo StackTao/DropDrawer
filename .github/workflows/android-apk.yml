@@ -20,7 +20,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
@@ -35,7 +35,12 @@ jobs:
       - name: Install Android Rust targets & cargo-ndk
         run: |
           rustup target add aarch64-linux-android armv7-linux-androideabi
-          cargo install cargo-ndk --locked
+
+      - name: Install prebuilt cargo-ndk
+        uses: taiki-e/install-action@cargo-ndk
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
 
       - name: Build native Android P2P libraries (.so)
         run: |
@@ -54,12 +59,38 @@ jobs:
 
       - name: Analyze, test, and build Android Release APK
         working-directory: app
+        env:
+          # Work around super_native_extensions 0.9.1 LTO + panic=abort issue on modern Rust.
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_PANIC: "unwind"
         run: |
           flutter pub get --enforce-lockfile
+
+          # Patch cargokit plugin.gradle for Gradle 9 (Project.exec removed in favor of ExecOperations).
+          python3 - <<'PY'
+          import glob, os
+          pub_cache = os.environ.get("PUB_CACHE", os.path.expanduser("~/.pub-cache"))
+          for path in glob.glob(os.path.join(pub_cache, "hosted", "pub.dev", "*", "cargokit", "gradle", "plugin.gradle")):
+              with open(path, "r", encoding="utf-8") as f:
+                  src = f.read()
+              if "project.exec {" not in src:
+                  continue
+              if "getExecOperations()" not in src:
+                  src = src.replace(
+                      "abstract class CargoKitBuildTask extends DefaultTask {",
+                      "abstract class CargoKitBuildTask extends DefaultTask {\n\n    @javax.inject.Inject\n    abstract org.gradle.process.ExecOperations getExecOperations()",
+                      1,
+                  )
+              src = src.replace("project.exec {", "execOperations.exec {")
+              with open(path, "w", encoding="utf-8") as f:
+                  f.write(src)
+              print("Patched cargokit for Gradle 9:", path)
+          PY
+
           flutter analyze --no-pub
           flutter test --no-pub
-          flutter build apk --release --no-pub --split-per-abi
-          flutter build apk --release --no-pub
+          flutter build apk --release --no-pub --target-platform android-arm64,android-arm --split-per-abi
+          flutter build apk --release --no-pub --target-platform android-arm64,android-arm
           mkdir -p ../dist
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk ../dist/DropDrawer-Android-arm64.apk
           cp build/app/outputs/flutter-apk/app-release.apk ../dist/DropDrawer-Android-universal.apk
