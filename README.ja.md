@@ -15,8 +15,11 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/StackTao/DropDrawer/releases"><img src="https://img.shields.io/github/v/release/StackTao/DropDrawer?include_prereleases&amp;display_name=tag&amp;sort=semver" alt="最新リリース" /></a>
   <a href="https://github.com/StackTao/DropDrawer/actions/workflows/windows-installer.yml"><img src="https://github.com/StackTao/DropDrawer/actions/workflows/windows-installer.yml/badge.svg?branch=main" alt="Windows のビルド状況" /></a>
   <a href="https://github.com/StackTao/DropDrawer/actions/workflows/android-apk.yml"><img src="https://github.com/StackTao/DropDrawer/actions/workflows/android-apk.yml/badge.svg?branch=main" alt="Android のビルド状況" /></a>
+  <a href="https://github.com/StackTao/DropDrawer/releases"><img src="https://img.shields.io/github/downloads/StackTao/DropDrawer/total" alt="リリースの総ダウンロード数" /></a>
+  <a href="https://github.com/StackTao/DropDrawer/stargazers"><img src="https://img.shields.io/github/stars/StackTao/DropDrawer?style=flat&amp;logo=github" alt="GitHub スター数" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT ライセンス" /></a>
 </p>
 
@@ -159,6 +162,15 @@ cargo test --workspace
 ```
 
 P2P の動作だけを確認するには、`cargo run --bin dropdrawer-p2p-cli -- seed ./sample.zip` で転送チケットを発行し、受信側で `cargo run --bin dropdrawer-p2p-cli -- pull '<TICKET_JSON>' ./received.zip` を実行してください。
+
+## スター数の推移
+
+<a href="https://www.star-history.com/?repos=StackTao%2FDropDrawer&amp;type=date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=StackTao/DropDrawer&amp;type=Date&amp;theme=dark" />
+    <img src="https://api.star-history.com/svg?repos=StackTao/DropDrawer&amp;type=Date" alt="スター数の推移" />
+  </picture>
+</a>
 
 ## ライセンス
 

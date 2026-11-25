@@ -15,8 +15,11 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/StackTao/DropDrawer/releases"><img src="https://img.shields.io/github/v/release/StackTao/DropDrawer?include_prereleases&amp;display_name=tag&amp;sort=semver" alt="Latest release" /></a>
   <a href="https://github.com/StackTao/DropDrawer/actions/workflows/windows-installer.yml"><img src="https://github.com/StackTao/DropDrawer/actions/workflows/windows-installer.yml/badge.svg?branch=main" alt="Windows build status" /></a>
   <a href="https://github.com/StackTao/DropDrawer/actions/workflows/android-apk.yml"><img src="https://github.com/StackTao/DropDrawer/actions/workflows/android-apk.yml/badge.svg?branch=main" alt="Android build status" /></a>
+  <a href="https://github.com/StackTao/DropDrawer/releases"><img src="https://img.shields.io/github/downloads/StackTao/DropDrawer/total" alt="Total release downloads" /></a>
+  <a href="https://github.com/StackTao/DropDrawer/stargazers"><img src="https://img.shields.io/github/stars/StackTao/DropDrawer?style=flat&amp;logo=github" alt="GitHub stars" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License" /></a>
 </p>
 
@@ -159,6 +162,15 @@ cargo test --workspace
 ```
 
 To test P2P independently, run `cargo run --bin dropdrawer-p2p-cli -- seed ./sample.zip` to generate a transfer ticket. On the receiving device, run `cargo run --bin dropdrawer-p2p-cli -- pull '<TICKET_JSON>' ./received.zip`.
+
+## Star history
+
+<a href="https://www.star-history.com/?repos=StackTao%2FDropDrawer&amp;type=date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=StackTao/DropDrawer&amp;type=Date&amp;theme=dark" />
+    <img src="https://api.star-history.com/svg?repos=StackTao/DropDrawer&amp;type=Date" alt="Star history" />
+  </picture>
+</a>
 
 ## License
 

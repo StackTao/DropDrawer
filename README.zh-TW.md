@@ -15,8 +15,11 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/StackTao/DropDrawer/releases"><img src="https://img.shields.io/github/v/release/StackTao/DropDrawer?include_prereleases&amp;display_name=tag&amp;sort=semver" alt="最新版本" /></a>
   <a href="https://github.com/StackTao/DropDrawer/actions/workflows/windows-installer.yml"><img src="https://github.com/StackTao/DropDrawer/actions/workflows/windows-installer.yml/badge.svg?branch=main" alt="Windows 建置狀態" /></a>
   <a href="https://github.com/StackTao/DropDrawer/actions/workflows/android-apk.yml"><img src="https://github.com/StackTao/DropDrawer/actions/workflows/android-apk.yml/badge.svg?branch=main" alt="Android 建置狀態" /></a>
+  <a href="https://github.com/StackTao/DropDrawer/releases"><img src="https://img.shields.io/github/downloads/StackTao/DropDrawer/total" alt="發行附件下載總量" /></a>
+  <a href="https://github.com/StackTao/DropDrawer/stargazers"><img src="https://img.shields.io/github/stars/StackTao/DropDrawer?style=flat&amp;logo=github" alt="GitHub Stars 數量" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT 授權條款" /></a>
 </p>
 
@@ -159,6 +162,15 @@ cargo test --workspace
 ```
 
 若要獨立測試 P2P，請執行 `cargo run --bin dropdrawer-p2p-cli -- seed ./sample.zip` 產生傳輸票據，再於接收端執行 `cargo run --bin dropdrawer-p2p-cli -- pull '<TICKET_JSON>' ./received.zip`。
+
+## Star 趨勢
+
+<a href="https://www.star-history.com/?repos=StackTao%2FDropDrawer&amp;type=date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=StackTao/DropDrawer&amp;type=Date&amp;theme=dark" />
+    <img src="https://api.star-history.com/svg?repos=StackTao/DropDrawer&amp;type=Date" alt="Star 趨勢" />
+  </picture>
+</a>
 
 ## 授權
 

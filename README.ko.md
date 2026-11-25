@@ -15,8 +15,11 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/StackTao/DropDrawer/releases"><img src="https://img.shields.io/github/v/release/StackTao/DropDrawer?include_prereleases&amp;display_name=tag&amp;sort=semver" alt="최신 릴리스" /></a>
   <a href="https://github.com/StackTao/DropDrawer/actions/workflows/windows-installer.yml"><img src="https://github.com/StackTao/DropDrawer/actions/workflows/windows-installer.yml/badge.svg?branch=main" alt="Windows 빌드 상태" /></a>
   <a href="https://github.com/StackTao/DropDrawer/actions/workflows/android-apk.yml"><img src="https://github.com/StackTao/DropDrawer/actions/workflows/android-apk.yml/badge.svg?branch=main" alt="Android 빌드 상태" /></a>
+  <a href="https://github.com/StackTao/DropDrawer/releases"><img src="https://img.shields.io/github/downloads/StackTao/DropDrawer/total" alt="릴리스 총 다운로드 수" /></a>
+  <a href="https://github.com/StackTao/DropDrawer/stargazers"><img src="https://img.shields.io/github/stars/StackTao/DropDrawer?style=flat&amp;logo=github" alt="GitHub 스타 수" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT 라이선스" /></a>
 </p>
 
@@ -159,6 +162,15 @@ cargo test --workspace
 ```
 
 P2P 전송을 따로 확인하려면 `cargo run --bin dropdrawer-p2p-cli -- seed ./sample.zip`을 실행해 전송 티켓을 생성합니다. 받는 기기에서는 `cargo run --bin dropdrawer-p2p-cli -- pull '<TICKET_JSON>' ./received.zip`을 실행합니다.
+
+## 스타 수 추이
+
+<a href="https://www.star-history.com/?repos=StackTao%2FDropDrawer&amp;type=date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=StackTao/DropDrawer&amp;type=Date&amp;theme=dark" />
+    <img src="https://api.star-history.com/svg?repos=StackTao/DropDrawer&amp;type=Date" alt="스타 수 추이" />
+  </picture>
+</a>
 
 ## 라이선스
 
