@@ -14,6 +14,10 @@
   <a href="LICENSE">MIT License</a>
 </p>
 
+<p align="center">
+  <img src="docs/images/macos-drawer.png" alt="DropDrawer 的 macOS 贴边抽屉展开后显示同步的图片、PDF 和文本" width="368" />
+</p>
+
 DropDrawer 是一款可自托管的跨平台文件传输与暂存工具。桌面端在屏幕边缘提供随时可打开的抽屉，手机端也能收取和发送文件、图片与文本。设备在线时优先尝试 P2P 直连，已缓存的文件可以通过云盘中转离线取用。需要发给其他人时，可生成浏览器下载链接。
 
 ## 主要功能
