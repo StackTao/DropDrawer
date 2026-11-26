@@ -157,9 +157,10 @@ class _PreferencesViewState extends State<PreferencesView> {
     final thresholdMb = c.autoCloudThresholdBytes ~/ (1024 * 1024);
     final threshold = [10, 20, 50, 100].contains(thresholdMb) ? thresholdMb : 20;
     const policyFooter =
-        '智能：小文件同时存云盘、大文件只走 P2P。纯 P2P：不经过服务器。存云盘：来源设备离线也能下载。';
+        '智能模式下小文件同步存云盘、大文件直连 P2P；纯 P2P 不经服务器；存云盘支持离线下载。';
+    final isIosDefaultDir = c.windowService.isIOS && c.customDownloadDir == null;
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
       children: [
         PhoneSection(
           header: '传输',
@@ -191,7 +192,7 @@ class _PreferencesViewState extends State<PreferencesView> {
         ),
         PhoneSection(
           header: '自动清理',
-          footer: '新加入的文件和文本到期后，自动清理云端缓存与抽屉记录。',
+          footer: '到期后自动清理云端缓存与列表记录。',
           children: [
             PhoneRow(
               title: '默认过期时间',
@@ -208,10 +209,16 @@ class _PreferencesViewState extends State<PreferencesView> {
         PhoneSection(
           header: '下载',
           children: [
-            PhoneRow(
-              title: '保存位置',
-              subtitle: _effectiveDir.isEmpty ? '加载中…' : _effectiveDir,
-            ),
+            if (isIosDefaultDir)
+              const PhoneRow(
+                title: '保存位置',
+                value: '「文件」App › DropDrawer',
+              )
+            else
+              PhoneRow(
+                title: '保存位置',
+                subtitle: _effectiveDir.isEmpty ? '加载中…' : _effectiveDir,
+              ),
             if (c.customDownloadDir != null)
               PhoneRow(
                 title: '恢复默认位置',

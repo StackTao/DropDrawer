@@ -235,9 +235,13 @@ ThemeData buildAppTheme({required bool mobile, required bool android}) {
     // scrolls under them.
     cupertinoOverrideTheme: mobile
         ? CupertinoThemeData(
+            brightness: MacPalette.brightness,
             primaryColor: MacPalette.accent,
             scaffoldBackgroundColor: MacPalette.background,
-            barBackgroundColor: MacPalette.background,
+            barBackgroundColor: MacPalette.background.withValues(alpha: 0.85),
+            textTheme: CupertinoTextThemeData(
+              primaryColor: MacPalette.accent,
+            ),
           )
         : null,
     appBarTheme: mobile

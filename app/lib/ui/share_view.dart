@@ -336,6 +336,7 @@ class _ShareViewState extends State<ShareView> {
                 label: '提取码',
                 placeholder: '留空为公开',
                 trailing: PhoneBarButton(
+                  glass: false,
                   action: PageAction(
                     icon: material ? Icons.casino_outlined : CupertinoIcons.sparkles,
                     tooltip: '随机生成 4 位提取码',
@@ -398,7 +399,7 @@ class _ShareViewState extends State<ShareView> {
         PhoneSection(
           header: '已创建的外链（${c.shareLinks.length}）',
           footer: c.shareLinks.isEmpty
-              ? '在抽屉里长按或打开一项可以创建外链；多选后可以打包成合集。'
+              ? '在首页长按或打开任意一项即可创建外链；多选后可打包成合集。'
               : '点按一条外链可以复制、打开或撤销。',
           children: [
             if (c.shareLinks.isEmpty)

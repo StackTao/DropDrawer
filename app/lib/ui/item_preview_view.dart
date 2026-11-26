@@ -184,7 +184,10 @@ class ItemPreviewView extends StatelessWidget {
                       : '来源离线')),
         ),
         ('到期清理', item.expiresAt != null ? _formatDateTime(item.expiresAt!) : '永不过期'),
-        if (localPath != null) ('本机位置', localPath),
+        if (localPath != null)
+          controller.windowService.isIOS
+              ? ('本地缓存', '已保存到本机')
+              : ('本机位置', localPath),
       ];
 
   /// Phones: the content up top (text, image, or a large file icon and name
@@ -218,7 +221,7 @@ class ItemPreviewView extends StatelessWidget {
       hero = Padding(
         padding: const EdgeInsets.only(bottom: 24),
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(material ? 18 : 12),
+          borderRadius: BorderRadius.circular(material ? 18 : 16),
           child: ColoredBox(
             color: MacPalette.cardBg,
             child: SizedBox(height: 320, child: _imagePreview(localPath)),

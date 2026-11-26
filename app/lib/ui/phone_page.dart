@@ -108,11 +108,171 @@ class PageAction {
   final bool destructive;
 }
 
-/// Navigation bar button: a tinted icon on iOS, an [IconButton] on Android.
+/// iOS 26 Liquid Glass translucent floating surface: backdrop blur, top-lit
+/// glass gradient, specular rim highlight, and soft ambient elevation shadow.
+class LiquidGlass extends StatelessWidget {
+  const LiquidGlass({
+    super.key,
+    required this.borderRadius,
+    required this.child,
+    this.blur = 28,
+    this.shadow = true,
+    this.tinted = false,
+  });
+
+  final BorderRadius borderRadius;
+  final Widget child;
+  final double blur;
+  final bool shadow;
+  final bool tinted;
+
+  @override
+  Widget build(BuildContext context) {
+    final light = MacPalette.isLight;
+    final topColor = tinted
+        ? MacPalette.accent.withValues(alpha: light ? 0.14 : 0.26)
+        : MacPalette.elevatedBg.withValues(alpha: light ? 0.92 : 0.80);
+    final bottomColor = tinted
+        ? MacPalette.accent.withValues(alpha: light ? 0.09 : 0.18)
+        : MacPalette.cardBg.withValues(alpha: light ? 0.82 : 0.68);
+    final outerBorder = light
+        ? MacPalette.fill(0.11)
+        : MacPalette.onAccent.withValues(alpha: 0.18);
+    final innerRim = light
+        ? MacPalette.onAccent.withValues(alpha: 0.96)
+        : MacPalette.onAccent.withValues(alpha: 0.10);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: borderRadius,
+        boxShadow: shadow
+            ? [
+                BoxShadow(
+                  color: light
+                      ? MacPalette.fill(0.13)
+                      : MacPalette.shade(0.65),
+                  blurRadius: light ? 18 : 26,
+                  offset: Offset(0, light ? 4 : 8),
+                ),
+                BoxShadow(
+                  color: light
+                      ? MacPalette.fill(0.06)
+                      : MacPalette.shade(0.32),
+                  blurRadius: 3,
+                  offset: const Offset(0, 1),
+                ),
+              ]
+            : null,
+      ),
+      child: ClipRRect(
+        borderRadius: borderRadius,
+        child: BackdropFilter(
+          filter: ui.ImageFilter.blur(sigmaX: blur, sigmaY: blur),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: borderRadius,
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [topColor, bottomColor],
+              ),
+              border: Border.all(color: outerBorder, width: 0.5),
+            ),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: borderRadius,
+                border: Border.all(color: innerRim, width: light ? 0.9 : 0.5),
+              ),
+              child: child,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Interactive circular or capsule iOS 26 Liquid Glass button with springy
+/// press feedback.
+class LiquidGlassButton extends StatefulWidget {
+  const LiquidGlassButton({
+    super.key,
+    required this.child,
+    required this.onPressed,
+    this.width,
+    this.height = 38,
+    this.padding = EdgeInsets.zero,
+    this.borderRadius,
+    this.tinted = false,
+  });
+
+  final Widget child;
+  final VoidCallback? onPressed;
+  final double? width;
+  final double height;
+  final EdgeInsetsGeometry padding;
+  final BorderRadius? borderRadius;
+  final bool tinted;
+
+  @override
+  State<LiquidGlassButton> createState() => _LiquidGlassButtonState();
+}
+
+class _LiquidGlassButtonState extends State<LiquidGlassButton> {
+  bool _pressed = false;
+
+  void _setPressed(bool v) {
+    if (_pressed != v) setState(() => _pressed = v);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final radius = widget.borderRadius ?? BorderRadius.circular(widget.height / 2);
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: widget.onPressed == null ? null : (_) => _setPressed(true),
+      onTapUp: (_) => _setPressed(false),
+      onTapCancel: () => _setPressed(false),
+      onTap: widget.onPressed == null
+          ? null
+          : () {
+              HapticFeedback.selectionClick();
+              widget.onPressed!();
+            },
+      child: AnimatedScale(
+        scale: _pressed ? 0.92 : 1.0,
+        duration: Duration(milliseconds: _pressed ? 70 : 180),
+        curve: Curves.easeOutCubic,
+        child: LiquidGlass(
+          borderRadius: radius,
+          tinted: widget.tinted,
+          blur: 24,
+          child: Container(
+            width: widget.width,
+            height: widget.height,
+            padding: widget.padding,
+            alignment: widget.width != null ? Alignment.center : null,
+            color: _pressed ? MacPalette.fill(0.08) : null,
+            child: widget.width != null
+                ? widget.child
+                : Center(widthFactor: 1, child: widget.child),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Navigation bar button: an iOS 26 Liquid Glass circular button, or a
+/// Material [IconButton] on Android.
 class PhoneBarButton extends StatelessWidget {
-  const PhoneBarButton({super.key, required this.action});
+  const PhoneBarButton({
+    super.key,
+    required this.action,
+    this.glass = true,
+  });
 
   final PageAction action;
+  final bool glass;
 
   @override
   Widget build(BuildContext context) {
@@ -125,20 +285,59 @@ class PhoneBarButton extends StatelessWidget {
         icon: Icon(action.icon, size: 22),
       );
     }
+    if (!glass) {
+      return Semantics(
+        button: true,
+        label: action.tooltip,
+        child: Tooltip(
+          message: action.tooltip,
+          excludeFromSemantics: true,
+          child: CupertinoButton(
+            padding: EdgeInsets.zero,
+            minimumSize: const Size(38, 38),
+            onPressed: action.onPressed,
+            child: Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: MacPalette.fill(0.07),
+              ),
+              alignment: Alignment.center,
+              child: Icon(
+                action.icon,
+                size: 18,
+                color: color ??
+                    (action.onPressed == null
+                        ? MacPalette.textTertiary
+                        : MacPalette.accent),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
     return Semantics(
       button: true,
       label: action.tooltip,
-      child: CupertinoButton(
-        padding: EdgeInsets.zero,
-        minimumSize: const Size(44, 44),
-        onPressed: action.onPressed,
-        child: Icon(
-          action.icon,
-          size: 23,
-          color: color ??
-              (action.onPressed == null
-                  ? MacPalette.textTertiary
-                  : MacPalette.accent),
+      child: Tooltip(
+        message: action.tooltip,
+        excludeFromSemantics: true,
+        child: Padding(
+          padding: const EdgeInsets.only(left: 6),
+          child: LiquidGlassButton(
+            width: 36,
+            height: 36,
+            onPressed: action.onPressed,
+            child: Icon(
+              action.icon,
+              size: 18,
+              color: color ??
+                  (action.onPressed == null
+                      ? MacPalette.textTertiary
+                      : MacPalette.textPrimary),
+            ),
+          ),
         ),
       ),
     );
@@ -156,7 +355,7 @@ class PhonePage extends StatelessWidget {
     required this.title,
     required this.body,
     this.actions = const [],
-    this.previousTitle = '抽屉',
+    this.previousTitle = '返回',
   });
 
   final String title;
@@ -178,11 +377,19 @@ class PhonePage extends StatelessWidget {
     } else {
       bar = CupertinoNavigationBar(
         previousPageTitle: previousTitle,
-        backgroundColor: MacPalette.background,
-        border: Border(
-          bottom: BorderSide(color: MacPalette.hairline, width: 0.5),
+        backgroundColor: MacPalette.background.withValues(alpha: 0.88),
+        border: null,
+        middle: Text(
+          title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w600,
+            letterSpacing: -0.41,
+            color: MacPalette.textPrimary,
+          ),
         ),
-        middle: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
         trailing: actions.isEmpty
             ? null
             : Material(
@@ -264,8 +471,8 @@ class PhoneMenuEntry {
   final bool startsGroup;
 }
 
-/// A navigation bar button that opens a menu: the iOS pull-down menu, or a
-/// Material 3 popup menu on Android.
+/// A button that opens a menu: an iOS 26 Liquid Glass circular button opening a
+/// compact glass popover, or a Material 3 popup menu on Android.
 class PhoneMenuButton extends StatelessWidget {
   const PhoneMenuButton({
     super.key,
@@ -273,12 +480,16 @@ class PhoneMenuButton extends StatelessWidget {
     required this.materialIcon,
     required this.tooltip,
     required this.entries,
+    this.prominent = false,
   });
 
   final IconData icon;
   final IconData materialIcon;
   final String tooltip;
   final List<PhoneMenuEntry> entries;
+
+  /// Larger floating orb (48pt) used for the bottom-right iOS 26 compose/add button.
+  final bool prominent;
 
   @override
   Widget build(BuildContext context) {
@@ -313,6 +524,7 @@ class PhoneMenuButton extends StatelessWidget {
         ],
       );
     }
+    final size = prominent ? 48.0 : 38.0;
     return Semantics(
       button: true,
       label: tooltip,
@@ -320,11 +532,15 @@ class PhoneMenuButton extends StatelessWidget {
         message: tooltip,
         excludeFromSemantics: true,
         child: Builder(
-          builder: (context) => CupertinoButton(
-            padding: EdgeInsets.zero,
-            minimumSize: const Size(44, 44),
+          builder: (context) => LiquidGlassButton(
+            width: size,
+            height: size,
             onPressed: () => showPullDownMenu(context, entries),
-            child: Icon(icon, size: 23, color: MacPalette.accent),
+            child: Icon(
+              icon,
+              size: prominent ? 23 : 19,
+              color: MacPalette.textPrimary,
+            ),
           ),
         ),
       ),
@@ -332,7 +548,7 @@ class PhoneMenuButton extends StatelessWidget {
   }
 }
 
-/// Shows an iOS pull-down menu below the widget of [context].
+/// Shows an iOS 26 Liquid Glass menu anchored to the widget of [context].
 ///
 /// A route rather than [CupertinoMenuAnchor]: the anchor's overlay portal
 /// cannot be moved while the large-title navigation bar re-lays out its
@@ -360,7 +576,7 @@ class _PullDownMenuRoute extends PopupRoute<PhoneMenuEntry> {
   final List<PhoneMenuEntry> entries;
 
   @override
-  Color? get barrierColor => MacPalette.shade(0.08);
+  Color? get barrierColor => Colors.transparent;
 
   @override
   bool get barrierDismissible => true;
@@ -369,10 +585,10 @@ class _PullDownMenuRoute extends PopupRoute<PhoneMenuEntry> {
   String? get barrierLabel => '关闭菜单';
 
   @override
-  Duration get transitionDuration => const Duration(milliseconds: 220);
+  Duration get transitionDuration => const Duration(milliseconds: 240);
 
   @override
-  Duration get reverseTransitionDuration => const Duration(milliseconds: 150);
+  Duration get reverseTransitionDuration => const Duration(milliseconds: 160);
 
   @override
   Widget buildPage(
@@ -380,45 +596,44 @@ class _PullDownMenuRoute extends PopupRoute<PhoneMenuEntry> {
     Animation<double> animation,
     Animation<double> secondaryAnimation,
   ) {
-    return CustomSingleChildLayout(
-      delegate: _PullDownLayout(anchor, MediaQuery.paddingOf(context)),
-      child: _PullDownPanel(entries: entries),
-    );
-  }
-
-  @override
-  Widget buildTransitions(
-    BuildContext context,
-    Animation<double> animation,
-    Animation<double> secondaryAnimation,
-    Widget child,
-  ) {
+    final screen = MediaQuery.sizeOf(context);
+    final rightAligned = anchor.center.dx > screen.width / 2;
+    final opensAbove = anchor.center.dy > screen.height * 0.58;
     final curved = CurvedAnimation(
       parent: animation,
-      curve: Curves.easeOutCubic,
+      curve: const Cubic(0.18, 1.0, 0.22, 1.0),
       reverseCurve: Curves.easeInCubic,
     );
-    return FadeTransition(
-      opacity: curved,
-      child: ScaleTransition(
-        alignment: anchor.center.dx > MediaQuery.sizeOf(context).width / 2
-            ? Alignment.topRight
-            : Alignment.topLeft,
-        scale: Tween<double>(begin: 0.8, end: 1).animate(curved),
-        child: child,
+    final fade = CurvedAnimation(
+      parent: animation,
+      curve: const Interval(0.0, 0.65, curve: Curves.easeOut),
+      reverseCurve: Curves.easeIn,
+    );
+    final alignment = opensAbove
+        ? (rightAligned ? Alignment.bottomRight : Alignment.bottomLeft)
+        : (rightAligned ? Alignment.topRight : Alignment.topLeft);
+    return CustomSingleChildLayout(
+      delegate: _PullDownLayout(anchor, MediaQuery.paddingOf(context)),
+      child: FadeTransition(
+        opacity: fade,
+        child: ScaleTransition(
+          alignment: alignment,
+          scale: Tween<double>(begin: 0.72, end: 1.0).animate(curved),
+          child: _PullDownPanel(entries: entries),
+        ),
       ),
     );
   }
 }
 
-/// Places the menu under its button, aligned to the button's outer edge and
-/// kept on screen.
+/// Places the menu below (or above, when near the bottom) its button, aligned
+/// to the button's outer edge and kept inside the safe area.
 class _PullDownLayout extends SingleChildLayoutDelegate {
   _PullDownLayout(this.anchor, this.padding);
 
   final Rect anchor;
   final EdgeInsets padding;
-  static const _margin = 8.0;
+  static const _margin = 14.0;
 
   @override
   BoxConstraints getConstraintsForChild(BoxConstraints constraints) {
@@ -426,7 +641,7 @@ class _PullDownLayout extends SingleChildLayoutDelegate {
         constraints.maxHeight - padding.top - padding.bottom - 2 * _margin;
     return BoxConstraints(
       minWidth: 0,
-      maxWidth: 250,
+      maxWidth: 204,
       maxHeight: maxHeight < 0 ? 0 : maxHeight,
     );
   }
@@ -436,10 +651,10 @@ class _PullDownLayout extends SingleChildLayoutDelegate {
     final rightAligned = anchor.center.dx > size.width / 2;
     var x = rightAligned ? anchor.right - childSize.width : anchor.left;
     x = x.clamp(_margin, size.width - childSize.width - _margin);
-    var y = anchor.bottom + 4;
+    var y = anchor.bottom + 8;
     final bottomLimit = size.height - padding.bottom - _margin;
     if (y + childSize.height > bottomLimit) {
-      y = (anchor.top - 4 - childSize.height)
+      y = (anchor.top - 8 - childSize.height)
           .clamp(padding.top + _margin, bottomLimit - childSize.height);
     }
     return Offset(x, y);
@@ -459,34 +674,38 @@ class _PullDownPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final rows = <Widget>[];
     for (final (index, entry) in entries.indexed) {
-      if (index > 0) {
-        rows.add(entry.startsGroup
-            // iOS separates groups with a thicker band.
-            ? Container(height: 8, color: MacPalette.shade(0.12))
-            : Divider(height: 0.5, thickness: 0.5, color: MacPalette.hairline));
+      if (index > 0 && entry.startsGroup) {
+        rows.add(
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+            child: Divider(height: 0.5, thickness: 0.5, color: MacPalette.hairline),
+          ),
+        );
       }
       rows.add(_PullDownItem(entry: entry));
     }
-    return SizedBox(
-      width: 250,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(13),
-          boxShadow: [
-            BoxShadow(
-              color: MacPalette.shade(0.35),
-              blurRadius: 32,
-              offset: const Offset(0, 8),
-            ),
-          ],
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(13),
-          child: BackdropFilter(
-            filter: ui.ImageFilter.blur(sigmaX: 30, sigmaY: 30),
-            child: ColoredBox(
-              color: MacPalette.elevatedBg.withValues(alpha: 0.86),
+    // PopupRoute sits outside Scaffold/Material, so supply an explicit iOS
+    // DefaultTextStyle; without it Flutter draws debug yellow underlines.
+    final baseStyle = CupertinoTheme.of(context).textTheme.textStyle.copyWith(
+          fontSize: 16,
+          fontWeight: FontWeight.w400,
+          letterSpacing: -0.32,
+          height: 1.25,
+          decoration: TextDecoration.none,
+          color: MacPalette.textPrimary,
+        );
+    return DefaultTextStyle(
+      style: baseStyle,
+      child: CupertinoUserInterfaceLevel(
+        data: CupertinoUserInterfaceLevelData.elevated,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: 164, maxWidth: 204),
+          child: IntrinsicWidth(
+            child: LiquidGlass(
+              borderRadius: BorderRadius.circular(22),
+              blur: 34,
               child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(vertical: 6),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -528,21 +747,37 @@ class _PullDownItemState extends State<_PullDownItem> {
         onTapDown: (_) => _setPressed(true),
         onTapCancel: () => _setPressed(false),
         onTapUp: (_) => _setPressed(false),
-        onTap: () => Navigator.of(context).pop(entry),
+        onTap: () {
+          HapticFeedback.selectionClick();
+          Navigator.of(context).pop(entry);
+        },
         child: Container(
-          constraints: const BoxConstraints(minHeight: 44),
-          color: _pressed ? MacPalette.fill(0.10) : null,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+          constraints: const BoxConstraints(minHeight: 40),
+          decoration: BoxDecoration(
+            color: _pressed ? MacPalette.fill(0.11) : null,
+            borderRadius: BorderRadius.circular(14),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
           child: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Expanded(
+              Icon(entry.icon, size: 18, color: color),
+              const SizedBox(width: 11),
+              Flexible(
                 child: Text(
                   entry.label,
-                  style: TextStyle(fontSize: 17, color: color),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w400,
+                    letterSpacing: -0.32,
+                    decoration: TextDecoration.none,
+                    color: color,
+                  ),
                 ),
               ),
-              const SizedBox(width: 12),
-              Icon(entry.icon, size: 20, color: color),
             ],
           ),
         ),
@@ -770,7 +1005,7 @@ class PhoneButton extends StatelessWidget {
       child: CupertinoButton(
         minimumSize: const Size(0, 50),
         padding: const EdgeInsets.symmetric(horizontal: 16),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(25),
         color: primary ? MacPalette.accent : MacPalette.fill(0.10),
         disabledColor: MacPalette.fill(0.08),
         onPressed: onPressed,
@@ -811,24 +1046,25 @@ class PhoneSection extends StatelessWidget {
     final material = usesMaterialChrome(context);
     return NativeTypeScale(
       child: Padding(
-      padding: const EdgeInsets.only(bottom: 24),
+      padding: const EdgeInsets.only(bottom: 22),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (header != null)
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 7),
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
               child: Text(
                 header!,
                 style: TextStyle(
                   fontSize: material ? 14 : 13,
                   fontWeight: material ? FontWeight.w600 : FontWeight.w400,
+                  letterSpacing: material ? null : -0.08,
                   color: material ? MacPalette.accent : MacPalette.textSecondary,
                 ),
               ),
             ),
           ClipRRect(
-            borderRadius: BorderRadius.circular(material ? 18 : 10),
+            borderRadius: BorderRadius.circular(material ? 18 : 16),
             child: ColoredBox(
               color: MacPalette.cardBg,
               child: Column(
@@ -850,12 +1086,12 @@ class PhoneSection extends StatelessWidget {
           ),
           if (footer != null)
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 7, 16, 0),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
               child: Text(
                 footer!,
                 style: TextStyle(
-                  fontSize: 13,
-                  height: 1.35,
+                  fontSize: 12.5,
+                  height: 1.45,
                   color: MacPalette.textSecondary,
                 ),
               ),
@@ -911,86 +1147,100 @@ class PhoneRow extends StatelessWidget {
       splashFactory: material ? InkRipple.splashFactory : NoSplash.splashFactory,
       highlightColor: MacPalette.fill(0.08),
       child: ConstrainedBox(
-        constraints: BoxConstraints(minHeight: material ? 56 : 44),
+        constraints: BoxConstraints(minHeight: material ? 56 : 46),
         child: Padding(
           padding: EdgeInsets.symmetric(
             horizontal: 16,
-            vertical: subtitle == null ? 11 : 9,
+            vertical: subtitle == null ? 11 : 10,
           ),
-          child: Row(
-            children: [
-              if (leading != null) ...[leading!, const SizedBox(width: 12)],
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: material ? 16 : 17,
-                        color: dimmed
-                            ? MacPalette.textTertiary
-                            : destructive
-                            ? MacPalette.red
-                            : (action
-                                ? (onTap == null
-                                    ? MacPalette.textTertiary
-                                    : MacPalette.accent)
-                                : MacPalette.textPrimary),
-                      ),
-                    ),
-                    if (subtitle != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 2),
-                        child: selectable
-                            ? SelectableText(
-                                subtitle!,
-                                style: TextStyle(
-                                  fontSize: material ? 14 : 13,
-                                  color: MacPalette.textSecondary,
-                                ),
-                              )
-                            : Text(
-                                subtitle!,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: material ? 14 : 13,
-                                  color: MacPalette.textSecondary,
-                                ),
-                              ),
-                      ),
-                  ],
-                ),
-              ),
-              if (value != null) ...[
-                const SizedBox(width: 12),
-                Flexible(
-                  child: Text(
-                    value!,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.end,
-                    style: TextStyle(
-                      fontSize: material ? 14 : 17,
-                      color: MacPalette.textSecondary,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              // Cap the trailing value width without wrapping it in Flexible so
+              // Expanded(title) pushes value + chevron flush to the right edge.
+              final maxValueWidth = constraints.maxWidth.isFinite
+                  ? constraints.maxWidth * 0.46
+                  : 160.0;
+              return Row(
+                children: [
+                  if (leading != null) ...[leading!, const SizedBox(width: 12)],
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: material ? 16 : 16.5,
+                            letterSpacing: material ? null : -0.35,
+                            color: dimmed
+                                ? MacPalette.textTertiary
+                                : destructive
+                                    ? MacPalette.red
+                                    : (action
+                                        ? (onTap == null
+                                            ? MacPalette.textTertiary
+                                            : MacPalette.accent)
+                                        : MacPalette.textPrimary),
+                          ),
+                        ),
+                        if (subtitle != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 3),
+                            child: selectable
+                                ? SelectableText(
+                                    subtitle!,
+                                    style: TextStyle(
+                                      fontSize: material ? 14 : 13,
+                                      height: 1.35,
+                                      color: MacPalette.textSecondary,
+                                    ),
+                                  )
+                                : Text(
+                                    subtitle!,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: material ? 14 : 13,
+                                      height: 1.35,
+                                      color: MacPalette.textSecondary,
+                                    ),
+                                  ),
+                          ),
+                      ],
                     ),
                   ),
-                ),
-              ],
-              if (trailing != null) ...[const SizedBox(width: 8), trailing!],
-              if (onTap != null && chevron && !action && !material) ...[
-                const SizedBox(width: 6),
-                Icon(
-                  CupertinoIcons.chevron_right,
-                  size: 15,
-                  color: MacPalette.textTertiary,
-                ),
-              ],
-            ],
+                  if (value != null) ...[
+                    const SizedBox(width: 12),
+                    ConstrainedBox(
+                      constraints: BoxConstraints(maxWidth: maxValueWidth),
+                      child: Text(
+                        value!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.end,
+                        style: TextStyle(
+                          fontSize: material ? 14 : 16,
+                          letterSpacing: material ? null : -0.3,
+                          color: MacPalette.textSecondary,
+                        ),
+                      ),
+                    ),
+                  ],
+                  if (trailing != null) ...[const SizedBox(width: 8), trailing!],
+                  if (onTap != null && chevron && !action && !material) ...[
+                    const SizedBox(width: 5),
+                    Icon(
+                      CupertinoIcons.chevron_right,
+                      size: 13.5,
+                      color: MacPalette.textTertiary,
+                    ),
+                  ],
+                ],
+              );
+            },
           ),
         ),
       ),

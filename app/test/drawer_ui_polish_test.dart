@@ -485,8 +485,16 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(CupertinoNavigationBar), findsOneWidget);
       expect(find.text('新文件传输策略'), findsOneWidget);
+      // Right-hand setting values must sit flush against the right edge, not
+      // float in the middle of the row.
+      final rowRect = tester.getRect(find.ancestor(
+        of: find.text('新文件传输策略'),
+        matching: find.byType(PhoneRow),
+      ));
+      final valRect = tester.getRect(find.text('智能'));
+      expect(valRect.right, greaterThan(rowRect.left + rowRect.width * 0.72));
       // The back button is titled after the previous page.
-      expect(find.widgetWithText(CupertinoNavigationBarBackButton, '抽屉'), findsOneWidget);
+      expect(find.widgetWithText(CupertinoNavigationBarBackButton, '返回'), findsOneWidget);
       expect(tester.takeException(), isNull);
 
       await tester.tap(find.byType(CupertinoNavigationBarBackButton));
@@ -539,6 +547,15 @@ void main() {
       expect(find.text('选取文件'), findsOneWidget);
       expect(find.text('照片图库'), findsOneWidget);
       expect(find.text('粘贴'), findsOneWidget);
+      // Pull-down menus render in a PopupRoute outside Scaffold; verify they
+      // have an explicit no-underline text style rather than Flutter's yellow
+      // debug fallback.
+      final menuText = tester.widget<Text>(find.text('选取文件'));
+      expect(menuText.style?.decoration, TextDecoration.none);
+      expect(
+        DefaultTextStyle.of(tester.element(find.text('选取文件'))).style.decoration,
+        TextDecoration.none,
+      );
       await tester.tapAt(const Offset(20, 600)); // outside: dismiss
       await tester.pumpAndSettle();
       expect(find.text('选取文件'), findsNothing);
@@ -581,7 +598,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 900));
       await tester.pumpAndSettle();
       expect(find.text('创建外链'), findsOneWidget);
-      expect(find.text('移出抽屉'), findsOneWidget);
+      expect(find.text('移出'), findsOneWidget);
       await gesture.up();
       await tester.pumpAndSettle();
       await tester.tap(find.text('选择'));
