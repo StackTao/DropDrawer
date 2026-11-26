@@ -52,8 +52,6 @@ constexpr int kBackdropNone = 1;
 constexpr int kBackdropMica = 2;
 constexpr int kBackdropAcrylic = 3;
 
-// Edge-drawer pixels near the collapsed handle that count as "dragging to it".
-constexpr int kHandleDragReach = 28;
 constexpr int kShortcutId = 1;
 
 template <class T>
@@ -150,21 +148,22 @@ bool IsOleDragActive() {
          std::wcscmp(class_name, L"CLIPBRDWNDCLASS") == 0;
 }
 
-// Outside our drop target OLE does not expose IDataObject. Only advertise
-// early for shell file views. Other sources are checked on actual drag-over.
-bool IsShellFileDrag() {
-  if (!IsOleDragActive()) return false;
+// True when another application has an active OLE DoDragDrop session (files
+// from Explorer/third-party apps or dragged text/links from browsers, editors
+// and chat apps). Plain text selection does not start OLE drag capture.
+bool IsExternalOleDragActive() {
   GUITHREADINFO info{};
   info.cbSize = sizeof(info);
-  if (!GetGUIThreadInfo(0, &info)) return false;
-  // Explorer and the Desktop host their item list inside a SHELLDLL_DefView.
-  // Address bars, tab strips and browser documents are outside that subtree.
-  for (HWND hwnd = info.hwndFocus; hwnd; hwnd = GetAncestor(hwnd, GA_PARENT)) {
-    wchar_t name[32]{};
-    if (GetClassNameW(hwnd, name, ARRAYSIZE(name)) &&
-        std::wcscmp(name, L"SHELLDLL_DefView") == 0) return true;
-  }
-  return false;
+  if (!GetGUIThreadInfo(0, &info) || !info.hwndCapture) return false;
+
+  DWORD owner_pid = 0;
+  GetWindowThreadProcessId(info.hwndCapture, &owner_pid);
+  if (owner_pid == GetCurrentProcessId()) return false;
+
+  wchar_t class_name[32]{};
+  return GetClassNameW(info.hwndCapture, class_name,
+                       static_cast<int>(ARRAYSIZE(class_name))) &&
+         std::wcscmp(class_name, L"CLIPBRDWNDCLASS") == 0;
 }
 
 bool IsModifier(UINT key) {
@@ -580,25 +579,21 @@ void DrawerWindow::OnTimer() {
   const bool mouse_down =
       GetAsyncKeyState(VK_LBUTTON) < 0 || GetAsyncKeyState(VK_RBUTTON) < 0;
   if (mode_ == Mode::kCollapsed) {
-    if (!mouse_down || !IsOleDragActive()) return;
-    // Explorer file drags show the guide right away. Any other OLE drag (text
-    // from a browser, an editor or a chat app) only does so once it comes
-    // close to the handle, so selecting or moving text elsewhere never pops it.
-    RECT reach = bounds;
-    const int margin = MulDiv(kHandleDragReach,
-                              static_cast<int>(GetDpiForWindow(window_)), 96);
-    InflateRect(&reach, margin, margin);
-    if (IsShellFileDrag() || PtInRect(&reach, cursor)) {
-      guide_from_ole_drag_ = true;
-      SetMode(Mode::kDragGuide);
-    }
+    if (!mouse_down || !IsExternalOleDragActive()) return;
+    // Any external OLE DoDragDrop session (files or dragged text) shows the
+    // edge guide pill immediately, matching macOS.
+    guide_from_ole_drag_ = true;
+    SetMode(Mode::kDragGuide);
     return;
   }
   if (mode_ == Mode::kDragGuide) {
-    InflateRect(&bounds, 24, 24);
+    const int margin =
+        MulDiv(32, static_cast<int>(GetDpiForWindow(window_)), 96);
+    InflateRect(&bounds, margin, margin);
     const bool near_guide = PtInRect(&bounds, cursor) != FALSE;
+    const bool ole_active = IsOleDragActive();
     const bool dragging =
-        mouse_down && (guide_from_ole_drag_ ? IsOleDragActive() : near_guide);
+        mouse_down && (guide_from_ole_drag_ ? ole_active : near_guide);
     const ULONGLONG now = GetTickCount64();
     if (dragging) {
       drag_guide_timeout_ = 0;
@@ -606,6 +601,8 @@ void DrawerWindow::OnTimer() {
         opened_by_drag_ = true;
         SetMode(Mode::kExpanded);
       }
+    } else if (guide_from_ole_drag_ && !mouse_down && !ole_active) {
+      SetMode(Mode::kCollapsed);
     } else if (!drag_guide_timeout_) {
       drag_guide_timeout_ = now + 450;
     } else if (now >= drag_guide_timeout_) {

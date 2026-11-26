@@ -108,4 +108,56 @@ struct DropDrawerCoreTests {
         #expect(DateParsing.formatRelative(now.addingTimeInterval(-420), now: now) == "7 分钟前")
         #expect(DateParsing.formatRelative(now.addingTimeInterval(-10800), now: now) == "3 小时前")
     }
+
+    @Test("DropDrawerStore restores persisted session synchronously on init to avoid login flash")
+    @MainActor
+    func synchronousSessionRestore() {
+        let suite = "test.restore.\(UUID().uuidString)"
+        let service = "test.restore.\(UUID().uuidString)"
+        let storage = SessionStorage(suiteName: suite, keychainService: service)
+        storage.serverUrl = "https://drop.example.com"
+        storage.user = UserProfile(id: "u-1", username: "alice")
+        storage.token = "jwt-sample-token"
+
+        let store = DropDrawerStore(storage: storage)
+        #expect(store.isLoggedIn == true)
+        #expect(store.user?.username == "alice")
+
+        store.logout()
+        #expect(store.isLoggedIn == false)
+        UserDefaults.standard.removePersistentDomain(forName: suite)
+    }
+
+    @Test("Cancelled cloud download preserves existing destination file")
+    func cancelledDownloadPreservesDestination() async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dd-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let dest = tempDir.appendingPathComponent("existing.txt")
+        try Data("original-content".utf8).write(to: dest)
+
+        let api = APIClient(baseUrl: "http://127.0.0.1:9")
+        let token = TransferCancelToken()
+        token.cancel()
+
+        do {
+            _ = try await api.downloadFromCloud(
+                cloud: CloudDownloadInfo(
+                    url: "/api/drawer/items/1/download",
+                    isDirectUrl: false,
+                    backendName: "Local"
+                ),
+                destURL: dest,
+                cancelToken: token
+            )
+            Issue.record("Expected TransferCancelledError")
+        } catch is TransferCancelledError {
+            // Expected
+        }
+
+        let preserved = try String(contentsOf: dest, encoding: .utf8)
+        #expect(preserved == "original-content")
+    }
 }

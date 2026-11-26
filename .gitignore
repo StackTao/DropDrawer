@@ -29,7 +29,7 @@ app/ios/Runner.xcworkspace/xcshareddata/swiftpm/
 # Apple native (Swift / XcodeGen)
 apple/Frameworks/DropDrawerP2P.xcframework/
 apple/DropDrawer.xcodeproj/
-apple/build/
+apple/build*/
 apple/DropDrawerCore/.build/
 apple/DropDrawerCore/.swiftpm/
 

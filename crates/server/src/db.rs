@@ -74,6 +74,8 @@ impl Database {
         let conn = Connection::open(path)?;
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
+             PRAGMA synchronous = NORMAL;
+             PRAGMA busy_timeout = 5000;
              PRAGMA foreign_keys = ON;
 
              CREATE TABLE IF NOT EXISTS users (
@@ -160,6 +162,10 @@ impl Database {
 
              CREATE INDEX IF NOT EXISTS idx_share_links_user
                  ON share_links(user_id, created_at DESC);
+             CREATE INDEX IF NOT EXISTS idx_devices_user
+                 ON devices(user_id);
+             CREATE INDEX IF NOT EXISTS idx_storage_backends_user
+                 ON storage_backends(user_id);
             ",
         )?;
         // Idempotent migration for databases created before `title` column was added.
@@ -169,6 +175,10 @@ impl Database {
         })
     }
 
+    fn lock_conn(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.conn.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     pub fn create_user(
         &self,
         id: &str,
@@ -176,7 +186,7 @@ impl Database {
         password_hash: &str,
     ) -> anyhow::Result<UserProfile> {
         let now = Utc::now();
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         conn.execute(
             "INSERT INTO users (id, username, password_hash, created_at) VALUES (?1, ?2, ?3, ?4)",
             params![id, username, password_hash, now.to_rfc3339()],
@@ -194,7 +204,7 @@ impl Database {
         email: &str,
         registration_open: bool,
     ) -> anyhow::Result<Option<UserProfile>> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.lock_conn();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let existing = tx.query_row(
             "SELECT u.id, u.username, u.created_at FROM google_accounts g
@@ -236,7 +246,7 @@ impl Database {
     }
 
     pub fn find_user_by_username(&self, username: &str) -> anyhow::Result<Option<UserRecord>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         conn.query_row(
             "SELECT id, username, password_hash, created_at FROM users WHERE username = ?1",
             params![username],
@@ -269,7 +279,7 @@ impl Database {
         let now = Utc::now();
         let platform_str = serde_json::to_string(&platform)?;
         let addrs_json = serde_json::to_string(direct_addrs)?;
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let requested_id = requested_id.filter(|id| !id.is_empty());
         let iroh_node_id = iroh_node_id.filter(|id| !id.is_empty());
         let requested_owner: Option<String> = if let Some(id) = requested_id {
@@ -339,7 +349,7 @@ impl Database {
     ) -> anyhow::Result<Option<DeviceInfo>> {
         let now = Utc::now();
         let addrs_json = serde_json::to_string(direct_addrs)?;
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         conn.execute(
             "UPDATE devices SET iroh_node_id = ?1, iroh_relay_url = ?2, direct_addrs_json = ?3, last_seen_at = ?4
              WHERE id = ?5 AND user_id = ?6",
@@ -357,7 +367,7 @@ impl Database {
     }
 
     pub fn get_device(&self, device_id: &str, user_id: &str) -> anyhow::Result<Option<DeviceInfo>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         conn.query_row(
             "SELECT id, user_id, name, platform, iroh_node_id, iroh_relay_url, direct_addrs_json, last_seen_at
              FROM devices WHERE id = ?1 AND user_id = ?2",
@@ -369,7 +379,7 @@ impl Database {
     }
 
     pub fn list_devices(&self, user_id: &str) -> anyhow::Result<Vec<DeviceInfo>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT id, user_id, name, platform, iroh_node_id, iroh_relay_url, direct_addrs_json, last_seen_at
              FROM devices WHERE user_id = ?1 ORDER BY last_seen_at DESC",
@@ -414,7 +424,7 @@ impl Database {
     ) -> anyhow::Result<StorageBackendRecord> {
         let now = Utc::now();
         let config_json = serde_json::to_string(config)?;
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         if is_default {
             conn.execute(
                 "UPDATE storage_backends SET is_default = 0 WHERE user_id = ?1",
@@ -437,7 +447,7 @@ impl Database {
     }
 
     pub fn list_storage_backends(&self, user_id: &str) -> anyhow::Result<Vec<StorageBackendRecord>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT id, user_id, name, config_json, is_default, created_at
              FROM storage_backends WHERE user_id = ?1 ORDER BY is_default DESC, created_at DESC",
@@ -455,7 +465,7 @@ impl Database {
         backend_id: &str,
         user_id: &str,
     ) -> anyhow::Result<Option<StorageBackendRecord>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         conn.query_row(
             "SELECT id, user_id, name, config_json, is_default, created_at
              FROM storage_backends WHERE id = ?1 AND user_id = ?2",
@@ -470,7 +480,7 @@ impl Database {
         &self,
         user_id: &str,
     ) -> anyhow::Result<Option<StorageBackendRecord>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         conn.query_row(
             "SELECT id, user_id, name, config_json, is_default, created_at
              FROM storage_backends WHERE user_id = ?1 ORDER BY is_default DESC, created_at ASC LIMIT 1",
@@ -488,7 +498,7 @@ impl Database {
         name: &str,
         patch: &serde_json::Map<String, serde_json::Value>,
     ) -> anyhow::Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let affected = conn.execute(
             "UPDATE storage_backends SET name = ?3, config_json = json_patch(config_json, ?4)
              WHERE id = ?1 AND user_id = ?2",
@@ -498,7 +508,7 @@ impl Database {
     }
 
     pub fn set_default_storage_backend(&self, backend_id: &str, user_id: &str) -> anyhow::Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         // The same statement checks ownership and changes the default. A missing
         // or foreign ID cannot clear any of this account's existing settings.
         let affected = conn.execute(
@@ -512,7 +522,7 @@ impl Database {
     }
 
     pub fn delete_storage_backend(&self, backend_id: &str, user_id: &str) -> anyhow::Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let affected = conn.execute(
             "DELETE FROM storage_backends WHERE id = ?1 AND user_id = ?2",
             params![backend_id, user_id],
@@ -542,7 +552,7 @@ impl Database {
     // ---- Drawer Items ----
 
     pub fn create_drawer_item(&self, item: &DrawerItemRow) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         conn.execute(
             "INSERT INTO drawer_items (
                  id, user_id, owner_device_id, kind, name, size, mime_type,
@@ -580,7 +590,7 @@ impl Database {
         size: Option<u64>,
         blake3_hash: Option<&str>,
     ) -> anyhow::Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let affected = conn.execute(
             "UPDATE drawer_items
              SET storage_backend_id = ?1,
@@ -610,7 +620,7 @@ impl Database {
         device: &str,
         files: &std::collections::BTreeMap<String, String>,
     ) -> anyhow::Result<std::collections::BTreeMap<String, String>> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.lock_conn();
         let tx = conn.transaction()?;
         let mut replicas = std::collections::BTreeMap::new();
         {
@@ -641,7 +651,7 @@ impl Database {
         item_id: &str,
         user_id: &str,
     ) -> anyhow::Result<Option<DrawerItemRow>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         conn.query_row(
             "SELECT id, user_id, owner_device_id, kind, name, size, mime_type,
                     blake3_hash, text_content, thumbnail_base64, transfer_mode,
@@ -655,7 +665,7 @@ impl Database {
     }
 
     pub fn list_drawer_items(&self, user_id: &str) -> anyhow::Result<Vec<DrawerItemRow>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT id, user_id, owner_device_id, kind, name, size, mime_type,
                     blake3_hash, text_content, thumbnail_base64, transfer_mode,
@@ -671,7 +681,7 @@ impl Database {
     }
 
     pub fn delete_drawer_item(&self, item_id: &str, user_id: &str) -> anyhow::Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let affected = conn.execute(
             "DELETE FROM drawer_items WHERE id = ?1 AND user_id = ?2",
             params![item_id, user_id],
@@ -680,7 +690,7 @@ impl Database {
     }
 
     pub fn list_expired_items(&self, now: DateTime<Utc>) -> anyhow::Result<Vec<DrawerItemRow>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT id, user_id, owner_device_id, kind, name, size, mime_type,
                     blake3_hash, text_content, thumbnail_base64, transfer_mode,
@@ -734,7 +744,7 @@ impl Database {
         row: &ShareLinkRow,
         item_ids: &[String],
     ) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         conn.execute(
             "INSERT INTO share_links (code, user_id, item_id, title, passcode_hash, max_downloads, download_count, expires_at, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
@@ -761,7 +771,7 @@ impl Database {
     }
 
     pub fn get_share_link(&self, code: &str) -> anyhow::Result<Option<ShareLinkRow>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         conn.query_row(
             "SELECT code, user_id, item_id, title, passcode_hash, max_downloads, download_count, expires_at, created_at
              FROM share_links WHERE code = ?1",
@@ -777,7 +787,7 @@ impl Database {
         code: &str,
         fallback_item_id: &str,
     ) -> anyhow::Result<Vec<DrawerItemRow>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT d.id, d.user_id, d.owner_device_id, d.kind, d.name, d.size, d.mime_type,
                     d.blake3_hash, d.text_content, d.thumbnail_base64, d.transfer_mode,
@@ -813,7 +823,7 @@ impl Database {
     }
 
     pub fn get_drawer_item_by_id(&self, item_id: &str) -> anyhow::Result<Option<DrawerItemRow>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         conn.query_row(
             "SELECT id, user_id, owner_device_id, kind, name, size, mime_type,
                     blake3_hash, text_content, thumbnail_base64, transfer_mode,
@@ -827,7 +837,7 @@ impl Database {
     }
 
     pub fn list_share_links(&self, user_id: &str) -> anyhow::Result<Vec<ShareLinkRow>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT code, user_id, item_id, title, passcode_hash, max_downloads, download_count, expires_at, created_at
              FROM share_links WHERE user_id = ?1 ORDER BY created_at DESC LIMIT 100",
@@ -841,7 +851,7 @@ impl Database {
     }
 
     pub fn increment_share_download(&self, code: &str) -> anyhow::Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let affected = conn.execute(
             "UPDATE share_links
              SET download_count = download_count + 1
@@ -852,7 +862,7 @@ impl Database {
     }
 
     pub fn delete_share_link(&self, code: &str, user_id: &str) -> anyhow::Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let affected = conn.execute(
             "DELETE FROM share_links WHERE code = ?1 AND user_id = ?2",
             params![code, user_id],

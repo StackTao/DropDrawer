@@ -23,11 +23,59 @@ struct HomeView: View {
 
     private var isSelecting: Bool { editMode.isEditing }
 
+    private var sortedOutgoingTransfers: [(id: String, progress: TransferProgress)] {
+        store.outgoingTransfers
+            .filter { !$0.value.finished }
+            .sorted { $0.key < $1.key }
+            .map { (id: $0.key, progress: $0.value) }
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             List(selection: $selectedIds) {
                 if !isSelecting {
                     quickActionsSection
+                }
+
+                if !isSelecting && !sortedOutgoingTransfers.isEmpty {
+                    Section("正在向其他设备发送") {
+                        ForEach(sortedOutgoingTransfers, id: \.id) { entry in
+                            let itemName = store.items.first(where: { $0.id == entry.progress.itemId })?.name ?? "文件"
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack(spacing: 10) {
+                                    Image(systemName: "arrow.up.circle.fill")
+                                        .font(.title3)
+                                        .foregroundStyle(Color.accentColor)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(itemName)
+                                            .font(.subheadline.weight(.medium))
+                                            .lineLimit(1)
+                                        Text(entry.progress.channelLabel)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer(minLength: 8)
+                                    if entry.progress.total > 0 {
+                                        Text("\(Int(entry.progress.fraction * 100))%")
+                                            .font(.caption.monospacedDigit())
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Button {
+                                        store.cancelOutgoingTransfer(transferId: entry.id)
+                                    } label: {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .font(.title3)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .accessibilityLabel("取消发送")
+                                }
+                                ProgressView(value: entry.progress.indicatorValue)
+                                    .tint(.accentColor)
+                            }
+                            .padding(.vertical, 2)
+                        }
+                    }
                 }
 
                 if store.items.isEmpty && store.pendingDrops.isEmpty {
@@ -335,6 +383,11 @@ struct HomeView: View {
     private func importPickedPhotos(_ items: [PhotosPickerItem]) async {
         var urls: [URL] = []
         for (idx, pickerItem) in items.enumerated() {
+            if let picked = try? await pickerItem.loadTransferable(type: PickedMediaFile.self) {
+                urls.append(picked.url)
+                continue
+            }
+            // Fallback for types that only vend in-memory Data (e.g., some live/generated items).
             if let data = try? await pickerItem.loadTransferable(type: Data.self) {
                 let ext = pickerItem.supportedContentTypes.first?.preferredFilenameExtension ?? "jpg"
                 let temp = FileManager.default.temporaryDirectory
@@ -348,6 +401,34 @@ struct HomeView: View {
             await store.addFiles(urls)
             for u in urls { try? FileManager.default.removeItem(at: u) }
         }
+    }
+}
+
+/// Streams picked photos and large videos directly from disk via `FileRepresentation`
+/// instead of buffering the entire media file into memory.
+private struct PickedMediaFile: Transferable {
+    let url: URL
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(importedContentType: .movie) { received in
+            try Self.copyToTemp(received.file, defaultExt: "mov")
+        }
+        FileRepresentation(importedContentType: .image) { received in
+            try Self.copyToTemp(received.file, defaultExt: "jpg")
+        }
+        FileRepresentation(importedContentType: .data) { received in
+            try Self.copyToTemp(received.file, defaultExt: "bin")
+        }
+    }
+
+    private static func copyToTemp(_ source: URL, defaultExt: String) throws -> PickedMediaFile {
+        let ext = source.pathExtension.isEmpty ? defaultExt : source.pathExtension
+        let stem = source.deletingPathExtension().lastPathComponent
+        let baseName = stem.isEmpty ? "media" : stem
+        let dest = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(baseName)_\(UUID().uuidString.prefix(8)).\(ext)")
+        try FileManager.default.copyItem(at: source, to: dest)
+        return PickedMediaFile(url: dest)
     }
 }
 

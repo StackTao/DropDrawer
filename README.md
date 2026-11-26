@@ -95,7 +95,7 @@ The iPhone drawer offers quick access to files, photos, and the clipboard. Synce
 | macOS (Apple silicon) | Run the [macOS packaging script](scripts/build_macos_release.sh) to create `dist/DropDrawer-macOS.dmg`. Open the DMG and drag DropDrawer to Applications. |
 | Windows (x64) | Download the `DropDrawer-Windows-x64` artifact from a successful [Windows installer](https://github.com/StackTao/DropDrawer/actions/workflows/windows-installer.yml) run. Unzip it and run the installer. |
 | Android | Download the `DropDrawer-Android-APK` artifact from a successful [Android APK](https://github.com/StackTao/DropDrawer/actions/workflows/android-apk.yml) run. Unzip it and install the appropriate APK. |
-| iOS | [Build from source](#build-from-source) on macOS with Flutter and Xcode. Installing on a physical device requires code signing. |
+| iOS | [Build from source](#build-from-source) on macOS with native SwiftUI (`apple/`) and Xcode. Installing on a physical device requires code signing. |
 
 Release builds of DropDrawer check for updates once a day and update with one click; on macOS and Windows the app relaunches as the new version. See the [app update guide](docs/APP_UPDATES.md) for platform details and release packaging.
 
@@ -139,20 +139,23 @@ Install stable Rust and Flutter. macOS and iOS builds require Xcode. For Windows
 
 Run `./scripts/build_macos_release.sh` to create a DMG, or add `--install` to update DropDrawer in Applications. To use the global shortcut, grant Accessibility and Input Monitoring permissions when prompted.
 
-### iOS
+### iOS (Native SwiftUI)
 
 ```bash
-./scripts/build_ios_p2p.sh
-(cd app && flutter pub get --enforce-lockfile && flutter build ios --simulator --no-codesign)
+./scripts/build_apple_p2p.sh
+(cd apple && xcodegen generate)
 ```
 
-To run on a physical device, open `app/ios/Runner.xcworkspace` in Xcode and configure signing.
+Open the generated `apple/DropDrawer.xcodeproj` in Xcode and run the `DropDrawerIOS` scheme on Simulator or a signed physical device (includes the Share Extension).
+
+> Legacy Flutter iOS build scripts remain available via `./scripts/build_ios_p2p.sh` and `app/ios/`.
 
 ## Project structure and contributing
 
 | Path | Purpose |
 | --- | --- |
-| [app](app) | Flutter client and native integrations for macOS, Windows, iOS, and Android |
+| [app](app) | Flutter desktop (macOS / Windows) and Android client with native platform bridges |
+| [apple](apple) | Native Swift / SwiftUI iOS client (`DropDrawerIOS`, `DropDrawerShareExtension`, `DropDrawerCore`) |
 | [crates/server](crates/server) | Axum, SQLite, WebSocket, storage adapters, and share link downloads |
 | [crates/p2p-core](crates/p2p-core) | iroh QUIC transfer engine and native FFI |
 | [crates/protocol](crates/protocol) · [crates/p2p-cli](crates/p2p-cli) | Shared protocol and P2P debugging tool |
@@ -163,6 +166,7 @@ Report bugs and suggest features in [GitHub Issues](https://github.com/StackTao/
 ```bash
 cargo test --workspace
 (cd app && flutter analyze && flutter test)
+(cd apple/DropDrawerCore && swift test)
 ```
 
 To test P2P independently, run `cargo run --bin dropdrawer-p2p-cli -- seed ./sample.zip` to generate a transfer ticket. On the receiving device, run `cargo run --bin dropdrawer-p2p-cli -- pull '<TICKET_JSON>' ./received.zip`.

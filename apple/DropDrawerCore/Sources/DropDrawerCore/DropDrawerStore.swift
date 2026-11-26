@@ -58,6 +58,8 @@ public final class DropDrawerStore {
     private var cancellingSends: Set<String> = []
     private var activeCancelTokens: [String: TransferCancelToken] = [:]
     private var thumbnailCache: [String: Data] = [:]
+    private var isSceneActive: Bool = true
+    private var wsReconnectAttempt: Int = 0
 
     public init(
         storage: SessionStorage = SessionStorage(),
@@ -72,6 +74,11 @@ public final class DropDrawerStore {
         self.autoCloudThresholdMb = storage.autoCloudThresholdMb
         self.defaultTtlHours = storage.defaultTtlHours
         self.localFilePaths = storage.localFilePaths
+        // Restore API client synchronously so `isLoggedIn` is true on frame 0
+        // and the login screen never flashes on app relaunch.
+        if let token = storage.token, !token.isEmpty, self.user != nil {
+            self.api = APIClient(baseUrl: self.serverUrl, token: token)
+        }
     }
 
     // MARK: - Computed helpers
@@ -136,10 +143,12 @@ public final class DropDrawerStore {
     // MARK: - Lifecycle & Auth
 
     public func bootstrap() async {
-        guard let token = storage.token, !token.isEmpty, storage.user != nil else {
-            return
+        if api == nil {
+            guard let token = storage.token, !token.isEmpty, storage.user != nil else {
+                return
+            }
+            api = APIClient(baseUrl: serverUrl, token: token)
         }
-        api = APIClient(baseUrl: serverUrl, token: token)
         await finishSignInSetup()
     }
 
@@ -228,17 +237,31 @@ public final class DropDrawerStore {
         cancellingSends = []
         activeCancelTokens = [:]
         localFilePaths = [:]
+        thumbnailCache = [:]
+        publishedFiles = [:]
+        wsReconnectAttempt = 0
         wsConnected = false
         storage.clearSession()
     }
 
     public func handleSceneActive() async {
+        await handleScenePhaseChanged(active: true)
+    }
+
+    public func handleScenePhaseChanged(active: Bool) async {
+        isSceneActive = active
         guard isLoggedIn else { return }
-        if !wsConnected {
-            connectWebSocket()
+        if active {
+            wsReconnectAttempt = 0
+            if p2pReady {
+                startP2PPoller()
+            }
+            if !wsConnected {
+                connectWebSocket()
+            }
+            await refreshAll()
+            await consumeSharedAppGroupQueue()
         }
-        await refreshAll()
-        await consumeSharedAppGroupQueue()
     }
 
     // MARK: - Settings
@@ -371,11 +394,27 @@ public final class DropDrawerStore {
         p2pPollTask?.cancel()
         p2pPollTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(180))
-                guard let self, self.p2pReady else { continue }
-                self.pollP2PEvents()
+                guard let self else { break }
+                let hasActiveTransfer = !self.p2pDownloadIds.isEmpty || !self.outgoingTransfers.isEmpty
+                let interval: Duration = if hasActiveTransfer {
+                    .milliseconds(180)
+                } else if self.isSceneActive {
+                    .milliseconds(1000)
+                } else {
+                    .seconds(5)
+                }
+                try? await Task.sleep(for: interval)
+                guard !Task.isCancelled, self.p2pReady else { continue }
+                if self.isSceneActive || !self.p2pDownloadIds.isEmpty || !self.outgoingTransfers.isEmpty {
+                    self.pollP2PEvents()
+                }
             }
         }
+    }
+
+    private func wakeP2PPoller() {
+        guard p2pReady else { return }
+        startP2PPoller()
     }
 
     private func pollP2PEvents() {
@@ -525,8 +564,10 @@ public final class DropDrawerStore {
         nodeAddrTask?.cancel()
         wsConnected = false
         guard isLoggedIn else { return }
+        let delaySecs = min(30, 1 << min(wsReconnectAttempt, 5))
+        wsReconnectAttempt += 1
         wsLoopTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(3))
+            try? await Task.sleep(for: .seconds(delaySecs))
             guard !Task.isCancelled else { return }
             self?.connectWebSocket()
         }
@@ -578,6 +619,7 @@ public final class DropDrawerStore {
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let type = root["type"] as? String
         else { return }
+        wsReconnectAttempt = 0
         let payload = root["payload"]
 
         switch type {
@@ -635,6 +677,7 @@ public final class DropDrawerStore {
                   let itemId = dict["item_id"] as? String
             else { return }
             items.removeAll { $0.id == itemId }
+            cleanupLocalFile(for: itemId)
             if p2pReady { _ = try? p2p.unregisterFile(itemId: itemId) }
         case "authorize_p2p_token":
             guard p2pReady,
@@ -650,6 +693,7 @@ public final class DropDrawerStore {
                 expiresAtIso: expiresAt,
                 requesterNodeId: requester
             )
+            wakeP2PPoller()
         default:
             break
         }
@@ -864,6 +908,7 @@ public final class DropDrawerStore {
                 cancelToken.attach { [p2p] in
                     _ = try? p2p.cancelTransfer(transferId: transferId)
                 }
+                wakeP2PPoller()
                 return
             }
 
@@ -926,6 +971,23 @@ public final class DropDrawerStore {
         activeCancelTokens[itemId]?.cancel()
     }
 
+    public func cancelOutgoingTransfer(transferId: String) {
+        // Keep transferId in `cancellingSends` until native reports terminal event (`AGENTS.md` #6).
+        cancellingSends.insert(transferId)
+        if let cur = outgoingTransfers[transferId] {
+            outgoingTransfers[transferId] = TransferProgress(
+                itemId: cur.itemId,
+                transferred: cur.transferred,
+                total: cur.total,
+                speedBps: 0,
+                channel: "cancelling",
+                finished: false,
+                sendingTo: cur.sendingTo
+            )
+        }
+        _ = try? p2p.cancelTransfer(transferId: transferId)
+    }
+
     public func downloadAllPending() async {
         let targets = items.filter { !$0.isText && localFileURL(for: $0.id) == nil }
         for item in targets {
@@ -933,13 +995,14 @@ public final class DropDrawerStore {
         }
     }
 
-    // MARK: - Deletion
+    // MARK: - Deletion & Local Cache
 
     public func deleteItem(_ itemId: String) async {
         guard let api else { return }
         do {
             try await api.deleteItem(itemId)
             items.removeAll { $0.id == itemId }
+            cleanupLocalFile(for: itemId)
             if p2pReady { _ = try? p2p.unregisterFile(itemId: itemId) }
         } catch {
             showToast("移出失败：\(error.localizedDescription)")
@@ -952,13 +1015,66 @@ public final class DropDrawerStore {
             let res = try await api.batchDeleteItems(itemIds: itemIds, clearAll: clearAll)
             let removed = Set(res.deletedIds)
             items.removeAll { removed.contains($0.id) }
-            for id in removed where p2pReady {
-                _ = try? p2p.unregisterFile(itemId: id)
+            for id in removed {
+                cleanupLocalFile(for: id)
+                if p2pReady { _ = try? p2p.unregisterFile(itemId: id) }
             }
             showToast(clearAll ? "已清空 \(removed.count) 项" : "已移出 \(removed.count) 项")
         } catch {
             showToast("批量清理失败：\(error.localizedDescription)")
         }
+    }
+
+    private func cleanupLocalFile(for itemId: String) {
+        thumbnailCache.removeValue(forKey: itemId)
+        guard let path = localFilePaths.removeValue(forKey: itemId) else { return }
+        storage.localFilePaths = localFilePaths
+        let managedPrefix = downloadsDirectory().standardizedFileURL.path
+        let fileURL = URL(fileURLWithPath: path).standardizedFileURL
+        if fileURL.path.hasPrefix(managedPrefix + "/") {
+            try? FileManager.default.removeItem(at: fileURL)
+        }
+    }
+
+    public func localCacheSizeBytes() -> Int64 {
+        let fm = FileManager.default
+        let dir = downloadsDirectory()
+        guard let enumerator = fm.enumerator(
+            at: dir,
+            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
+            options: [.skipsHiddenFiles]
+        ) else { return 0 }
+        var total: Int64 = 0
+        for case let fileURL as URL in enumerator {
+            guard let vals = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+                  vals.isRegularFile == true,
+                  let size = vals.fileSize
+            else { continue }
+            total += Int64(size)
+        }
+        return total
+    }
+
+    @discardableResult
+    public func clearLocalCache() -> Int {
+        let fm = FileManager.default
+        let dir = downloadsDirectory()
+        var removedCount = 0
+        if let entries = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) {
+            for entry in entries {
+                if (try? fm.removeItem(at: entry)) != nil {
+                    removedCount += 1
+                }
+            }
+        }
+        for itemId in localFilePaths.keys where p2pReady {
+            _ = try? p2p.unregisterFile(itemId: itemId)
+        }
+        localFilePaths = [:]
+        storage.localFilePaths = [:]
+        thumbnailCache.removeAll()
+        showToast(removedCount > 0 ? "已清理 \(removedCount) 个本地缓存文件" : "本地缓存已清空")
+        return removedCount
     }
 
     // MARK: - Share Links

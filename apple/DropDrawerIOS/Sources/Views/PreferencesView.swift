@@ -5,9 +5,11 @@ struct PreferencesView: View {
     @Bindable var store: DropDrawerStore
     @Environment(\.openURL) private var openURL
     @State private var confirmLogout: Bool = false
+    @State private var confirmClearCache: Bool = false
+    @State private var localCacheBytes: Int64 = 0
 
     private var appVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.1"
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.3"
     }
 
     private var cleanServerHost: String {
@@ -135,6 +137,11 @@ struct PreferencesView: View {
 
             Section("下载与关于") {
                 LabeledContent("保存位置", value: "「文件」App › DropDrawer")
+                LabeledContent("本地缓存", value: formatBytes(localCacheBytes))
+                Button("清理本地缓存", role: .destructive) {
+                    confirmClearCache = true
+                }
+                .disabled(localCacheBytes == 0)
                 LabeledContent("版本", value: appVersion)
                 if let url = URL(string: "https://github.com/StackTao/DropDrawer/releases") {
                     Button("查看发布页") {
@@ -152,8 +159,22 @@ struct PreferencesView: View {
         }
         .navigationTitle("设置")
         .navigationBarTitleDisplayMode(.inline)
+        .task {
+            localCacheBytes = store.localCacheSizeBytes()
+        }
+        .confirmationDialog("清理已下载的本地缓存文件？", isPresented: $confirmClearCache, titleVisibility: .visible) {
+            Button("清理本地缓存", role: .destructive) {
+                _ = store.clearLocalCache()
+                ThumbnailImageCache.shared.clear()
+                localCacheBytes = store.localCacheSizeBytes()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("仅删除本机缓存副本，不影响云端与列表记录。")
+        }
         .confirmationDialog("退出当前账号？", isPresented: $confirmLogout, titleVisibility: .visible) {
             Button("退出登录", role: .destructive) {
+                ThumbnailImageCache.shared.clear()
                 store.logout()
             }
             Button("取消", role: .cancel) {}

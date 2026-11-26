@@ -95,7 +95,7 @@ DropDrawer 是一款可自托管的跨平台文件传输与暂存工具。桌面
 | macOS（Apple silicon） | 运行 [macOS 打包脚本](scripts/build_macos_release.sh) 生成 `dist/DropDrawer-macOS.dmg`，打开后拖入「应用程序」 |
 | Windows（x64） | 在 [Windows installer](https://github.com/StackTao/DropDrawer/actions/workflows/windows-installer.yml) 的成功运行中下载 `DropDrawer-Windows-x64` 构建产物，解压后运行安装程序 |
 | Android | 在 [Android APK](https://github.com/StackTao/DropDrawer/actions/workflows/android-apk.yml) 的成功运行中下载 `DropDrawer-Android-APK` 构建产物，解压后安装对应 APK |
-| iOS | 在 macOS 上通过 Flutter 和 Xcode [从源码构建](#从源码构建)，真机安装需要配置签名 |
+| iOS | 在 macOS 上通过原生 SwiftUI（`apple/`）和 Xcode [从源码构建](#从源码构建)，真机安装需要配置签名 |
 
 Windows 和 Android 的构建产物保留 30 天。需要新的安装包时，有权限的仓库成员可以手动触发工作流。
 
@@ -139,20 +139,23 @@ curl -fsS http://localhost:8080/health
 
 运行 `./scripts/build_macos_release.sh` 打包 DMG，或加上 `--install` 更新本机「应用程序」中的 DropDrawer。使用全局快捷键时，可按系统提示授予辅助功能和输入监控权限。
 
-### iOS
+### iOS（原生 SwiftUI）
 
 ```bash
-./scripts/build_ios_p2p.sh
-(cd app && flutter pub get --enforce-lockfile && flutter build ios --simulator --no-codesign)
+./scripts/build_apple_p2p.sh
+(cd apple && xcodegen generate)
 ```
 
-真机调试可在 Xcode 中打开 `app/ios/Runner.xcworkspace`，配置签名后运行。
+在 Xcode 中打开生成的 `apple/DropDrawer.xcodeproj`，选择 `DropDrawerIOS` Scheme 即可在模拟器或配置签名后的真机运行（含系统「分享 → DropDrawer」扩展）。
+
+> 如需旧版 Flutter iOS 兼容构建，仍可使用 `./scripts/build_ios_p2p.sh` 与 `app/ios/`。
 
 ## 项目结构与贡献
 
 | 路径 | 用途 |
 | --- | --- |
-| [app](app) | Flutter 客户端及 macOS、Windows、iOS、Android 原生集成 |
+| [app](app) | Flutter 桌面端（macOS / Windows）与 Android 客户端及平台原生集成 |
+| [apple](apple) | 原生 Swift / SwiftUI iOS 客户端（`DropDrawerIOS`、`DropDrawerShareExtension`、`DropDrawerCore`） |
 | [crates/server](crates/server) | Axum、SQLite、WebSocket、存储适配器和外链下载 |
 | [crates/p2p-core](crates/p2p-core) | iroh QUIC 传输核心及原生 FFI |
 | [crates/protocol](crates/protocol) · [crates/p2p-cli](crates/p2p-cli) | 共享协议和 P2P 调试工具 |
@@ -163,6 +166,7 @@ curl -fsS http://localhost:8080/health
 ```bash
 cargo test --workspace
 (cd app && flutter analyze && flutter test)
+(cd apple/DropDrawerCore && swift test)
 ```
 
 如需独立验证 P2P，可用 `cargo run --bin dropdrawer-p2p-cli -- seed ./sample.zip` 生成传输票据，再在另一端运行 `cargo run --bin dropdrawer-p2p-cli -- pull '<TICKET_JSON>' ./received.zip`。

@@ -11,9 +11,10 @@
   - Rust P2P 核心（`crates/p2p-core`：`iroh` QUIC、断点续传、BLAKE3、实时路径、中继打洞重试、送达回执、双向取消）
   - Flutter **macOS 桌面端**（原生贴边抽屉、展开态/折叠态可拖拽停靠、`NSMenu`、`CGEventTap` 全局热键、签名与 DMG 打包）
   - Flutter **Windows 桌面端**（Win32 贴边抽屉、展开态/折叠态可拖拽停靠、托盘单实例、Inno Setup 覆盖升级/卸载清理、GitHub Actions 端到端烟测）
-  - Flutter **移动端（iOS / Android）**：触控 UI 适配（`SafeArea`、快捷选文件/相册/粘贴、下拉刷新、系统分享与存相册）、Android `ACTION_SEND` + `FileProvider` + `MediaStore` + `android-apk.yml` CI、iOS `DropDrawerMobileBridge` + `DropDrawerP2P.xcframework`（`scripts/build_ios_p2p.sh`）
+  - Flutter **桌面端（macOS / Windows）与 Android 移动端**：macOS/Windows 原生贴边抽屉、展开态/折叠态可拖拽停靠、托盘与安装包；Android 触控 UI（Material 3）、`ACTION_SEND` + `FileProvider` + `MediaStore` + `android-apk.yml` CI
+  - **原生 Swift / SwiftUI iOS 客户端（`apple/`）**：`DropDrawerCore`（REST / WebSocket / `DropDrawerP2P.xcframework` / Keychain + App Group 存储）、`DropDrawerIOS`（iOS 18+/26 Liquid Glass 原生导航、QuickLook、相册流式导入、降采样缩略图缓存、本地缓存清理）与 `DropDrawerShareExtension`（`group.com.dropdrawer.shared`），由 `apple/project.yml` + `scripts/build_apple_p2p.sh` 构建
 - **后续增强方向**：
-  - iOS 独立 Share Extension target（需配置 Apple Developer App Group 签名）与真机 TestFlight / Android 正式 Release 签名密钥配置。
+  - iOS 真机 Apple Developer App Group 签名 / TestFlight 与 Android 正式 Release 签名密钥配置。
 
 ---
 
@@ -40,7 +41,7 @@
 14. **Windows 安装/升级不要加 `AppMutex`**：Inno Setup 的 `AppMutex` 会阻断自动静默升级/卸载流程。当前 [deploy/windows/DropDrawer.iss](deploy/windows/DropDrawer.iss) 通过 `[Code]` 向窗口发送 `$8002`（`WM_APP + 2 = kQuitMessage`）优雅关闭托盘进程，并配合 `WM_QUERYENDSESSION`/`WM_ENDSESSION` 与卸载注册表清理；改动退出消息值时必须同步 `DropDrawer.iss` 与 `drawer_window.cpp`。
 15. **Windows 边缘模式与拖拽守卫**：
     - 圆角优先用 Windows 11 的 `DWMWA_WINDOW_CORNER_PREFERENCE`（抗锯齿）；失败时（Windows 10）回退 `CreateRoundRectRgn`，其第 5/6 参数是椭圆**直径**（`2 * radius`），且 `WM_DPICHANGED` 需重排 `PlaceDrawer()`。
-    - 资源管理器/桌面（`SHELLDLL_DefView`）里的文件拖动会**立即**弹引导条；其他 OLE 拖动（浏览器、编辑器、聊天软件里的文字等）只有靠近折叠手柄 `kHandleDragReach`（28 逻辑像素）以内才弹，避免选中或拖动网页文字时误触发。`OnTimer`、`WM_ACTIVATE`、`kOutsideClickMessage` 均需检查 `!IsOleDragActive()` 防止拖出文件时误收起。
+    - 外部应用的 OLE 拖放（`IsExternalOleDragActive()`：检测其他进程的 `CLIPBRDWNDCLASS` 捕获，覆盖资源管理器/第三方软件拖文件以及浏览器/编辑器/聊天软件拖文字；纯框选文字不会触发 OLE 拖放）会**立即**弹出边缘引导条，松手后自动收起，与 macOS 保持一致。`OnTimer`、`WM_ACTIVATE`、`kOutsideClickMessage` 仍需检查 `!IsOleDragActive()` 防止从抽屉拖出文件时误收起。
     - 常规窗口顶部左侧 `78px` 留白仅用于 macOS 红绿灯（`windowService.needsMacTrafficLightPadding`），不要加在 Windows/移动端上。
 16. **抽屉模式切换必须等 Flutter 画好再显示**：原生层切换 `collapsed` / `drag_pill` / `expanded` 时先隐藏窗口（macOS `alphaValue = 0`，Windows 空 `SetWindowRgn`），改尺寸后再发 `onDrawerStateChanged`，收到 Dart 回传的 `drawerFrameReady {mode}` 才显示（超时 160ms 兜底）。否则旧模式的布局会被拉伸进新尺寸的窗口里（"变形"）。改动该协议时必须同步 `drawer_window_service.dart`、`MainFlutterWindow.swift` 与 `drawer_window.cpp`；动画只用等比缩放与临界阻尼弹簧，不要再用 `sx ≠ sy` 的变换。
 17. **界面配色只用 `MacPalette`，且它不是常量**：手机端跟随系统浅色/深色（`MacPalette.use` + `main.dart` 全量重建），桌面端固定深色（macOS 窗口强制 `darkAqua`）。`MacPalette.*` 是运行时 getter，不能放进 `const` 表达式或参数默认值；不要新增 `Colors.white/black.withValues(...)` 或深色十六进制字面量，改用 `MacPalette.fill()`（中性叠加）、`shade()`（凹陷区域）、`group()`（分组面板）、`background`、`onTextPrimary` 等语义色。Material 3 的分隔线和描边颜色取自 `colorScheme.outlineVariant` / `outline`，不是 `dividerColor`。
@@ -70,6 +71,9 @@ cargo test --workspace
 
 # Flutter 静态分析与全部测试
 cd app && flutter analyze && flutter test
+
+# 原生 Swift DropDrawerCore 单元测试（macOS）
+cd apple/DropDrawerCore && swift test
 ```
 
 - 改动 Windows 原生代码、打包脚本或 CI 时，推送后应触发 `.github/workflows/windows-installer.yml` 验证编译、Rust/Flutter Windows 专属测试、以及托盘态覆盖升级与静默卸载烟测。

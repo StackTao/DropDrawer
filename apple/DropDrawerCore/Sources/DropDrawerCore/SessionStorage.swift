@@ -28,10 +28,35 @@ public final class SessionStorage: @unchecked Sendable {
     ) {
         if let suiteName, let suite = UserDefaults(suiteName: suiteName) {
             self.defaults = suite
+            Self.migrateStandardDefaultsIfNeeded(into: suite)
         } else {
             self.defaults = .standard
         }
         self.keychainService = keychainService
+    }
+
+    /// Preserves existing login/settings when migrating from `.standard` to an App Group suite.
+    private static func migrateStandardDefaultsIfNeeded(into suite: UserDefaults) {
+        let standard = UserDefaults.standard
+        guard suite.string(forKey: Keys.userId) == nil,
+              standard.string(forKey: Keys.userId) != nil
+        else { return }
+        let keysToMigrate = [
+            Keys.serverUrl,
+            Keys.userId,
+            Keys.username,
+            Keys.deviceId,
+            Keys.dropPolicy,
+            Keys.autoCloudThresholdMb,
+            Keys.defaultTtlHours,
+            Keys.localFilePaths,
+            Keys.unsignedSimTokenFallback,
+        ]
+        for key in keysToMigrate {
+            if let value = standard.object(forKey: key), suite.object(forKey: key) == nil {
+                suite.set(value, forKey: key)
+            }
+        }
     }
 
     public var serverUrl: String {
@@ -125,10 +150,13 @@ public final class SessionStorage: @unchecked Sendable {
         let status = SecItemAdd(attrs as CFDictionary, nil)
         if status == errSecSuccess {
             defaults.removeObject(forKey: Keys.unsignedSimTokenFallback)
-        } else if status == errSecMissingEntitlement {
-            // Unsigned iOS Simulator builds lack keychain entitlements (-34018).
+        }
+        #if targetEnvironment(simulator) || os(macOS)
+        if status == errSecMissingEntitlement {
+            // Unsigned iOS Simulator / macOS unit-test builds lack keychain entitlements (-34018).
             defaults.set(value, forKey: Keys.unsignedSimTokenFallback)
         }
+        #endif
     }
 
     private func readKeychain(account: String) -> String? {
@@ -144,9 +172,11 @@ public final class SessionStorage: @unchecked Sendable {
         if status == errSecSuccess, let data = item as? Data {
             return String(data: data, encoding: .utf8)
         }
+        #if targetEnvironment(simulator) || os(macOS)
         if status == errSecMissingEntitlement || status == errSecItemNotFound {
             return defaults.string(forKey: Keys.unsignedSimTokenFallback)
         }
+        #endif
         return nil
     }
 

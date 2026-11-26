@@ -45,6 +45,8 @@ class DropDrawerController extends ChangeNotifier {
   bool p2pReady = false;
   LocalNodeInfo? localNodeInfo;
   bool wsConnected = false;
+  bool _bootstrapping = false;
+  bool get isBootstrapping => _bootstrapping;
 
   /// 'smart' (auto-cloud below threshold, P2P for large), 'p2p_only', 'cloud_cached'
   String defaultDropPolicy = 'smart';
@@ -99,11 +101,51 @@ class DropDrawerController extends ChangeNotifier {
   }
   void _tickTransfers() => transferTicks.value++;
 
-  DropDrawerController() {
+  DropDrawerController({SharedPreferences? initialPrefs}) {
+    if (initialPrefs != null) {
+      _restorePrefsSync(initialPrefs);
+    }
     windowService.onStateChanged = notifyListeners;
     windowService.onSharedPayload = (files, texts) {
       unawaited(handleIncomingSharePayload(files, texts));
     };
+  }
+
+  void _restorePrefsSync(SharedPreferences prefs) {
+    serverUrl = prefs.getString('server_url') ?? serverUrl;
+    token = prefs.getString('auth_token');
+    defaultDropPolicy = prefs.getString('drop_policy') ?? 'smart';
+    final savedThresholdMb = prefs.getInt('auto_cloud_threshold_mb');
+    if (savedThresholdMb != null && savedThresholdMb > 0) {
+      autoCloudThresholdBytes = savedThresholdMb * 1024 * 1024;
+    }
+    defaultTtlHours = prefs.getInt('default_ttl_hours') ?? 0;
+    customDownloadDir = prefs.getString('custom_download_dir');
+    if (customDownloadDir != null && customDownloadDir!.trim().isEmpty) {
+      customDownloadDir = null;
+    }
+    final savedUser = prefs.getString('username');
+    final savedUserId = prefs.getString('user_id');
+
+    final savedPathsRaw = prefs.getString('local_file_paths');
+    if (savedPathsRaw != null) {
+      try {
+        final decoded = Map<String, dynamic>.from(jsonDecode(savedPathsRaw) as Map);
+        for (final entry in decoded.entries) {
+          final path = entry.value.toString();
+          if (File(path).existsSync()) {
+            localFilePaths[entry.key] = path;
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (token != null && savedUser != null && savedUserId != null) {
+      user = UserProfile(id: savedUserId, username: savedUser);
+      deviceId = prefs.getString('device_id.$savedUserId') ??
+          prefs.getString('device_id');
+      _api ??= ApiClient(baseUrl: serverUrl, token: token);
+    }
   }
 
   bool get isLoggedIn => token != null && user != null;
@@ -142,55 +184,46 @@ class DropDrawerController extends ChangeNotifier {
   }
 
   Future<void> bootstrap() async {
+    _bootstrapping = true;
     unawaited(updates.start());
     final prefs = await SharedPreferences.getInstance();
-    serverUrl = prefs.getString('server_url') ?? serverUrl;
-    token = prefs.getString('auth_token');
-    defaultDropPolicy = prefs.getString('drop_policy') ?? 'smart';
-    final savedThresholdMb = prefs.getInt('auto_cloud_threshold_mb');
-    if (savedThresholdMb != null && savedThresholdMb > 0) {
-      autoCloudThresholdBytes = savedThresholdMb * 1024 * 1024;
-    }
-    defaultTtlHours = prefs.getInt('default_ttl_hours') ?? 0;
-    customDownloadDir = prefs.getString('custom_download_dir');
-    if (customDownloadDir != null && customDownloadDir!.trim().isEmpty) {
-      customDownloadDir = null;
-    }
-    await windowService.refreshSystemSettings();
-    final savedUser = prefs.getString('username');
-    final savedUserId = prefs.getString('user_id');
+    _restorePrefsSync(prefs);
 
-    final savedPathsRaw = prefs.getString('local_file_paths');
-    if (savedPathsRaw != null) {
-      try {
-        final decoded = Map<String, dynamic>.from(jsonDecode(savedPathsRaw) as Map);
-        for (final entry in decoded.entries) {
-          final path = entry.value.toString();
-          if (File(path).existsSync()) {
-            localFilePaths[entry.key] = path;
-          }
-        }
+    if (isLoggedIn) {
+      // Transition immediately to DrawerScreen before network/P2P init so the
+      // login screen never flashes on relaunch.
+      _bootstrapping = false;
+      notifyListeners();
+
+      await windowService.refreshSystemSettings();
+      if (localFilePaths.isNotEmpty) {
         await windowService.pruneClipboardFiles(localFilePaths.values);
-      } catch (_) {}
-    }
-
-    if (token != null && savedUser != null && savedUserId != null) {
-      user = UserProfile(id: savedUserId, username: savedUser);
-      deviceId = prefs.getString('device_id.$savedUserId') ??
-          prefs.getString('device_id');
-      _api = ApiClient(baseUrl: serverUrl, token: token);
+      }
       try {
         await _postLoginInit();
       } catch (e) {
-        statusBanner = 'Reconnect failed: $e';
-        token = null;
-        user = null;
-        if (windowService.supportsEdgeDrawer) {
-          await windowService.setEdgeDrawerMode(false);
+        final isUnauthorized = e.toString().contains('HTTP 401');
+        if (isUnauthorized) {
+          statusBanner = '登录状态已失效，请重新登录';
+          token = null;
+          user = null;
+          _api = null;
+          if (windowService.supportsEdgeDrawer) {
+            await windowService.setEdgeDrawerMode(false);
+          }
+        } else {
+          statusBanner = '暂时无法连接服务器，请下拉刷新重试';
+          if (deviceId != null) {
+            unawaited(_connectWs());
+          }
         }
       }
-    } else if (windowService.supportsEdgeDrawer) {
-      await windowService.setEdgeDrawerMode(false);
+    } else {
+      await windowService.refreshSystemSettings();
+      _bootstrapping = false;
+      if (windowService.supportsEdgeDrawer) {
+        await windowService.setEdgeDrawerMode(false);
+      }
     }
     notifyListeners();
   }

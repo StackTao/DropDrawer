@@ -6,8 +6,8 @@ use std::{
 };
 
 use dropdrawer_server::{
-    db::Database, google_login::GoogleLoginConfig, routes::build_router, spawn_ttl_cleanup_task,
-    state::AppState,
+    db::Database, google_login::GoogleLoginConfig, routes::build_router_with_cors,
+    spawn_ttl_cleanup_task, state::AppState,
 };
 use tracing_subscriber::EnvFilter;
 
@@ -61,11 +61,52 @@ async fn main() -> anyhow::Result<()> {
     }
     spawn_ttl_cleanup_task(state.clone(), cleanup_secs);
 
-    let app = build_router(state);
+    let cors_origins: Option<Vec<String>> = get("DROPDRAWER_CORS_ORIGINS")
+        .map(|raw| {
+            raw.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .filter(|list| !list.is_empty());
+    if let Some(ref origins) = cors_origins {
+        tracing::info!(?origins, "CORS allowed origins configured");
+    }
+
+    let app = build_router_with_cors(state, cors_origins.as_deref());
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
     tracing::info!("DropDrawer server listening on http://{bind_addr}");
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+    tracing::info!("DropDrawer server shut down cleanly");
     Ok(())
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        if let Ok(mut sigterm) =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        {
+            sigterm.recv().await;
+        } else {
+            std::future::pending::<()>().await;
+        }
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+    tracing::info!("shutdown signal received, draining in-flight requests");
 }
 
 fn load_env_file() -> anyhow::Result<HashMap<String, String>> {

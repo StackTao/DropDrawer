@@ -70,6 +70,7 @@ DropDrawer 将**控制面**与**数据面**解耦：
 - **注册开关**：`DROPDRAWER_ALLOW_REGISTRATION=false` 关闭新用户注册（默认开启）。
 - **JWT 密钥**：未设置或使用旧占位值时自动生成随机密钥并以 `0600` 权限保存到数据库同目录的 `jwt_secret`。
 - **暴力破解限流**：同一用户名 15 分钟内登录失败 10 次、同一分享码 15 分钟内提取码错误 10 次后返回 `429`，Argon2 校验在 `spawn_blocking` 中执行。
+- **CORS 与优雅停机**：服务端默认允许跨域（可通过 `DROPDRAWER_CORS_ORIGINS` 逗号分隔收紧），收到 `SIGINT`/`SIGTERM` 时通过 `with_graceful_shutdown` 排空在途请求；SQLite 启用 WAL、`synchronous = NORMAL` 与 `busy_timeout = 5000`。
 - **WebSocket 鉴权**：客户端通过 `Authorization: Bearer` 头传 JWT；`?token=` 查询参数仅为兼容旧客户端保留。
 
 ### 核心路由
@@ -99,7 +100,7 @@ Dart 侧通过 [drawer_window_service.dart](../app/lib/services/drawer_window_se
 ### 4.2 Windows (`app/windows/runner/` + `deploy/windows/`)
 - **窗口与托盘 (`drawer_window.cpp`)**：单实例互斥锁 `Local\DropDrawer`、系统托盘图标与右键菜单、`WS_POPUP` 贴边抽屉、Windows 11 用 `DWMWA_WINDOW_CORNER_PREFERENCE` 系统圆角（Windows 10 回退 `CreateRoundRectRgn` 按 DPI 缩放裁剪，响应 `WM_DPICHANGED` 与 `WM_DISPLAYCHANGE`）、折叠手柄与展开态顶部拖条支持上下滑动与跨屏左右停靠。
 - **毛玻璃背景**：Windows 11 22H2+ 上常规窗口用 Mica、边缘抽屉用 Acrylic（`DWMWA_SYSTEMBACKDROP_TYPE` + `DwmExtendFrameIntoClientArea`），原生回报 `backdrop` 后 Flutter 才改用半透明底色；偏好设置可关闭。
-- **拖拽唤出与防误触**：通过 `CLIPBRDWNDCLASS` + `SHELLDLL_DefView` 祖先链识别资源管理器/桌面文件拖动，立即弹引导条；其他 OLE 拖动（如浏览器、编辑器中的文字）在靠近折叠手柄 28 逻辑像素内才弹，避免选中网页文本时误触发；`OnTimer`、`WM_ACTIVATE`、`kOutsideClickMessage` 均带 `!IsOleDragActive()` 守卫，防止从抽屉拖出文件时中途收起。
+- **拖拽唤出与防误触**：通过 `IsExternalOleDragActive()`（检测其他进程的 `CLIPBRDWNDCLASS` OLE 拖放捕获，纯框选文字不会触发）在拖动文件或选中文字时**立即**弹出边缘引导条，靠近引导条后自动展开抽屉，松手即收起（与 macOS 体验一致）；`OnTimer`、`WM_ACTIVATE`、`kOutsideClickMessage` 均带 `!IsOleDragActive()` 守卫，防止从抽屉拖出文件时中途收起。
 - **剪贴板与文件 (`drawer_files.cpp`)**：`CF_HDROP` + `Preferred DropEffect` 多文件复制（跳过失效路径）、WIC 截图保存（由启动阶段 `pruneClipboardFiles` 排除抽屉保留路径后清理超 24h 旧缓存）、`SHOpenFolderAndSelectItems` 定位文件、PowerShell `.NET ZipFile`（UTF-8 编码，回退绝对路径 `%SystemRoot%\System32\tar.exe`）打包文件夹。
 - **安装、升级与卸载 (`DropDrawer.iss`)**：
   - 处理 `WM_QUERYENDSESSION` / `WM_ENDSESSION` 及自定义退出消息 `kQuitMessage (WM_APP + 2 = 0x8002)`。
@@ -117,7 +118,7 @@ Dart 侧通过 [drawer_window_service.dart](../app/lib/services/drawer_window_se
   - `AndroidManifest.xml` 注册 `ACTION_SEND` / `ACTION_SEND_MULTIPLE` Intent 接收其他 App 分享的文件、图片、视频与文本，并配置 `FileProvider`（`res/xml/file_paths.xml`）和网络/局域网组播权限。
   - `MainActivity.kt` 实现 `consumePendingShares` / `onSharedPayload`、`shareFiles` / `shareText`、`saveToGallery`（Android 10+ `MediaStore` 零存储权限写入 `Pictures/DropDrawer` 或 `Movies/DropDrawer`）、`openExternalUrl`（支持 Google Drive OAuth）与 `readClipboard`（支持图片 URI 与文本）。
   - `.github/workflows/android-apk.yml` 使用 `cargo-ndk` 编译 `arm64-v8a` & `armeabi-v7a` 的 `libdropdrawer_p2p.so` 打包进 APK。
-- **iOS (`app/ios/`)**：
-  - `Info.plist` 配置 `CFBundleDocumentTypes`（支持其他 App「用 DropDrawer 打开」）、`dropdrawer://` URL Scheme、`UIFileSharingEnabled`（下载文件在 iOS「文件」App 可见）以及局域网与相册权限说明。
-  - `AppDelegate.swift` + `SceneDelegate.swift` 实现 `DropDrawerMobileBridge`（`UIActivityViewController` 分享、`PHPhotoLibrary` 存相册、`UIPasteboard` 图片/文本粘贴、`Documents/Inbox` + App Group `group.com.dropdrawer.shared` 分享队列）。
-  - `scripts/build_ios_p2p.sh` 交叉编译 `aarch64-apple-ios` 与 `aarch64-apple-ios-sim` 静态库并打包 `DropDrawerP2P.xcframework`，经本地 CocoaPod `app/ios/DropDrawerP2P/DropDrawerP2P.podspec` 使用 `-Wl,-u,_dropdrawer_p2p_*` 强制保留全部 10 个 C-ABI 符号供 `DynamicLibrary.process()` 调用。
+- **原生 Swift iOS (`apple/`)**：
+  - `apple/DropDrawerCore`：Swift Package，封装 REST 流式上传/分块下载（带真实底层取消与原子替换）、WebSocket 指数退避重连、Keychain + App Group (`group.com.dropdrawer.shared`) 持久化与同步会话恢复（冷启动无登录页闪烁），以及 `DropDrawerP2P.xcframework`（`scripts/build_apple_p2p.sh`）C-ABI 桥接。
+  - `apple/DropDrawerIOS` & `apple/DropDrawerShareExtension`：由 `apple/project.yml`（XcodeGen）生成，支持系统 QuickLook、相册 `FileRepresentation` 零全量内存导入、`CGImageSource` 异步降采样缩略图缓存、发送进度/取消与本地缓存清理。
+- **旧版 Flutter iOS 兼容层 (`app/ios/`)**：保留 `DropDrawerMobileBridge` 与 `scripts/build_ios_p2p.sh` 作为兼容参考。

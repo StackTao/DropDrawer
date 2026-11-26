@@ -9,8 +9,12 @@ struct ItemDetailView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var quickLookURL: URL?
+    @State private var heroImage: UIImage?
 
     private var localURL: URL? { store.localFileURL(for: item.id) }
+    private var heroCacheKey: String {
+        "hero_\(item.id)_\(localURL?.path ?? "")"
+    }
 
     var body: some View {
         List {
@@ -60,11 +64,7 @@ struct ItemDetailView: View {
         } else if item.isImage {
             Section {
                 Group {
-                    if let url = localURL, let img = UIImage(contentsOfFile: url.path) {
-                        Image(uiImage: img)
-                            .resizable()
-                            .scaledToFit()
-                    } else if let data = store.thumbnailData(for: item), let img = UIImage(data: data) {
+                    if let img = heroImage ?? ThumbnailImageCache.shared.image(forKey: heroCacheKey) {
                         Image(uiImage: img)
                             .resizable()
                             .scaledToFit()
@@ -78,6 +78,24 @@ struct ItemDetailView: View {
                 .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
                 .onTapGesture {
                     if let url = localURL { quickLookURL = url }
+                }
+                .task(id: heroCacheKey) {
+                    let key = heroCacheKey
+                    if let cached = ThumbnailImageCache.shared.image(forKey: key) {
+                        heroImage = cached
+                        return
+                    }
+                    let local = localURL
+                    let thumbData = local == nil ? store.thumbnailData(for: item) : nil
+                    let decoded = await ThumbnailImageCache.shared.loadDownsampled(
+                        key: key,
+                        thumbnailData: thumbData,
+                        localFileURL: local,
+                        maxPixelSize: 1200
+                    )
+                    if !Task.isCancelled {
+                        heroImage = decoded
+                    }
                 }
             }
         } else {

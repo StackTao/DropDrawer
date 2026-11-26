@@ -3,7 +3,9 @@ import SwiftUI
 
 @main
 struct DropDrawerIOSApp: App {
-    @State private var store = DropDrawerStore()
+    @State private var store = DropDrawerStore(
+        storage: SessionStorage(suiteName: SessionStorage.appGroupId)
+    )
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
@@ -13,9 +15,7 @@ struct DropDrawerIOSApp: App {
                     await store.bootstrap()
                 }
                 .onChange(of: scenePhase) { _, newPhase in
-                    if newPhase == .active {
-                        Task { await store.handleSceneActive() }
-                    }
+                    Task { await store.handleScenePhaseChanged(active: newPhase == .active) }
                 }
                 .onOpenURL { url in
                     Task { await handleIncomingURL(url) }

@@ -3,6 +3,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'state/drawer_controller.dart';
 import 'ui/drawer_screen.dart';
@@ -11,7 +12,7 @@ import 'ui/theme.dart';
 
 bool get _isMobile => Platform.isIOS || Platform.isAndroid;
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   if (_isMobile) {
     // Phones follow the system appearance; the desktop drawer is always dark.
@@ -22,7 +23,11 @@ void main() {
     );
     _applySystemBars();
   }
-  runApp(const DropDrawerApp());
+  SharedPreferences? initialPrefs;
+  try {
+    initialPrefs = await SharedPreferences.getInstance();
+  } catch (_) {}
+  runApp(DropDrawerApp(initialPrefs: initialPrefs));
 }
 
 void _applySystemBars() {
@@ -41,7 +46,9 @@ void _applySystemBars() {
 }
 
 class DropDrawerApp extends StatefulWidget {
-  const DropDrawerApp({super.key});
+  final SharedPreferences? initialPrefs;
+
+  const DropDrawerApp({super.key, this.initialPrefs});
 
   @override
   State<DropDrawerApp> createState() => _DropDrawerAppState();
@@ -49,7 +56,9 @@ class DropDrawerApp extends StatefulWidget {
 
 class _DropDrawerAppState extends State<DropDrawerApp>
     with WidgetsBindingObserver {
-  final DropDrawerController _controller = DropDrawerController();
+  late final DropDrawerController _controller = DropDrawerController(
+    initialPrefs: widget.initialPrefs,
+  );
 
   @override
   void initState() {

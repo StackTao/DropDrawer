@@ -108,6 +108,144 @@ private final class TransferStreamDelegate: NSObject, URLSessionTaskDelegate, UR
     }
 }
 
+private final class DownloadStreamDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    private let lock = NSLock()
+    private let partialURL: URL
+    private let onProgress: (@Sendable (Int64, Int64) -> Void)?
+    private let cancelToken: TransferCancelToken?
+
+    private var handle: FileHandle?
+    private var expectedTotal: Int64 = 0
+    private var received: Int64 = 0
+    private var lastProgressReport: CFAbsoluteTime = 0
+    private var failure: Error?
+    private var continuation: CheckedContinuation<Void, Error>?
+
+    init(
+        partialURL: URL,
+        onProgress: (@Sendable (Int64, Int64) -> Void)?,
+        cancelToken: TransferCancelToken?
+    ) {
+        self.partialURL = partialURL
+        self.onProgress = onProgress
+        self.cancelToken = cancelToken
+    }
+
+    func setContinuation(_ cont: CheckedContinuation<Void, Error>) {
+        lock.withLock {
+            continuation = cont
+        }
+    }
+
+    private func finish(with result: Result<Void, Error>) {
+        let (cont, fileHandle) = lock.withLock { () -> (CheckedContinuation<Void, Error>?, FileHandle?) in
+            let c = continuation
+            continuation = nil
+            let h = handle
+            handle = nil
+            return (c, h)
+        }
+        if let fileHandle {
+            if case .success = result {
+                try? fileHandle.synchronize()
+            }
+            try? fileHandle.close()
+        }
+        guard let cont else { return }
+        switch result {
+        case .success:
+            cont.resume()
+        case .failure(let error):
+            cont.resume(throwing: error)
+        }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping @Sendable (URLSession.ResponseDisposition) -> Void
+    ) {
+        if cancelToken?.isCancelled == true {
+            completionHandler(.cancel)
+            return
+        }
+        guard let http = response as? HTTPURLResponse else {
+            lock.withLock { failure = APIError.message("下载未收到有效响应") }
+            completionHandler(.cancel)
+            return
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            lock.withLock { failure = APIError.httpStatus(http.statusCode, "") }
+            completionHandler(.cancel)
+            return
+        }
+        do {
+            FileManager.default.createFile(atPath: partialURL.path, contents: nil)
+            let opened = try FileHandle(forWritingTo: partialURL)
+            lock.withLock {
+                handle = opened
+                expectedTotal = http.expectedContentLength > 0 ? http.expectedContentLength : 0
+            }
+            completionHandler(.allow)
+        } catch {
+            lock.withLock { failure = error }
+            completionHandler(.cancel)
+        }
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        if cancelToken?.isCancelled == true {
+            dataTask.cancel()
+            return
+        }
+        let progressSnapshot: (Int64, Int64)?
+        do {
+            progressSnapshot = try lock.withLock { () -> (Int64, Int64)? in
+                guard failure == nil, let handle else { return nil }
+                try handle.write(contentsOf: data)
+                received += Int64(data.count)
+                let now = CFAbsoluteTimeGetCurrent()
+                let isComplete = expectedTotal > 0 && received >= expectedTotal
+                if isComplete || now - lastProgressReport >= 0.08 {
+                    lastProgressReport = now
+                    return (received, expectedTotal)
+                }
+                return nil
+            }
+        } catch {
+            lock.withLock { failure = error }
+            dataTask.cancel()
+            return
+        }
+        if let (bytes, total) = progressSnapshot {
+            onProgress?(bytes, total)
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if cancelToken?.isCancelled == true {
+            finish(with: .failure(TransferCancelledError()))
+            return
+        }
+        let (recordedFailure, finalBytes, finalTotal) = lock.withLock {
+            (failure, received, expectedTotal)
+        }
+        if let recordedFailure {
+            finish(with: .failure(recordedFailure))
+            return
+        }
+        if let error {
+            finish(with: .failure(error))
+            return
+        }
+        if finalBytes > 0 {
+            onProgress?(finalBytes, finalTotal)
+        }
+        finish(with: .success(()))
+    }
+}
+
 /// Async REST + streaming upload/download + WebSocket client matching `crates/server`.
 public final class APIClient: @unchecked Sendable {
     private let lock = NSLock()
@@ -513,54 +651,37 @@ public final class APIClient: @unchecked Sendable {
         defer { try? fm.removeItem(at: stagingDir) }
 
         let partialURL = stagingDir.appendingPathComponent("download.part")
-        fm.createFile(atPath: partialURL.path, contents: nil)
-        let handle = try FileHandle(forWritingTo: partialURL)
+        let delegate = DownloadStreamDelegate(
+            partialURL: partialURL,
+            onProgress: onProgress,
+            cancelToken: cancelToken
+        )
+        let cfg = URLSessionConfiguration.default
+        cfg.timeoutIntervalForRequest = 30
+        cfg.timeoutIntervalForResource = 3600
+        let downloadSession = URLSession(configuration: cfg, delegate: delegate, delegateQueue: nil)
+        defer { downloadSession.finishTasksAndInvalidate() }
 
-        let taskBox = Box<Task<Void, Never>?>(nil)
-        do {
-            let (bytes, response) = try await session.bytes(for: req)
-            if cancelToken?.isCancelled == true { throw TransferCancelledError() }
-            guard let http = response as? HTTPURLResponse else {
-                throw APIError.message("下载未收到有效响应")
-            }
-            guard (200..<300).contains(http.statusCode) else {
-                throw APIError.httpStatus(http.statusCode, "")
-            }
-            let total = http.expectedContentLength > 0 ? http.expectedContentLength : 0
-            var received: Int64 = 0
-            var buffer = Data()
-            buffer.reserveCapacity(64 * 1024)
-
-            for try await byte in bytes {
-                if cancelToken?.isCancelled == true { throw TransferCancelledError() }
-                buffer.append(byte)
-                if buffer.count >= 64 * 1024 {
-                    try handle.write(contentsOf: buffer)
-                    received += Int64(buffer.count)
-                    buffer.removeAll(keepingCapacity: true)
-                    onProgress?(received, total)
-                }
-            }
-            if !buffer.isEmpty {
-                try handle.write(contentsOf: buffer)
-                received += Int64(buffer.count)
-                onProgress?(received, total)
-            }
-            try handle.synchronize()
-            try handle.close()
-
-            if cancelToken?.isCancelled == true { throw TransferCancelledError() }
-            // Atomic replacement on the same volume preserves any existing destination on error.
-            _ = try fm.replaceItemAt(destURL, withItemAt: partialURL)
-            _ = taskBox
-            return destURL
-        } catch {
-            try? handle.close()
-            if cancelToken?.isCancelled == true {
-                throw TransferCancelledError()
-            }
-            throw error
+        let taskHolder = Box<URLSessionDataTask?>(nil)
+        cancelToken?.attach {
+            taskHolder.withLock { $0?.cancel() }
         }
+
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+            delegate.setContinuation(cont)
+            let task = downloadSession.dataTask(with: req)
+            taskHolder.withLock { $0 = task }
+            if cancelToken?.isCancelled == true {
+                task.cancel()
+            } else {
+                task.resume()
+            }
+        }
+
+        if cancelToken?.isCancelled == true { throw TransferCancelledError() }
+        // Atomic replacement on the same volume preserves any existing destination on error.
+        _ = try fm.replaceItemAt(destURL, withItemAt: partialURL)
+        return destURL
     }
 
     // MARK: - Share Links

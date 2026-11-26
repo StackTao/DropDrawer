@@ -23,7 +23,7 @@ use protocol::{
 };
 use serde::Deserialize;
 use tokio::sync::mpsc;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use uuid::Uuid;
 
 use crate::auth::{create_jwt, decode_jwt, hash_password, verify_password, AuthUser};
@@ -32,10 +32,33 @@ use crate::state::AppState;
 use crate::storage::{DownloadResolution, local::LocalUploadTooLarge};
 
 pub fn build_router(state: Arc<AppState>) -> Router {
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+    build_router_with_cors(state, None)
+}
+
+pub fn build_router_with_cors(state: Arc<AppState>, allowed_origins: Option<&[String]>) -> Router {
+    let cors = match allowed_origins {
+        Some(origins) if !origins.is_empty() && !origins.iter().any(|o| o == "*") => {
+            let parsed: Vec<axum::http::HeaderValue> = origins
+                .iter()
+                .filter_map(|origin| origin.parse().ok())
+                .collect();
+            if parsed.is_empty() {
+                CorsLayer::new()
+                    .allow_origin(Any)
+                    .allow_methods(Any)
+                    .allow_headers(Any)
+            } else {
+                CorsLayer::new()
+                    .allow_origin(AllowOrigin::list(parsed))
+                    .allow_methods(Any)
+                    .allow_headers(Any)
+            }
+        }
+        _ => CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any),
+    };
 
     Router::new()
         .route("/health", get(health))
