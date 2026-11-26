@@ -172,6 +172,12 @@ impl StorageProvider for S3Provider {
         Ok(DownloadResolution::DirectUrl(url))
     }
 
+    async fn object_exists(&self, remote_key: &str) -> anyhow::Result<bool> {
+        let url = self.presign_url("HEAD", remote_key, 120);
+        let resp = self.http.head(&url).send().await?;
+        Ok(resp.status().is_success())
+    }
+
     async fn delete(&self, remote_key: &str) -> anyhow::Result<()> {
         let url = self.presign_url("DELETE", remote_key, 300);
         let resp = self.http.delete(&url).send().await?;

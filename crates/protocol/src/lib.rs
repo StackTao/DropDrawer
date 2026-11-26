@@ -311,6 +311,11 @@ pub enum UploadPlan {
         url: String,
         storage_backend_id: String,
     },
+    /// Identical content already exists on the target storage backend for this user;
+    /// the item was linked to the existing cloud object immediately with zero bytes uploaded.
+    AlreadyCached {
+        item: Box<DrawerItem>,
+    },
 }
 
 /// Response returned when a client wants to download an item.

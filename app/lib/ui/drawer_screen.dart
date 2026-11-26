@@ -34,6 +34,7 @@ class DrawerScreen extends StatefulWidget {
 class _DrawerScreenState extends State<DrawerScreen>
     with SingleTickerProviderStateMixin {
   bool _isDragHovering = false;
+  Timer? _dragLeaveTimer;
   late final AnimationController _glowPulseCtrl;
   bool _handleHovered = false;
   bool _selectionMode = false;
@@ -129,6 +130,8 @@ class _DrawerScreenState extends State<DrawerScreen>
     _shortcutFocusNode.dispose();
     _searchCtrl.dispose();
     _searchFocusNode.dispose();
+    _dragLeaveTimer?.cancel();
+    _dragLeaveTimer = null;
     _glowPulseCtrl.dispose();
     // Leaving the screen ends the undo window: carry out pending deletions.
     final controller = widget.controller;
@@ -143,7 +146,22 @@ class _DrawerScreenState extends State<DrawerScreen>
     super.dispose();
   }
 
+  /// Negotiate an OLE/Cocoa drop operation supported by the drag source.
+  /// Text drags on Windows (browsers/editors/chat apps) sometimes advertise
+  /// only `move` without `copy`; returning `copy` in that case makes Win32
+  /// OLE mask the effect to `DROPEFFECT_NONE` and destabilizes hover state.
+  static DropOperation _preferredDropOperation(Set<DropOperation> allowed) {
+    if (allowed.contains(DropOperation.copy)) return DropOperation.copy;
+    if (allowed.contains(DropOperation.move)) return DropOperation.move;
+    if (allowed.contains(DropOperation.link)) return DropOperation.link;
+    return DropOperation.copy;
+  }
+
   void _setDragHovering(bool hovering) {
+    if (hovering) {
+      _dragLeaveTimer?.cancel();
+      _dragLeaveTimer = null;
+    }
     if (_isDragHovering == hovering) return;
     if (hovering) {
       _glowPulseCtrl.repeat(reverse: true);
@@ -153,6 +171,18 @@ class _DrawerScreenState extends State<DrawerScreen>
         ..value = 0;
     }
     setState(() => _isDragHovering = hovering);
+  }
+
+  /// Debounce transient `onDropLeave` / `onDropEnded` bursts on Windows where
+  /// Win32 OLE text-drag previews briefly steal focus over topmost/Acrylic
+  /// windows and emit single-frame `DragLeave → DragEnter` jitter.
+  void _scheduleDragHoverEnd() {
+    _dragLeaveTimer?.cancel();
+    _dragLeaveTimer = Timer(const Duration(milliseconds: 140), () {
+      _dragLeaveTimer = null;
+      if (!mounted) return;
+      _setDragHovering(false);
+    });
   }
 
   String _dropPolicyHint(DropDrawerController c) {
@@ -566,13 +596,13 @@ class _DrawerScreenState extends State<DrawerScreen>
     return DropRegion(
       formats: const [Formats.fileUri, Formats.plainText],
       hitTestBehavior: HitTestBehavior.opaque,
-      onDropOver: (_) {
+      onDropOver: (event) {
         if (c.windowService.modalOpen) return DropOperation.none;
         _setDragHovering(true);
-        return DropOperation.copy;
+        return _preferredDropOperation(event.session.allowedOperations);
       },
-      onDropLeave: (_) => _setDragHovering(false),
-      onDropEnded: (_) => _setDragHovering(false),
+      onDropLeave: (_) => _scheduleDragHoverEnd(),
+      onDropEnded: (_) => _scheduleDragHoverEnd(),
       onPerformDrop: (event) => _handleDropSession(c, event),
       child: child,
     );
@@ -738,7 +768,8 @@ class _DrawerScreenState extends State<DrawerScreen>
     return DropRegion(
       formats: const [Formats.fileUri, Formats.plainText],
       hitTestBehavior: HitTestBehavior.opaque,
-      onDropOver: (_) => DropOperation.copy,
+      onDropOver: (event) =>
+          _preferredDropOperation(event.session.allowedOperations),
       onPerformDrop: (event) => _handleDropSession(c, event, expandAfterDrop: true),
       child: Material(
         color: Colors.transparent,
@@ -825,6 +856,8 @@ class _DrawerScreenState extends State<DrawerScreen>
     PerformDropEvent event, {
     bool expandAfterDrop = false,
   }) async {
+    _dragLeaveTimer?.cancel();
+    _dragLeaveTimer = null;
     _setDragHovering(false);
     // Interaction A: always bring the user back to the home drawer on drop so
     // the new item and its upload/P2P progress are immediately visible.
@@ -937,7 +970,7 @@ class _DrawerScreenState extends State<DrawerScreen>
             item.canProvide(Formats.plainText))) {
           unawaited(c.windowService.showDragGuide());
         }
-        return DropOperation.copy;
+        return _preferredDropOperation(event.session.allowedOperations);
       },
       onPerformDrop: (event) => _handleDropSession(c, event, expandAfterDrop: true),
       child: handle,

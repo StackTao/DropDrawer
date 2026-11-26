@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 public struct TransferCancelledError: LocalizedError, Sendable {
@@ -613,6 +614,32 @@ public final class APIClient: @unchecked Sendable {
         )
     }
 
+    private static func computeSHA256(
+        fileURL: URL,
+        cancelToken: TransferCancelToken?
+    ) async throws -> String {
+        try await Task.detached(priority: .utility) {
+            let handle = try FileHandle(forReadingFrom: fileURL)
+            defer { try? handle.close() }
+            var hasher = SHA256()
+            let chunkSize = 256 * 1024
+            while true {
+                if cancelToken?.isCancelled == true {
+                    throw TransferCancelledError()
+                }
+                let chunk = try autoreleasepool { () -> Data? in
+                    try handle.read(upToCount: chunkSize)
+                }
+                guard let chunk, !chunk.isEmpty else { break }
+                hasher.update(data: chunk)
+            }
+            if cancelToken?.isCancelled == true {
+                throw TransferCancelledError()
+            }
+            return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        }.value
+    }
+
     public func uploadItemFile(
         itemId: String,
         fileURL: URL,
@@ -622,21 +649,40 @@ public final class APIClient: @unchecked Sendable {
         cancelToken: TransferCancelToken? = nil
     ) async throws -> DrawerItem {
         if cancelToken?.isCancelled == true { throw TransferCancelledError() }
+        let attrs = try FileManager.default.attributesOfItem(atPath: fileURL.path)
+        let total = (attrs[.size] as? NSNumber)?.int64Value ?? 0
+        let contentSHA256 = try await Self.computeSHA256(fileURL: fileURL, cancelToken: cancelToken)
+        if cancelToken?.isCancelled == true { throw TransferCancelledError() }
+
         let planReq = try makeRequest(
             "/api/drawer/items/\(itemId)/upload-plan",
             method: "POST",
-            jsonBody: ["storage_backend_id": storageBackendId ?? NSNull()]
+            jsonBody: [
+                "storage_backend_id": storageBackendId ?? NSNull(),
+                "content_sha256": contentSHA256,
+                "size": total,
+            ]
         )
         let planData = try await perform(planReq)
         guard let plan = try JSONSerialization.jsonObject(with: planData) as? [String: Any],
-              let strategy = plan["strategy"] as? String,
-              let urlStr = plan["url"] as? String
+              let strategy = plan["strategy"] as? String
         else {
             throw APIError.message("上传计划响应格式无效")
         }
 
-        let attrs = try FileManager.default.attributesOfItem(atPath: fileURL.path)
-        let total = (attrs[.size] as? NSNumber)?.int64Value ?? 0
+        if strategy == "already_cached" {
+            guard let itemObj = plan["item"],
+                  JSONSerialization.isValidJSONObject(itemObj)
+            else {
+                throw APIError.message("秒传响应缺少条目信息")
+            }
+            let itemData = try JSONSerialization.data(withJSONObject: itemObj)
+            return try JSONDecoder().decode(DrawerItem.self, from: itemData)
+        }
+
+        guard let urlStr = plan["url"] as? String else {
+            throw APIError.message("上传计划响应格式无效")
+        }
 
         let reportSent: @Sendable (Int64, Int64) -> Void = { sent, _ in
             if sent >= total {
@@ -670,6 +716,7 @@ public final class APIClient: @unchecked Sendable {
                     "storage_backend_id": plan["storage_backend_id"] ?? NSNull(),
                     "remote_key": plan["remote_key"] ?? NSNull(),
                     "size": total,
+                    "content_sha256": contentSHA256,
                 ]
             )
             let confirmData = try await perform(confirmReq)

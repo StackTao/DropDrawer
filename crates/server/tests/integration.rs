@@ -1635,3 +1635,256 @@ async fn test_login_and_passcode_guessing_is_throttled() {
     let (status, _) = send_raw(&app, "GET", &format!("/api/s/{}/meta", share.code), None, None).await;
     assert_eq!(status, StatusCode::OK);
 }
+
+#[tokio::test]
+async fn test_cloud_upload_deduplication_and_refcounted_deletion() {
+    use sha2::{Digest, Sha256};
+
+    let (app, state, _tmp) = spawn_test_server().await;
+    let (_, alice): (_, AuthResponse) = send_json(
+        &app,
+        "POST",
+        "/api/auth/register",
+        None,
+        Some(json!({"username": "dedup_alice", "password": "password123"})),
+    )
+    .await;
+    let (_, bob): (_, AuthResponse) = send_json(
+        &app,
+        "POST",
+        "/api/auth/register",
+        None,
+        Some(json!({"username": "dedup_bob", "password": "password123"})),
+    )
+    .await;
+
+    let (_, alice_dev): (_, DeviceInfo) = send_json(
+        &app,
+        "POST",
+        "/api/devices",
+        Some(&alice.token),
+        Some(json!({"device_id": "a-dev", "name": "Mac", "platform": "macos"})),
+    )
+    .await;
+    let (_, bob_dev): (_, DeviceInfo) = send_json(
+        &app,
+        "POST",
+        "/api/devices",
+        Some(&bob.token),
+        Some(json!({"device_id": "b-dev", "name": "Win", "platform": "windows"})),
+    )
+    .await;
+
+    let payload = b"telegram-style-dedup-content-payload-0123456789";
+    let digest = hex::encode(Sha256::digest(payload));
+
+    // 1. Alice uploads item 1 normally.
+    let (_, item1): (_, DrawerItem) = send_json(
+        &app,
+        "POST",
+        "/api/drawer/items",
+        Some(&alice.token),
+        Some(json!({
+            "device_id": alice_dev.id,
+            "kind": "file",
+            "name": "report-v1.bin",
+            "size": payload.len(),
+            "transfer_mode": "cloud_cached",
+        })),
+    )
+    .await;
+    let (status, plan1): (_, UploadPlan) = send_json(
+        &app,
+        "POST",
+        &format!("/api/drawer/items/{}/upload-plan", item1.id),
+        Some(&alice.token),
+        Some(json!({"content_sha256": digest, "size": payload.len()})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let upload_url = match plan1 {
+        UploadPlan::ServerStreamPut { url, .. } => url,
+        other => panic!("expected ServerStreamPut for first upload, got {other:?}"),
+    };
+    let put_req = Request::builder()
+        .method("PUT")
+        .uri(&upload_url)
+        .header(header::AUTHORIZATION, format!("Bearer {}", alice.token))
+        .body(Body::from(payload.to_vec()))
+        .unwrap();
+    let put_resp = app.clone().oneshot(put_req).await.unwrap();
+    assert_eq!(put_resp.status(), StatusCode::OK);
+
+    let alice_blob_root = state.user_local_storage_dir(&alice.user.id);
+    let alice_blob_dir = alice_blob_root.join(&alice.user.id);
+    let count_blobs = |dir: &std::path::Path| -> usize {
+        std::fs::read_dir(dir)
+            .map(|rd| rd.filter_map(|e| e.ok()).filter(|e| e.path().is_file()).count())
+            .unwrap_or(0)
+    };
+    assert_eq!(count_blobs(&alice_blob_dir), 1);
+
+    // 2. Alice uploads item 2 with identical content under a different filename -> instant dedup.
+    let (_, item2): (_, DrawerItem) = send_json(
+        &app,
+        "POST",
+        "/api/drawer/items",
+        Some(&alice.token),
+        Some(json!({
+            "device_id": alice_dev.id,
+            "kind": "file",
+            "name": "report-v2.bin",
+            "size": payload.len(),
+            "transfer_mode": "cloud_cached",
+        })),
+    )
+    .await;
+    let (status, plan2): (_, UploadPlan) = send_json(
+        &app,
+        "POST",
+        &format!("/api/drawer/items/{}/upload-plan", item2.id),
+        Some(&alice.token),
+        Some(json!({"content_sha256": digest.to_uppercase(), "size": payload.len()})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    match plan2 {
+        UploadPlan::AlreadyCached { item } => {
+            assert_eq!(item.id, item2.id);
+            assert!(item.cloud_ready);
+            assert_eq!(item.name, "report-v2.bin");
+        }
+        other => panic!("expected AlreadyCached for duplicate upload, got {other:?}"),
+    }
+    assert_eq!(count_blobs(&alice_blob_dir), 1);
+
+    // 3. Cross-user isolation: Bob uploading the exact same content must NOT dedup against Alice.
+    let (_, bob_item): (_, DrawerItem) = send_json(
+        &app,
+        "POST",
+        "/api/drawer/items",
+        Some(&bob.token),
+        Some(json!({
+            "device_id": bob_dev.id,
+            "kind": "file",
+            "name": "bob-copy.bin",
+            "size": payload.len(),
+            "transfer_mode": "cloud_cached",
+        })),
+    )
+    .await;
+    let (status, bob_plan): (_, UploadPlan) = send_json(
+        &app,
+        "POST",
+        &format!("/api/drawer/items/{}/upload-plan", bob_item.id),
+        Some(&bob.token),
+        Some(json!({"content_sha256": digest, "size": payload.len()})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        matches!(bob_plan, UploadPlan::ServerStreamPut { .. }),
+        "cross-user upload must never dedup: {bob_plan:?}"
+    );
+
+    // 4. Deleting item 1 must preserve the shared blob so item 2 still downloads intact.
+    let (status, _) = send_raw(
+        &app,
+        "DELETE",
+        &format!("/api/drawer/items/{}", item1.id),
+        Some(&alice.token),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(count_blobs(&alice_blob_dir), 1);
+
+    let dl_req = Request::builder()
+        .method("GET")
+        .uri(format!("/api/drawer/items/{}/download", item2.id))
+        .header(header::AUTHORIZATION, format!("Bearer {}", alice.token))
+        .body(Body::empty())
+        .unwrap();
+    let dl_resp = app.clone().oneshot(dl_req).await.unwrap();
+    assert_eq!(dl_resp.status(), StatusCode::OK);
+    let disp = dl_resp
+        .headers()
+        .get(header::CONTENT_DISPOSITION)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(disp.contains("report-v2.bin"), "unexpected Content-Disposition: {disp}");
+    let dl_bytes = axum::body::to_bytes(dl_resp.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    assert_eq!(dl_bytes.as_ref(), payload);
+
+    // 5. Ghost-reuse protection: if the underlying blob is missing on disk,
+    //    a new upload falls back to normal upload instead of returning AlreadyCached.
+    let row2 = state
+        .db
+        .get_drawer_item(&item2.id, &alice.user.id)
+        .unwrap()
+        .unwrap();
+    let blob_rel = row2.storage_path.unwrap();
+    std::fs::remove_file(alice_blob_root.join(&blob_rel)).unwrap();
+    assert_eq!(count_blobs(&alice_blob_dir), 0);
+
+    let (_, item3): (_, DrawerItem) = send_json(
+        &app,
+        "POST",
+        "/api/drawer/items",
+        Some(&alice.token),
+        Some(json!({
+            "device_id": alice_dev.id,
+            "kind": "file",
+            "name": "report-v3.bin",
+            "size": payload.len(),
+            "transfer_mode": "cloud_cached",
+        })),
+    )
+    .await;
+    let (status, plan3): (_, UploadPlan) = send_json(
+        &app,
+        "POST",
+        &format!("/api/drawer/items/{}/upload-plan", item3.id),
+        Some(&alice.token),
+        Some(json!({"content_sha256": digest, "size": payload.len()})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        matches!(plan3, UploadPlan::ServerStreamPut { .. }),
+        "missing physical blob must fall back to normal upload: {plan3:?}"
+    );
+
+    // 6. Re-upload item3 and verify deleting the final reference removes the physical blob.
+    let upload_url3 = match plan3 {
+        UploadPlan::ServerStreamPut { url, .. } => url,
+        _ => unreachable!(),
+    };
+    let put_resp3 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(&upload_url3)
+                .header(header::AUTHORIZATION, format!("Bearer {}", alice.token))
+                .body(Body::from(payload.to_vec()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(put_resp3.status(), StatusCode::OK);
+    assert_eq!(count_blobs(&alice_blob_dir), 1);
+
+    let (status, _) = send_raw(
+        &app,
+        "DELETE",
+        &format!("/api/drawer/items/{}", item3.id),
+        Some(&alice.token),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(count_blobs(&alice_blob_dir), 0);
+}

@@ -41,6 +41,7 @@ pub struct AppState {
     // Order connection replacement, removal and the corresponding presence events.
     pub(crate) presence_changes: Mutex<()>,
     item_mutations: DashMap<String, Weak<Mutex<()>>>,
+    storage_locks: DashMap<(String, String), Weak<Mutex<()>>>,
     pub(crate) google_login: Option<GoogleLogin>,
     /// Short-lived Google OAuth2 authorization flows keyed by `state` nonce.
     pub pending_google_oauth: DashMap<String, PendingGoogleOAuth>,
@@ -122,6 +123,7 @@ impl AppState {
             ready_files: DashMap::new(),
             presence_changes: Mutex::new(()),
             item_mutations: DashMap::new(),
+            storage_locks: DashMap::new(),
             google_login: google_config.map(GoogleLogin::new),
             pending_google_oauth: DashMap::new(),
             registration_open: AtomicBool::new(true),
@@ -158,6 +160,34 @@ impl AppState {
         lock.lock_owned().await
     }
 
+    // Serialize dedup reuse & ref-counted deletion of one `(storage_backend_id, storage_path)` blob.
+    // Lock ordering invariant: always acquire `lock_drawer_item` BEFORE `lock_storage_object`.
+    pub(crate) async fn lock_storage_object(
+        &self,
+        backend_id: &str,
+        storage_path: &str,
+    ) -> OwnedMutexGuard<()> {
+        if self.storage_locks.len() > 1024 {
+            self.storage_locks
+                .retain(|_, lock| lock.strong_count() != 0);
+        }
+        let lock = {
+            let mut entry = self
+                .storage_locks
+                .entry((backend_id.to_owned(), storage_path.to_owned()))
+                .or_default();
+            match entry.upgrade() {
+                Some(lock) => lock,
+                None => {
+                    let lock = Arc::new(Mutex::new(()));
+                    *entry = Arc::downgrade(&lock);
+                    lock
+                }
+            }
+        };
+        lock.lock_owned().await
+    }
+
     pub(crate) async fn delete_drawer_item(
         &self,
         user_id: &str,
@@ -172,12 +202,23 @@ impl AppState {
                 .storage_backend_id
                 .as_deref()
                 .ok_or_else(|| anyhow::anyhow!("missing storage backend for drawer file"))?;
-            let backend = self.resolve_backend(user_id, Some(backend_id))?;
-            self.build_storage_provider(&backend)?
-                .delete(storage_path)
-                .await?;
+            let _storage_lock = self.lock_storage_object(backend_id, storage_path).await;
+            let other_refs = self.db.count_other_storage_refs(
+                user_id,
+                backend_id,
+                storage_path,
+                item_id,
+            )?;
+            if other_refs == 0 {
+                let backend = self.resolve_backend(user_id, Some(backend_id))?;
+                self.build_storage_provider(&backend)?
+                    .delete(storage_path)
+                    .await?;
+            }
+            self.db.delete_drawer_item(item_id, user_id)?;
+        } else {
+            self.db.delete_drawer_item(item_id, user_id)?;
         }
-        self.db.delete_drawer_item(item_id, user_id)?;
         self.broadcast_user(
             user_id,
             WsEvent::ItemDeleted {

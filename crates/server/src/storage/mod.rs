@@ -57,6 +57,11 @@ pub trait StorageProvider: Send + Sync {
     /// Resolve a download either as a direct URL or as a server stream.
     async fn resolve_download(&self, stored_key: &str) -> anyhow::Result<DownloadResolution>;
 
+    /// Check whether a stored object still physically exists before deduplicating onto it.
+    async fn object_exists(&self, _stored_key: &str) -> anyhow::Result<bool> {
+        Ok(true)
+    }
+
     /// Delete a stored object (used for manual removal and TTL expiration).
     async fn delete(&self, stored_key: &str) -> anyhow::Result<()>;
 

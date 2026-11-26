@@ -67,11 +67,13 @@ class _TestController extends DropDrawerController {
 class _FakeDropSession extends DropSession {
   @override
   final List<DropItem> items;
-
-  _FakeDropSession(this.items);
-
   @override
-  Set<DropOperation> get allowedOperations => const {DropOperation.copy};
+  final Set<DropOperation> allowedOperations;
+
+  _FakeDropSession(
+    this.items, {
+    this.allowedOperations = const {DropOperation.copy},
+  });
 
   @override
   Listenable get onDisposed => ChangeNotifier();
@@ -925,9 +927,37 @@ void main() {
     await tester.pump();
     expect(find.text('松手放入跨端抽屉'), findsOneWidget);
 
-    // Leaving without dropping dismisses the overlay and keeps the secondary page.
+    // Move-only drags (e.g. Windows browser/editor text drags) must negotiate
+    // `move` instead of forcing `copy` (which Win32 OLE rejects as NONE).
+    final moveOnlySession = _FakeDropSession(
+      const [],
+      allowedOperations: const {DropOperation.move},
+    );
+    expect(
+      await region.onDropOver(
+        DropOverEvent(session: moveOnlySession, position: pos),
+      ),
+      DropOperation.move,
+    );
+
+    // Brief single-frame Win32 OLE DragLeave -> DragEnter jitter must not
+    // tear down the hover overlay before the debounce window expires.
+    region.onDropLeave?.call(DropEvent(session: moveOnlySession));
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.text('松手放入跨端抽屉'), findsOneWidget);
+    expect(
+      await region.onDropOver(
+        DropOverEvent(session: moveOnlySession, position: pos),
+      ),
+      DropOperation.move,
+    );
+    await tester.pump(const Duration(milliseconds: 120));
+    expect(find.text('松手放入跨端抽屉'), findsOneWidget);
+
+    // Leaving without dropping dismisses the overlay after the debounce window
+    // and keeps the secondary page.
     region.onDropLeave?.call(DropEvent(session: session));
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 160));
     expect(find.text('松手放入跨端抽屉'), findsNothing);
     expect(find.byType(StorageSettingsView), findsOneWidget);
 

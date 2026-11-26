@@ -164,6 +164,11 @@ impl StorageProvider for LocalProvider {
         })
     }
 
+    async fn object_exists(&self, remote_key: &str) -> anyhow::Result<bool> {
+        let target = self.safe_path(remote_key)?;
+        Ok(tokio::fs::try_exists(target).await?)
+    }
+
     async fn delete(&self, remote_key: &str) -> anyhow::Result<()> {
         let target = self.safe_path(remote_key)?;
         match tokio::fs::remove_file(target).await {

@@ -1,12 +1,19 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
+import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../models/models.dart';
+
+Future<String> _computeFileSha256(String path) async {
+  final digest = await sha256.bind(File(path).openRead()).first;
+  return digest.toString();
+}
 
 class TransferCancelledException implements Exception {
   @override
@@ -246,15 +253,31 @@ class ApiClient {
     void Function()? onAwaitingConfirmation,
     TransferCancelToken? cancelToken,
   }) async {
+    if (cancelToken?.isCancelled ?? false) {
+      throw TransferCancelledException();
+    }
+    final total = await file.length();
+    final contentSha256 = await Isolate.run(() => _computeFileSha256(file.path));
+    if (cancelToken?.isCancelled ?? false) {
+      throw TransferCancelledException();
+    }
+
     final planResp = await http.post(
       Uri.parse('$_cleanBase/api/drawer/items/$itemId/upload-plan'),
       headers: _headers(),
-      body: jsonEncode({'storage_backend_id': storageBackendId}),
+      body: jsonEncode({
+        'storage_backend_id': storageBackendId,
+        'content_sha256': contentSha256,
+        'size': total,
+      }),
     );
     _check(planResp);
     final plan = jsonDecode(planResp.body) as Map<String, dynamic>;
     final strategy = plan['strategy'] as String;
-    final total = await file.length();
+
+    if (strategy == 'already_cached') {
+      return DrawerItem.fromJson(plan['item'] as Map<String, dynamic>);
+    }
 
     if (strategy == 'direct_presigned_put') {
       final putUrl = plan['url'] as String;
@@ -280,6 +303,7 @@ class ApiClient {
           'storage_backend_id': plan['storage_backend_id'],
           'remote_key': plan['remote_key'],
           'size': total,
+          'content_sha256': contentSha256,
         }),
       );
       _check(confirmResp);

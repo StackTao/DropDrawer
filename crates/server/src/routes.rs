@@ -686,6 +686,19 @@ async fn batch_delete_drawer_items(
 struct UploadPlanRequest {
     #[serde(default)]
     storage_backend_id: Option<String>,
+    #[serde(default)]
+    content_sha256: Option<String>,
+    #[serde(default)]
+    size: Option<u64>,
+}
+
+fn normalize_sha256(raw: Option<&str>) -> Option<String> {
+    let trimmed = raw?.trim();
+    if trimmed.len() == 64 && trimmed.bytes().all(|b| b.is_ascii_hexdigit()) {
+        Some(trimmed.to_ascii_lowercase())
+    } else {
+        None
+    }
 }
 
 async fn request_upload_plan(
@@ -694,6 +707,7 @@ async fn request_upload_plan(
     Path(id): Path<String>,
     Json(req): Json<UploadPlanRequest>,
 ) -> Result<Json<UploadPlan>, (StatusCode, String)> {
+    let _item_lock = state.lock_drawer_item(&id).await;
     let item = state
         .db
         .get_drawer_item(&id, &auth.user_id)
@@ -707,11 +721,62 @@ async fn request_upload_plan(
     let backend = state
         .resolve_backend(&auth.user_id, backend_id)
         .map_err(internal_err)?;
+    let expected_size = req.size.unwrap_or(item.size);
     if matches!(&backend.config, StorageBackendConfig::Local { .. }) {
-        LocalUploadTooLarge::check(state.local_max_file_bytes, item.size)
+        LocalUploadTooLarge::check(state.local_max_file_bytes, item.size.max(expected_size))
             .map_err(|err| (StatusCode::PAYLOAD_TOO_LARGE, err.to_string()))?;
     }
     let provider = state.build_storage_provider(&backend).map_err(internal_err)?;
+
+    // Telegram-style instant deduplication: strictly scoped to the same user
+    // and same storage backend, verified against physical storage before reuse.
+    if let Some(content_sha256) = normalize_sha256(req.content_sha256.as_deref()) {
+        if let Some(reused_path) = state
+            .db
+            .find_reusable_cloud_object(
+                &auth.user_id,
+                &backend.id,
+                &content_sha256,
+                expected_size,
+                &item.id,
+            )
+            .map_err(internal_err)?
+        {
+            let _storage_lock = state.lock_storage_object(&backend.id, &reused_path).await;
+            let still_referenced = state
+                .db
+                .count_other_storage_refs(&auth.user_id, &backend.id, &reused_path, &item.id)
+                .map_err(internal_err)?
+                > 0;
+            if still_referenced
+                && provider
+                    .object_exists(&reused_path)
+                    .await
+                    .unwrap_or(false)
+            {
+                state
+                    .db
+                    .mark_item_cloud_ready_with_sha256(
+                        &item.id,
+                        &auth.user_id,
+                        &backend.id,
+                        &reused_path,
+                        Some(expected_size),
+                        None,
+                        Some(&content_sha256),
+                    )
+                    .map_err(internal_err)?;
+                let hydrated = state
+                    .hydrate_single_item(&auth.user_id, &item.id)
+                    .map_err(internal_err)?
+                    .ok_or_else(|| (StatusCode::NOT_FOUND, "item vanished".to_string()))?;
+                state.broadcast_user(&auth.user_id, WsEvent::ItemUpdated(hydrated.clone()));
+                return Ok(Json(UploadPlan::AlreadyCached {
+                    item: Box::new(hydrated),
+                }));
+            }
+        }
+    }
 
     let remote_key = item_storage_key(&auth.user_id, &item.id, &item.name);
 
@@ -773,9 +838,19 @@ async fn stream_upload_item(
 
     let remote_key = item_storage_key(&auth.user_id, &item.id, &item.name);
 
+    use sha2::{Digest, Sha256};
+
+    let hasher = Arc::new(std::sync::Mutex::new(Sha256::new()));
+    let hasher_for_stream = hasher.clone();
     let stream = body
         .into_data_stream()
-        .map_err(|e| anyhow::anyhow!("request body stream error: {e}"));
+        .map_err(|e| anyhow::anyhow!("request body stream error: {e}"))
+        .map_ok(move |chunk| {
+            if let Ok(mut h) = hasher_for_stream.lock() {
+                h.update(&chunk);
+            }
+            chunk
+        });
 
     let put_res = provider
         .put_stream(&remote_key, content_length, Box::pin(stream))
@@ -785,15 +860,21 @@ async fn stream_upload_item(
             None => internal_err(err),
         })?;
 
+    let computed_sha256 = hasher
+        .lock()
+        .ok()
+        .map(|h| hex::encode(h.clone().finalize()));
+
     state
         .db
-        .mark_item_cloud_ready(
+        .mark_item_cloud_ready_with_sha256(
             &item.id,
             &auth.user_id,
             &backend.id,
             &put_res.stored_key,
             Some(put_res.bytes_written),
             None,
+            computed_sha256.as_deref(),
         )
         .map_err(internal_err)?;
 
@@ -819,6 +900,8 @@ struct ConfirmUploadRequest {
     size: Option<u64>,
     #[serde(default)]
     blake3_hash: Option<String>,
+    #[serde(default)]
+    content_sha256: Option<String>,
 }
 
 async fn confirm_direct_upload(
@@ -848,15 +931,17 @@ async fn confirm_direct_upload(
             "remote_key does not match the upload plan for this item".to_string(),
         ));
     }
+    let normalized_sha256 = normalize_sha256(req.content_sha256.as_deref());
     let ok = state
         .db
-        .mark_item_cloud_ready(
+        .mark_item_cloud_ready_with_sha256(
             &id,
             &auth.user_id,
             &req.storage_backend_id,
             &req.remote_key,
             req.size,
             req.blake3_hash.as_deref(),
+            normalized_sha256.as_deref(),
         )
         .map_err(internal_err)?;
     if !ok {

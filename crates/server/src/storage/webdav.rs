@@ -105,6 +105,17 @@ impl StorageProvider for WebDavProvider {
         })
     }
 
+    async fn object_exists(&self, remote_key: &str) -> anyhow::Result<bool> {
+        let url = self.object_url(remote_key);
+        let resp = self
+            .http
+            .head(&url)
+            .basic_auth(&self.username, Some(&self.password))
+            .send()
+            .await?;
+        Ok(resp.status().is_success())
+    }
+
     async fn delete(&self, remote_key: &str) -> anyhow::Result<()> {
         let url = self.object_url(remote_key);
         let resp = self

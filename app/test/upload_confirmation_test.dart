@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:dropdrawer_app/services/api_client.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -86,6 +87,54 @@ void main() {
       },
     );
   }
+
+  test(
+    'upload sends content_sha256 and short-circuits on already_cached',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final dir = await Directory.systemTemp.createTemp('dropdrawer-dedup-');
+      final baseUrl = 'http://127.0.0.1:${server.port}';
+      final payload = utf8.encode('hello-dedup-world');
+      final expectedHash = sha256.convert(payload).toString();
+      final file = File('${dir.path}/sample.bin');
+      Map<String, dynamic>? receivedPlanReq;
+      var putCount = 0;
+
+      try {
+        await file.writeAsBytes(payload);
+        server.listen((request) async {
+          final body = await utf8.decoder.bind(request).join();
+          final response = request.response;
+          if (request.uri.path == '/api/drawer/items/item/upload-plan') {
+            receivedPlanReq = jsonDecode(body) as Map<String, dynamic>;
+            response.write(
+              jsonEncode({
+                'strategy': 'already_cached',
+                'item': jsonDecode(_confirmedItem),
+              }),
+            );
+          } else {
+            putCount++;
+            response.statusCode = HttpStatus.internalServerError;
+          }
+          await response.close();
+        });
+
+        final item = await ApiClient(baseUrl: baseUrl).uploadItemFile(
+          itemId: 'item',
+          file: file,
+        );
+        expect(item.cloudReady, isTrue);
+        expect(item.id, 'item');
+        expect(putCount, 0);
+        expect(receivedPlanReq?['content_sha256'], expectedHash);
+        expect(receivedPlanReq?['size'], payload.length);
+      } finally {
+        await server.close(force: true);
+        await dir.delete(recursive: true);
+      }
+    },
+  );
 }
 
 final _confirmedItem = jsonEncode({

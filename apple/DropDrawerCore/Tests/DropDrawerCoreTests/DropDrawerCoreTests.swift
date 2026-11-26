@@ -1,6 +1,31 @@
+import CryptoKit
 import Foundation
 import Testing
 @testable import DropDrawerCore
+
+private final class StubURLProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let handler = Self.handler else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        do {
+            let (response, data) = try handler(request)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
+}
 
 @Suite("DropDrawerCore Tests")
 struct DropDrawerCoreTests {
@@ -185,5 +210,89 @@ struct DropDrawerCoreTests {
 
         store.logout()
         #expect(storage.pendingCloudUploads.isEmpty)
+    }
+
+    @Test("uploadItemFile sends content_sha256 and short-circuits on already_cached")
+    func uploadAlreadyCachedShortCircuits() async throws {
+        let payload = Data("swift-dedup-content-12345".utf8)
+        let expectedHash = SHA256.hash(data: payload).map { String(format: "%02x", $0) }.joined()
+
+        let tempFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dd-dedup-\(UUID().uuidString).bin")
+        try payload.write(to: tempFile)
+        defer { try? FileManager.default.removeItem(at: tempFile) }
+
+        final class Capture: @unchecked Sendable {
+            private let lock = NSLock()
+            var planBody: [String: Any]?
+            var requestCount = 0
+            func record(body: [String: Any]?) {
+                lock.withLock {
+                    requestCount += 1
+                    planBody = body
+                }
+            }
+        }
+        let capture = Capture()
+
+        StubURLProtocol.handler = { req in
+            let bodyData: Data? = {
+                if let direct = req.httpBody { return direct }
+                guard let stream = req.httpBodyStream else { return nil }
+                stream.open()
+                defer { stream.close() }
+                var data = Data()
+                var buf = [UInt8](repeating: 0, count: 4096)
+                while stream.hasBytesAvailable {
+                    let read = stream.read(&buf, maxLength: buf.count)
+                    if read <= 0 { break }
+                    data.append(buf, count: read)
+                }
+                return data
+            }()
+            let jsonObj = bodyData.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            capture.record(body: jsonObj)
+
+            let resp = HTTPURLResponse(
+                url: req.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            let respJson = """
+            {
+              "strategy": "already_cached",
+              "item": {
+                "id": "item-dedup",
+                "user_id": "u1",
+                "owner_device_id": "d1",
+                "owner_online": true,
+                "owner_direct_addrs": [],
+                "kind": "file",
+                "name": "sample.bin",
+                "size": \(payload.count),
+                "transfer_mode": "cloud_cached",
+                "storage_backend_id": "local-1",
+                "storage_backend_name": "Local",
+                "cloud_ready": true,
+                "created_at": "2026-11-26T02:00:00Z"
+              }
+            }
+            """
+            return (resp, Data(respJson.utf8))
+        }
+        defer { StubURLProtocol.handler = nil }
+
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.protocolClasses = [StubURLProtocol.self]
+        let session = URLSession(configuration: cfg)
+        let api = APIClient(baseUrl: "https://drop.example.com", token: "tok", session: session)
+
+        let item = try await api.uploadItemFile(itemId: "item-dedup", fileURL: tempFile)
+        #expect(item.id == "item-dedup")
+        #expect(item.cloudReady == true)
+        #expect(capture.requestCount == 1)
+        #expect(capture.planBody?["content_sha256"] as? String == expectedHash)
+        #expect(capture.planBody?["size"] as? Int == payload.count)
     }
 }

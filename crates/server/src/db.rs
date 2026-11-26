@@ -126,6 +126,7 @@ impl Database {
                  transfer_mode TEXT NOT NULL,
                  storage_backend_id TEXT,
                  storage_path TEXT,
+                 content_sha256 TEXT,
                  cloud_ready INTEGER NOT NULL DEFAULT 0,
                  expires_at TEXT,
                  created_at TEXT NOT NULL,
@@ -168,8 +169,14 @@ impl Database {
                  ON storage_backends(user_id);
             ",
         )?;
-        // Idempotent migration for databases created before `title` column was added.
+        // Idempotent migrations for databases created before newer columns were added.
         let _ = conn.execute("ALTER TABLE share_links ADD COLUMN title TEXT", []);
+        let _ = conn.execute("ALTER TABLE drawer_items ADD COLUMN content_sha256 TEXT", []);
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_drawer_items_dedup
+             ON drawer_items(user_id, storage_backend_id, content_sha256, size)",
+            [],
+        )?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
@@ -590,6 +597,28 @@ impl Database {
         size: Option<u64>,
         blake3_hash: Option<&str>,
     ) -> anyhow::Result<bool> {
+        self.mark_item_cloud_ready_with_sha256(
+            item_id,
+            user_id,
+            storage_backend_id,
+            storage_path,
+            size,
+            blake3_hash,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn mark_item_cloud_ready_with_sha256(
+        &self,
+        item_id: &str,
+        user_id: &str,
+        storage_backend_id: &str,
+        storage_path: &str,
+        size: Option<u64>,
+        blake3_hash: Option<&str>,
+        content_sha256: Option<&str>,
+    ) -> anyhow::Result<bool> {
         let conn = self.lock_conn();
         let affected = conn.execute(
             "UPDATE drawer_items
@@ -598,18 +627,78 @@ impl Database {
                  cloud_ready = 1,
                  transfer_mode = CASE WHEN transfer_mode = '\"p2p_only\"' THEN '\"hybrid\"' ELSE transfer_mode END,
                  size = COALESCE(?3, size),
-                 blake3_hash = COALESCE(?4, blake3_hash)
-             WHERE id = ?5 AND user_id = ?6",
+                 blake3_hash = COALESCE(?4, blake3_hash),
+                 content_sha256 = COALESCE(?5, content_sha256)
+             WHERE id = ?6 AND user_id = ?7",
             params![
                 storage_backend_id,
                 storage_path,
                 size.map(|s| s as i64),
                 blake3_hash,
+                content_sha256,
                 item_id,
                 user_id
             ],
         )?;
         Ok(affected > 0)
+    }
+
+    /// Find an existing cloud-ready storage path for the exact same user,
+    /// storage backend, SHA-256 digest, and byte size.
+    pub fn find_reusable_cloud_object(
+        &self,
+        user_id: &str,
+        storage_backend_id: &str,
+        content_sha256: &str,
+        size: u64,
+        exclude_item_id: &str,
+    ) -> anyhow::Result<Option<String>> {
+        let conn = self.lock_conn();
+        conn.query_row(
+            "SELECT storage_path FROM drawer_items
+             WHERE user_id = ?1
+               AND storage_backend_id = ?2
+               AND content_sha256 = ?3
+               AND size = ?4
+               AND cloud_ready = 1
+               AND storage_path IS NOT NULL
+               AND storage_path != ''
+               AND id != ?5
+             ORDER BY created_at DESC
+             LIMIT 1",
+            params![
+                user_id,
+                storage_backend_id,
+                content_sha256,
+                size as i64,
+                exclude_item_id,
+            ],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    /// Count other drawer items belonging to the same user that still point at
+    /// the same `(storage_backend_id, storage_path)` blob.
+    pub fn count_other_storage_refs(
+        &self,
+        user_id: &str,
+        storage_backend_id: &str,
+        storage_path: &str,
+        exclude_item_id: &str,
+    ) -> anyhow::Result<i64> {
+        let conn = self.lock_conn();
+        conn.query_row(
+            "SELECT COUNT(*) FROM drawer_items
+             WHERE user_id = ?1
+               AND storage_backend_id = ?2
+               AND storage_path = ?3
+               AND id != ?4",
+            params![user_id, storage_backend_id, storage_path, exclude_item_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(Into::into)
     }
 
     /// Scope a session's complete files to this account. Only the original
