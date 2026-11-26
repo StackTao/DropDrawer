@@ -626,6 +626,39 @@ public final class APIClient: @unchecked Sendable {
         return try JSONDecoder().decode(StorageBackendSummary.self, from: data)
     }
 
+    public func getStorageCapacity(id: String) async throws -> Int? {
+        let request = try makeRequest("/api/storage/\(id)")
+        let data = try await perform(request)
+        struct StorageSettings: Decodable {
+            let maxBytes: Int?
+
+            enum CodingKeys: String, CodingKey {
+                case maxBytes = "max_bytes"
+            }
+        }
+        return try JSONDecoder().decode(StorageSettings.self, from: data).maxBytes
+    }
+
+    public func updateStorageBackend(
+        id: String,
+        name: String,
+        config: [String: JSONValue]
+    ) async throws -> [StorageBackendSummary] {
+        let request = try makeRequest(
+            "/api/storage/\(id)",
+            method: "PATCH",
+            jsonBody: ["name": name, "config": config.mapValues(\.foundationValue)]
+        )
+        let data = try await perform(request)
+        return try JSONDecoder().decode([StorageBackendSummary].self, from: data)
+    }
+
+    public func setDefaultStorageBackend(id: String) async throws -> [StorageBackendSummary] {
+        let request = try makeRequest("/api/storage/\(id)/default", method: "PUT")
+        let data = try await perform(request)
+        return try JSONDecoder().decode([StorageBackendSummary].self, from: data)
+    }
+
     public func deleteStorageBackend(id: String) async throws {
         let req = try makeRequest("/api/storage/\(id)", method: "DELETE")
         _ = try await perform(req)

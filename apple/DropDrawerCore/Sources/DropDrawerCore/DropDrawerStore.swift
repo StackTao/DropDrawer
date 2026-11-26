@@ -19,6 +19,7 @@ public final class DropDrawerStore {
     public var pendingDrops: [PendingDrop] = []
     public var shareLinks: [ShareLinkInfo] = []
     public var storageBackends: [StorageBackendSummary] = []
+    private var storageRevision = 0
 
     public var wsConnected: Bool = false
     public var p2pReady: Bool = false
@@ -292,12 +293,12 @@ public final class DropDrawerStore {
         guard let api else { return }
         async let fetchedItems = api.listItems()
         async let fetchedDevices = api.listDevices()
-        async let fetchedBackends = api.listStorageBackends()
+        async let refreshedBackends: Void = refreshStorageBackends()
         async let fetchedShares = api.listShareLinks()
 
         if let list = try? await fetchedItems { items = list }
         if let devs = try? await fetchedDevices { devices = devs }
-        if let backends = try? await fetchedBackends { storageBackends = backends }
+        await refreshedBackends
         if let links = try? await fetchedShares { shareLinks = links }
         reRegisterLocalFilesForP2P()
     }
@@ -311,7 +312,10 @@ public final class DropDrawerStore {
 
     public func refreshStorageBackends() async {
         guard let api else { return }
-        if let backends = try? await api.listStorageBackends() {
+        storageRevision += 1
+        let revision = storageRevision
+        if let backends = try? await api.listStorageBackends(),
+           self.api === api, storageRevision == revision {
             storageBackends = backends
         }
     }
@@ -995,6 +999,31 @@ public final class DropDrawerStore {
         guard let api else { throw APIError.message("未登录") }
         _ = try await api.createStorageBackend(name: name, config: config, isDefault: isDefault)
         await refreshStorageBackends()
+    }
+
+    public func getStorageCapacity(id: String) async throws -> Int? {
+        guard let api else { throw APIError.message("未登录") }
+        return try await api.getStorageCapacity(id: id)
+    }
+
+    public func updateStorageBackend(
+        id: String,
+        name: String,
+        config: [String: JSONValue]
+    ) async throws {
+        guard let api else { throw APIError.message("未登录") }
+        let backends = try await api.updateStorageBackend(id: id, name: name, config: config)
+        guard self.api === api else { return }
+        storageRevision += 1
+        storageBackends = backends
+    }
+
+    public func setDefaultStorageBackend(id: String) async throws {
+        guard let api else { throw APIError.message("未登录") }
+        let backends = try await api.setDefaultStorageBackend(id: id)
+        guard self.api === api else { return }
+        storageRevision += 1
+        storageBackends = backends
     }
 
     public func removeStorageBackend(id: String) async {

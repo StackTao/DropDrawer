@@ -481,6 +481,36 @@ impl Database {
         .map_err(Into::into)
     }
 
+    pub fn update_storage_backend(
+        &self,
+        backend_id: &str,
+        user_id: &str,
+        name: &str,
+        patch: &serde_json::Map<String, serde_json::Value>,
+    ) -> anyhow::Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let affected = conn.execute(
+            "UPDATE storage_backends SET name = ?3, config_json = json_patch(config_json, ?4)
+             WHERE id = ?1 AND user_id = ?2",
+            params![backend_id, user_id, name, serde_json::to_string(patch)?],
+        )?;
+        Ok(affected > 0)
+    }
+
+    pub fn set_default_storage_backend(&self, backend_id: &str, user_id: &str) -> anyhow::Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        // The same statement checks ownership and changes the default. A missing
+        // or foreign ID cannot clear any of this account's existing settings.
+        let affected = conn.execute(
+            "UPDATE storage_backends SET is_default = (id = ?1)
+             WHERE user_id = ?2 AND EXISTS (
+                 SELECT 1 FROM storage_backends WHERE id = ?1 AND user_id = ?2
+             )",
+            params![backend_id, user_id],
+        )?;
+        Ok(affected > 0)
+    }
+
     pub fn delete_storage_backend(&self, backend_id: &str, user_id: &str) -> anyhow::Result<bool> {
         let conn = self.conn.lock().unwrap();
         let affected = conn.execute(

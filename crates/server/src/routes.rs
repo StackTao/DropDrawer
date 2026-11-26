@@ -53,7 +53,13 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/storage",
             get(list_storage_backends).post(create_storage_backend),
         )
-        .route("/api/storage/{id}", delete(delete_storage_backend))
+        .route(
+            "/api/storage/{id}",
+            get(storage_edit_settings)
+                .patch(update_storage_backend)
+                .delete(delete_storage_backend),
+        )
+        .route("/api/storage/{id}/default", put(set_default_storage_backend))
         .route("/api/storage/{id}/health", post(check_storage_health))
         .route("/api/oauth/google/start", post(start_google_oauth))
         .route("/api/oauth/google/callback", get(google_oauth_callback))
@@ -256,6 +262,109 @@ async fn create_storage_backend(
     Ok(Json(rec.to_summary()))
 }
 
+#[derive(serde::Serialize)]
+struct StorageEditSettings {
+    max_bytes: Option<u64>,
+}
+
+async fn storage_edit_settings(
+    auth: AuthUser,
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<StorageEditSettings>, (StatusCode, String)> {
+    let backend = state
+        .db
+        .get_storage_backend(&id, &auth.user_id)
+        .map_err(internal_err)?
+        .ok_or_else(storage_backend_not_found)?;
+    let max_bytes = match backend.config {
+        StorageBackendConfig::Local { max_bytes, .. } => max_bytes,
+        _ => None,
+    };
+    Ok(Json(StorageEditSettings { max_bytes }))
+}
+
+#[derive(Deserialize)]
+struct UpdateStorageBackendRequest {
+    name: String,
+    #[serde(default)]
+    config: serde_json::Map<String, serde_json::Value>,
+}
+
+async fn update_storage_backend(
+    auth: AuthUser,
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateStorageBackendRequest>,
+) -> Result<Json<Vec<StorageBackendSummary>>, (StatusCode, String)> {
+    let backend = state
+        .db
+        .get_storage_backend(&id, &auth.user_id)
+        .map_err(internal_err)?
+        .ok_or_else(storage_backend_not_found)?;
+    let name = req.name.trim();
+    if name.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "存储名称不能为空".to_string()));
+    }
+    // Stored files refer to this backend ID. Keep the destination and account
+    // identifiers fixed while letting users rotate credentials for that target.
+    let credential_fields: &[&str] = match &backend.config {
+        StorageBackendConfig::GoogleDrive { .. } => &["client_secret", "refresh_token"],
+        StorageBackendConfig::Quark { .. } => &["cookie"],
+        StorageBackendConfig::BaiduNetdisk { .. } => {
+            &["client_secret", "refresh_token", "access_token"]
+        }
+        StorageBackendConfig::WebDav { .. } => &["password"],
+        StorageBackendConfig::S3 { .. } => &["access_key_id", "secret_access_key"],
+        StorageBackendConfig::Local { .. } => &[],
+    };
+    let mut patch = serde_json::Map::new();
+    for (key, value) in req.config {
+        if key == "max_bytes" && matches!(&backend.config, StorageBackendConfig::Local { .. }) {
+            if !value.is_null() && !value.as_u64().is_some_and(|bytes| bytes > 0) {
+                return Err((StatusCode::BAD_REQUEST, "容量上限必须为正整数".to_string()));
+            }
+        } else if credential_fields.contains(&key.as_str()) {
+            let credential = value.as_str().ok_or_else(|| {
+                (StatusCode::BAD_REQUEST, "凭据必须为字符串".to_string())
+            })?;
+            if credential.trim().is_empty() {
+                continue;
+            }
+        } else {
+            return Err((StatusCode::BAD_REQUEST, "此存储字段无法编辑".to_string()));
+        }
+        patch.insert(key, value);
+    }
+    if !state
+        .db
+        .update_storage_backend(&id, &auth.user_id, name, &patch)
+        .map_err(internal_err)?
+    {
+        return Err(storage_backend_not_found());
+    }
+    list_storage_backends(auth, State(state)).await
+}
+
+fn storage_backend_not_found() -> (StatusCode, String) {
+    (StatusCode::NOT_FOUND, "storage backend not found".to_string())
+}
+
+async fn set_default_storage_backend(
+    auth: AuthUser,
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<StorageBackendSummary>>, (StatusCode, String)> {
+    if !state
+        .db
+        .set_default_storage_backend(&id, &auth.user_id)
+        .map_err(internal_err)?
+    {
+        return Err(storage_backend_not_found());
+    }
+    list_storage_backends(auth, State(state)).await
+}
+
 async fn delete_storage_backend(
     auth: AuthUser,
     State(state): State<Arc<AppState>>,
@@ -266,7 +375,7 @@ async fn delete_storage_backend(
         .delete_storage_backend(&id, &auth.user_id)
         .map_err(internal_err)?;
     if !deleted {
-        return Err((StatusCode::NOT_FOUND, "storage backend not found".to_string()));
+        return Err(storage_backend_not_found());
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -280,7 +389,7 @@ async fn check_storage_health(
         .db
         .get_storage_backend(&id, &auth.user_id)
         .map_err(internal_err)?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, "storage backend not found".to_string()))?;
+        .ok_or_else(storage_backend_not_found)?;
 
     let provider = state.build_storage_provider(&rec).map_err(internal_err)?;
     match provider.health_check().await {

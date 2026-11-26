@@ -708,7 +708,7 @@ async fn test_native_google_drive_resumable_upload_download_delete_and_s3() {
         axum::serve(listener, mock_app).await.unwrap();
     });
 
-    let (app, _state, _tmp) = spawn_test_server().await;
+    let (app, state, _tmp) = spawn_test_server().await;
     let (_, auth): (StatusCode, AuthResponse) = send_json(
         &app,
         "POST",
@@ -719,7 +719,12 @@ async fn test_native_google_drive_resumable_upload_download_delete_and_s3() {
     .await;
     let token = auth.token;
 
-    // 1. Add Native Google Drive backend
+    let (_, initial): (_, Vec<StorageBackendSummary>) =
+        send_json(&app, "GET", "/api/storage", Some(&token), None).await;
+    let local = &initial[0];
+    assert!(local.is_default);
+
+    // Configure Drive and edit its credentials before using it as the default.
     let (st, backend): (StatusCode, StorageBackendSummary) = send_json(
         &app,
         "POST",
@@ -735,12 +740,45 @@ async fn test_native_google_drive_resumable_upload_download_delete_and_s3() {
                 api_base_url: Some(mock_base.clone()),
                 token_url: Some(format!("{mock_base}/oauth/token")),
             },
-            is_default: true,
+            is_default: false,
         })
         .unwrap()),
     )
     .await;
     assert_eq!(st, StatusCode::OK);
+
+    let edit_url = format!("/api/storage/{}", backend.id);
+    let (status, settings): (_, serde_json::Value) =
+        send_json(&app, "GET", &edit_url, Some(&token), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(settings, json!({"max_bytes": null}));
+
+    let (_, edited): (_, Vec<StorageBackendSummary>) = send_json(
+        &app,
+        "PATCH",
+        &edit_url,
+        Some(&token),
+        Some(json!({
+            "name": "Edited Google Drive",
+            "config": { "client_secret": "", "refresh_token": "rotated-token" },
+        })),
+    )
+    .await;
+    assert_eq!(edited[0].id, local.id);
+    assert!(edited[0].is_default);
+    assert_eq!(edited[1].name, "Edited Google Drive");
+    let record = state.db.get_storage_backend(&backend.id, &auth.user.id).unwrap().unwrap();
+    let StorageBackendConfig::GoogleDrive { client_secret, refresh_token, .. } = record.config else {
+        panic!("editing must preserve the provider type");
+    };
+    assert_eq!(client_secret, "csec");
+    assert_eq!(refresh_token, "rotated-token");
+
+    let (_, selected): (_, Vec<StorageBackendSummary>) =
+        send_json(&app, "PUT", &format!("{edit_url}/default"), Some(&token), None).await;
+    assert_eq!(selected[0].id, backend.id);
+    assert!(selected[0].is_default);
+    assert!(!selected[1].is_default);
 
     // 2. Health check returns Google account + quota
     let (st, health): (StatusCode, StorageHealthResponse) = send_json(
@@ -771,7 +809,7 @@ async fn test_native_google_drive_resumable_upload_download_delete_and_s3() {
             text_content: None,
             thumbnail_base64: None,
             transfer_mode: TransferMode::CloudCached,
-            storage_backend_id: Some(backend.id.clone()),
+            storage_backend_id: None,
             ttl_hours: Some(12),
         })
         .unwrap()),
@@ -781,10 +819,7 @@ async fn test_native_google_drive_resumable_upload_download_delete_and_s3() {
     let payload = b"google-drive-bytes";
     let put_req = Request::builder()
         .method("PUT")
-        .uri(format!(
-            "/api/drawer/items/{}/upload?storage_backend_id={}",
-            item.id, backend.id
-        ))
+        .uri(format!("/api/drawer/items/{}/upload", item.id))
         .header(header::AUTHORIZATION, format!("Bearer {token}"))
         .body(Body::from(payload.to_vec()))
         .unwrap();
@@ -795,7 +830,18 @@ async fn test_native_google_drive_resumable_upload_download_delete_and_s3() {
         Some(payload.as_slice())
     );
 
-    // 4. Download back from native Google Drive
+    let (_, selected): (_, Vec<StorageBackendSummary>) = send_json(
+        &app,
+        "PUT",
+        &format!("/api/storage/{}/default", local.id),
+        Some(&token),
+        None,
+    )
+    .await;
+    assert_eq!(selected[0].id, local.id);
+    assert!(selected[0].is_default);
+
+    // Files already uploaded to Drive are still available after switching back.
     let dl_req = Request::builder()
         .method("GET")
         .uri(format!("/api/drawer/items/{}/download", item.id))
@@ -1189,6 +1235,58 @@ async fn send_raw(
         .await
         .unwrap();
     (status, bytes.to_vec())
+}
+
+#[tokio::test]
+async fn test_edit_local_storage_preserves_ownership_and_path() {
+    let (app, state, _tmp) = spawn_test_server().await;
+    let (_, owner): (_, AuthResponse) = send_json(
+        &app, "POST", "/api/auth/register", None,
+        Some(json!({"username": "owner", "password": "password123"})),
+    ).await;
+    let (_, other): (_, AuthResponse) = send_json(
+        &app, "POST", "/api/auth/register", None,
+        Some(json!({"username": "other", "password": "password123"})),
+    ).await;
+    let (_, backends): (_, Vec<StorageBackendSummary>) =
+        send_json(&app, "GET", "/api/storage", Some(&owner.token), None).await;
+    let local = &backends[0];
+    let url = format!("/api/storage/{}", local.id);
+    let edit = json!({"name": "Local archive", "config": {"max_bytes": 1024}});
+
+    for (method, path, body) in [
+        ("GET", url.clone(), None),
+        ("PATCH", url.clone(), Some(edit.clone())),
+        ("PUT", format!("{url}/default"), None),
+    ] {
+        let (status, _) = send_raw(&app, method, &path, Some(&other.token), body).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+    for config in [json!({"root_dir": "/"}), json!({"max_bytes": 0})] {
+        let (status, _) = send_raw(
+            &app, "PATCH", &url, Some(&owner.token),
+            Some(json!({"name": "Local archive", "config": config})),
+        ).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+    let (status, edited): (_, Vec<StorageBackendSummary>) =
+        send_json(&app, "PATCH", &url, Some(&owner.token), Some(edit)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(edited[0].id, local.id);
+    assert_eq!(edited[0].name, "Local archive");
+    assert_eq!(edited[0].display_target, local.display_target);
+    assert!(edited[0].is_default);
+    let (_, settings): (_, serde_json::Value) =
+        send_json(&app, "GET", &url, Some(&owner.token), None).await;
+    assert_eq!(settings, json!({"max_bytes": 1024}));
+
+    let (status, _): (_, Vec<StorageBackendSummary>) = send_json(
+        &app, "PATCH", &url, Some(&owner.token),
+        Some(json!({"name": "Local archive", "config": {"max_bytes": null}})),
+    ).await;
+    assert_eq!(status, StatusCode::OK);
+    let record = state.resolve_backend(&owner.user.id, None).unwrap();
+    assert!(matches!(record.config, StorageBackendConfig::Local { max_bytes: None, .. }));
 }
 
 #[tokio::test]

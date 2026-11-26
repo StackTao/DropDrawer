@@ -1422,9 +1422,45 @@ class DropDrawerController extends ChangeNotifier {
     notifyListeners();
   }
 
+  int _storageRevision = 0;
+
   Future<void> refreshStorageBackends() async {
-    if (_api == null) return;
-    storageBackends = await _api!.listStorageBackends();
+    final api = _api;
+    if (api == null) return;
+    final revision = ++_storageRevision;
+    final backends = await api.listStorageBackends();
+    if (!identical(api, _api) || revision != _storageRevision) return;
+    storageBackends = backends;
+    notifyListeners();
+  }
+
+  Future<void> setDefaultStorageBackend(String id) async {
+    final api = _api;
+    if (api == null) throw StateError('未连接服务器');
+    final backends = await api.setDefaultStorageBackend(id);
+    if (!identical(api, _api)) return;
+    _storageRevision++;
+    storageBackends = backends;
+    notifyListeners();
+  }
+
+  Future<int?> getStorageCapacity(String id) async {
+    final api = _api;
+    if (api == null) throw StateError('未连接服务器');
+    return api.getStorageCapacity(id);
+  }
+
+  Future<void> updateStorageBackend(
+    String id, {
+    required String name,
+    required Map<String, dynamic> config,
+  }) async {
+    final api = _api;
+    if (api == null) throw StateError('未连接服务器');
+    final backends = await api.updateStorageBackend(id, name: name, config: config);
+    if (!identical(api, _api)) return;
+    _storageRevision++;
+    storageBackends = backends;
     notifyListeners();
   }
 

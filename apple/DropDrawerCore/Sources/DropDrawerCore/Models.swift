@@ -575,6 +575,7 @@ public enum JSONValue: Encodable, Sendable, Equatable {
     case string(String)
     case bool(Bool)
     case int(Int)
+    case null
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
@@ -582,6 +583,7 @@ public enum JSONValue: Encodable, Sendable, Equatable {
         case .string(let v): try container.encode(v)
         case .bool(let v): try container.encode(v)
         case .int(let v): try container.encode(v)
+        case .null: try container.encodeNil()
         }
     }
 
@@ -590,6 +592,7 @@ public enum JSONValue: Encodable, Sendable, Equatable {
         case .string(let v): v
         case .bool(let v): v
         case .int(let v): v
+        case .null: NSNull()
         }
     }
 }

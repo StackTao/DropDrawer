@@ -511,11 +511,7 @@ class ApiClient {
       Uri.parse('$_cleanBase/api/storage'),
       headers: _headers(),
     );
-    _check(resp);
-    final list = jsonDecode(resp.body) as List<dynamic>;
-    return list
-        .map((e) => StorageBackendSummary.fromJson(e as Map<String, dynamic>))
-        .toList();
+    return _decodeStorageBackends(resp);
   }
 
   Future<StorageBackendSummary> createStorageBackend({
@@ -535,6 +531,43 @@ class ApiClient {
     _check(resp);
     return StorageBackendSummary.fromJson(
         jsonDecode(resp.body) as Map<String, dynamic>);
+  }
+
+  Future<int?> getStorageCapacity(String id) async {
+    final resp = await http.get(
+      Uri.parse('$_cleanBase/api/storage/${Uri.encodeComponent(id)}'),
+      headers: _headers(),
+    );
+    _check(resp);
+    return (jsonDecode(resp.body) as Map<String, dynamic>)['max_bytes'] as int?;
+  }
+
+  Future<List<StorageBackendSummary>> updateStorageBackend(
+    String id, {
+    required String name,
+    required Map<String, dynamic> config,
+  }) async {
+    final resp = await http.patch(
+      Uri.parse('$_cleanBase/api/storage/${Uri.encodeComponent(id)}'),
+      headers: _headers(),
+      body: jsonEncode({'name': name, 'config': config}),
+    );
+    return _decodeStorageBackends(resp);
+  }
+
+  Future<List<StorageBackendSummary>> setDefaultStorageBackend(String id) async {
+    final resp = await http.put(
+      Uri.parse('$_cleanBase/api/storage/${Uri.encodeComponent(id)}/default'),
+      headers: _headers(),
+    );
+    return _decodeStorageBackends(resp);
+  }
+
+  List<StorageBackendSummary> _decodeStorageBackends(http.Response resp) {
+    _check(resp);
+    return (jsonDecode(resp.body) as List<dynamic>)
+        .map((entry) => StorageBackendSummary.fromJson(entry as Map<String, dynamic>))
+        .toList();
   }
 
   Future<void> deleteStorageBackend(String id) async {

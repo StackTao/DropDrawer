@@ -1,6 +1,7 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import '../models/models.dart';
 import '../state/drawer_controller.dart';
 import 'phone_page.dart';
 import 'theme.dart';
@@ -41,6 +42,28 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
 
   bool _isDefault = true;
   bool _saving = false;
+  bool _loadingEdit = false;
+  StorageBackendSummary? _editingBackend;
+  final _editNameCtrl = TextEditingController();
+  final _capacityCtrl = TextEditingController();
+  int? _initialCapacity;
+  final _credentials = <String, TextEditingController>{};
+
+  static const _credentialFields = {
+    'google_drive': {
+      'client_secret': 'Client Secret',
+      'refresh_token': 'Refresh Token',
+    },
+    'quark': {'cookie': 'Cookie'},
+    'baidu_netdisk': {
+      'client_secret': 'App Secret',
+      'refresh_token': 'Refresh Token',
+      'access_token': 'Access Token',
+    },
+    'web_dav': {'password': '密码'},
+    's3': {'access_key_id': 'Access Key', 'secret_access_key': 'Secret Key'},
+  };
+  bool _switchingDefault = false;
   String? _feedback;
   bool _feedbackOk = true;
 
@@ -64,6 +87,11 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
     _passCtrl.dispose();
     _regionCtrl.dispose();
     _bucketCtrl.dispose();
+    _editNameCtrl.dispose();
+    _capacityCtrl.dispose();
+    for (final controller in _credentials.values) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
@@ -256,67 +284,79 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
         ),
       ],
       desktopHeader: Padding(
-          padding: c.windowService.needsMacTrafficLightPadding
-              ? const EdgeInsets.fromLTRB(78, 1, 10, 3)
-              : const EdgeInsets.fromLTRB(10, 10, 12, 9),
-          child: SizedBox(
-            height: UiDensity.headerHeight(context),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                MacIconButton(
-                  icon: CupertinoIcons.chevron_left,
-                  tooltip: '返回抽屉',
-                  size: 15,
-                  onPressed: widget.onBack,
-                ),
-                const SizedBox(width: 4),
-                const Expanded(
-                  child: Text(
-                    '原生云盘与存储',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+        padding: c.windowService.needsMacTrafficLightPadding
+            ? const EdgeInsets.fromLTRB(78, 1, 10, 3)
+            : const EdgeInsets.fromLTRB(10, 10, 12, 9),
+        child: SizedBox(
+          height: UiDensity.headerHeight(context),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              MacIconButton(
+                icon: CupertinoIcons.chevron_left,
+                tooltip: '返回抽屉',
+                size: 15,
+                onPressed: _editingBackend == null
+                    ? widget.onBack
+                    : _saving
+                    ? null
+                    : _closeEdit,
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  _editingBackend == null ? '原生云盘与存储' : '编辑存储',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
-                MacIconButton(
-                  icon: CupertinoIcons.refresh,
-                  tooltip: '刷新存储列表',
-                  size: 14,
-                  onPressed: () => c.refreshStorageBackends(),
-                ),
-              ],
-            ),
+              ),
+              MacIconButton(
+                icon: CupertinoIcons.refresh,
+                tooltip: '刷新存储列表',
+                size: 14,
+                onPressed: () => c.refreshStorageBackends(),
+              ),
+            ],
           ),
         ),
+      ),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
-          child: MacSegmentedControl<int>(
-            selected: _tab,
-            items: const [(0, '已配置云盘'), (1, '添加原生云盘')],
-            onChanged: (v) => setState(() => _tab = v),
-          ),
-        ),
-        if (_feedback != null)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-            child: Text(
-              _feedback!,
-              style: TextStyle(
-                fontSize: 11,
-                color: _feedbackOk ? MacPalette.green : MacPalette.red,
+          if (_editingBackend == null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
+              child: MacSegmentedControl<int>(
+                selected: _tab,
+                items: const [(0, '已配置云盘'), (1, '添加原生云盘')],
+                onChanged: (v) => setState(() => _tab = v),
               ),
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
+            ),
+          if (_feedback != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+              child: Text(
+                _feedback!,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: _feedbackOk ? MacPalette.green : MacPalette.red,
+                ),
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(14, 6, 14, 14),
+              child: _editingBackend != null
+                  ? _buildEditForm(phone: false)
+                  : _tab == 0
+                  ? _buildBackendList()
+                  : _buildAddBackendForm(),
             ),
           ),
-        Expanded(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(14, 6, 14, 14),
-            child: _tab == 0 ? _buildBackendList() : _buildAddBackendForm(),
-          ),
-        ),
         ],
       ),
     );
@@ -380,8 +420,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
 
   static const _localNote =
       '文件保存在服务器数据目录中属于当前账号的文件夹（由服务端 DROPDRAWER_LOCAL_STORAGE 决定）。';
-  static const _nativeNote =
-      '全部云盘均由服务端原生直连，无需额外安装或部署 OpenList 等任何第三方服务。';
+  static const _defaultNote = '新上传至云端的文件会使用默认存储。';
 
   Future<void> _testBackend(String id) async {
     final (ok, msg) = await widget.controller.testStorageBackend(id);
@@ -393,8 +432,31 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
     }
   }
 
-  /// Phones: the configured backends as a settings group (tap for test or
-  /// remove), and the add form as grouped fields.
+  Future<void> _setDefaultBackend(String id) async {
+    if (_switchingDefault) return;
+    setState(() {
+      _switchingDefault = true;
+      _feedback = null;
+    });
+    try {
+      await widget.controller.setDefaultStorageBackend(id);
+      if (!mounted) return;
+      setState(() {
+        _feedbackOk = true;
+        _feedback = '已更新默认存储';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _feedbackOk = false;
+        _feedback = '切换默认存储失败：$e';
+      });
+    } finally {
+      if (mounted) setState(() => _switchingDefault = false);
+    }
+  }
+
+  /// Phones: the configured backends and add form as settings groups.
   Widget _buildPhoneBody() {
     final c = widget.controller;
     final material = usesMaterialChrome(context);
@@ -403,11 +465,12 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
       children: [
-        PhoneSegmented<int>(
-          options: const [(0, '已配置'), (1, '添加云盘')],
-          selected: _tab,
-          onChanged: (v) => setState(() => _tab = v),
-        ),
+        if (_editingBackend == null)
+          PhoneSegmented<int>(
+            options: const [(0, '已配置'), (1, '添加云盘')],
+            selected: _tab,
+            onChanged: (v) => setState(() => _tab = v),
+          ),
         if (feedback != null)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -420,9 +483,13 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
             ),
           ),
         const SizedBox(height: 20),
-        if (_tab == 0)
+        if (_editingBackend != null)
+          _buildEditForm(phone: true)
+        else if (_tab == 0)
           PhoneSection(
-            footer: list.isEmpty ? '还没有存储策略，切换到「添加云盘」直连配置。' : _nativeNote,
+            footer: list.isEmpty
+                ? '还没有存储策略，切换到「添加云盘」直连配置。'
+                : '点按存储项可编辑。$_defaultNote',
             children: [
               if (list.isEmpty)
                 const PhoneRow(title: '暂无云盘', dimmed: true)
@@ -435,12 +502,27 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
                       color: MacPalette.accent,
                     ),
                     title: backend.name,
-                    subtitle: '${_kindLabel(backend.kind)} · ${backend.displayTarget}',
+                    subtitle:
+                        '${_kindLabel(backend.kind)} · ${backend.displayTarget}',
                     value: backend.isDefault ? '默认' : null,
+                    trailing: backend.isDefault
+                        ? null
+                        : TextButton(
+                            onPressed: _switchingDefault
+                                ? null
+                                : () => _setDefaultBackend(backend.id),
+                            child: const Text('设为默认'),
+                          ),
                     onTap: () => showPhoneActions(
                       context,
                       title: backend.name,
                       entries: [
+                        PhoneMenuEntry(
+                          label: '编辑',
+                          icon: CupertinoIcons.pencil,
+                          materialIcon: Icons.edit_outlined,
+                          onSelected: () => _openEdit(backend),
+                        ),
                         PhoneMenuEntry(
                           label: '测试连通性',
                           icon: CupertinoIcons.waveform_path,
@@ -554,9 +636,13 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
           child: Column(
             children: [
               for (var i = 0; i < list.length; i++) ...[
-                if (i > 0) const Divider(height: 0.5, thickness: 0.5, indent: 12),
+                if (i > 0)
+                  const Divider(height: 0.5, thickness: 0.5, indent: 12),
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
                   child: Row(
                     children: [
                       Expanded(
@@ -600,6 +686,25 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
                           ],
                         ),
                       ),
+                      if (!list[i].isDefault)
+                        TextButton(
+                          style: TextButton.styleFrom(
+                            foregroundColor: MacPalette.accent,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            minimumSize: const Size(0, 32),
+                            textStyle: const TextStyle(fontSize: 12),
+                          ),
+                          onPressed: _switchingDefault
+                              ? null
+                              : () => _setDefaultBackend(list[i].id),
+                          child: const Text('设为默认'),
+                        ),
+                      MacIconButton(
+                        icon: CupertinoIcons.pencil,
+                        tooltip: '编辑',
+                        size: 14,
+                        onPressed: () => _openEdit(list[i]),
+                      ),
                       MacIconButton(
                         icon: CupertinoIcons.waveform_path,
                         tooltip: '测试连通性',
@@ -623,13 +728,216 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
         ),
         const SizedBox(height: 12),
         Text(
-          _nativeNote,
+          _defaultNote,
           style: TextStyle(
             fontSize: 11,
             height: 1.5,
             color: MacPalette.textTertiary,
           ),
         ),
+      ],
+    );
+  }
+
+  Future<void> _openEdit(StorageBackendSummary backend) async {
+    if (_loadingEdit || _saving || _switchingDefault) return;
+    _loadingEdit = true;
+    try {
+      final capacity = backend.kind == 'local'
+          ? await widget.controller.getStorageCapacity(backend.id)
+          : null;
+      if (!mounted || _tab != 0) return;
+      _editNameCtrl.text = backend.name;
+      _initialCapacity = capacity;
+      _capacityCtrl.text = capacity?.toString() ?? '';
+      for (final controller in _credentials.values) {
+        controller.clear();
+      }
+      for (final key in (_credentialFields[backend.kind] ?? {}).keys) {
+        _credentials.putIfAbsent(key, TextEditingController.new);
+      }
+      setState(() {
+        _editingBackend = backend;
+        _feedback = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _feedbackOk = false;
+        _feedback = '无法读取存储配置：$e';
+      });
+    } finally {
+      _loadingEdit = false;
+    }
+  }
+
+  void _closeEdit() {
+    for (final controller in _credentials.values) {
+      controller.clear();
+    }
+    setState(() {
+      _editingBackend = null;
+      _feedback = null;
+    });
+  }
+
+  Future<void> _saveEdit() async {
+    final backend = _editingBackend;
+    if (backend == null || _saving) return;
+    final name = _editNameCtrl.text.trim();
+    final rawCapacity = _capacityCtrl.text.trim();
+    final capacity = int.tryParse(rawCapacity, radix: 10);
+    final local = backend.kind == 'local';
+    if (name.isEmpty ||
+        (local &&
+            rawCapacity.isNotEmpty &&
+            (capacity == null || capacity <= 0))) {
+      setState(() {
+        _feedbackOk = false;
+        _feedback = name.isEmpty ? '存储名称不能为空' : '容量上限必须为正整数';
+      });
+      return;
+    }
+    final config = <String, dynamic>{
+      if (local && capacity != _initialCapacity) 'max_bytes': capacity,
+      for (final key in (_credentialFields[backend.kind] ?? {}).keys)
+        if (_credentials[key]!.text.trim().isNotEmpty)
+          key: key == 'password'
+              ? _credentials[key]!.text
+              : _credentials[key]!.text.trim(),
+    };
+    setState(() {
+      _saving = true;
+      _feedback = null;
+    });
+    try {
+      await widget.controller.updateStorageBackend(
+        backend.id,
+        name: name,
+        config: config,
+      );
+      if (!mounted) return;
+      _closeEdit();
+      setState(() {
+        _feedbackOk = true;
+        _feedback = '已保存存储配置';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _feedbackOk = false;
+        _feedback = '保存失败：$e';
+      });
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Widget _buildEditForm({required bool phone}) {
+    final backend = _editingBackend!;
+    final local = backend.kind == 'local';
+    final target = '${_kindLabel(backend.kind)} · ${backend.displayTarget}';
+    final note = local ? '容量上限留空表示不限。' : '留空保留现有凭据。更换存储位置可使用「添加云盘」。';
+
+    Widget field(
+      String label,
+      TextEditingController controller, {
+      String? placeholder,
+      bool obscure = false,
+      TextInputType? inputType,
+    }) => phone
+        ? PhoneFieldRow(
+            controller: controller,
+            label: label,
+            placeholder: placeholder,
+            obscureText: obscure,
+            keyboardType: inputType,
+          )
+        : MacFormField(
+            controller: controller,
+            label: label,
+            placeholder: placeholder,
+            obscureText: obscure,
+          );
+
+    final fields = [
+      field('名称', _editNameCtrl),
+      if (local)
+        field(
+          '上限（字节）',
+          _capacityCtrl,
+          placeholder: '不限',
+          inputType: TextInputType.number,
+        ),
+      for (final entry
+          in (_credentialFields[backend.kind] ?? const <String, String>{})
+              .entries)
+        field(entry.value, _credentials[entry.key]!, obscure: true),
+    ];
+    final saveLabel = _saving ? '正在保存…' : '保存修改';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (phone)
+          PhoneSection(
+            header: '编辑存储',
+            footer: note,
+            children: [
+              PhoneRow(title: '存储位置', subtitle: target),
+              ...fields,
+            ],
+          )
+        else ...[
+          Text(
+            target,
+            style: TextStyle(fontSize: 12, color: MacPalette.textSecondary),
+          ),
+          const SizedBox(height: 8),
+          Container(
+            decoration: BoxDecoration(
+              color: MacPalette.group(0.24),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: MacPalette.hairline, width: 0.7),
+            ),
+            child: Column(
+              children: [
+                for (final (index, field) in fields.indexed) ...[
+                  if (index > 0)
+                    const Divider(height: 0.5, thickness: 0.5, indent: 12),
+                  field,
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            note,
+            style: TextStyle(fontSize: 11, color: MacPalette.textSecondary),
+          ),
+        ],
+        const SizedBox(height: 12),
+        if (phone) ...[
+          PhoneButton(label: saveLabel, onPressed: _saving ? null : _saveEdit),
+          const SizedBox(height: 8),
+          PhoneButton(
+            kind: PhoneButtonKind.secondary,
+            label: '取消',
+            onPressed: _saving ? null : _closeEdit,
+          ),
+        ] else
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(
+                onPressed: _saving ? null : _closeEdit,
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                onPressed: _saving ? null : _saveEdit,
+                child: Text(saveLabel),
+              ),
+            ],
+          ),
       ],
     );
   }

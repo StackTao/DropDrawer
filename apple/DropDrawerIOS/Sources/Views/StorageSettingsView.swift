@@ -55,8 +55,10 @@ struct StorageSettingsView: View {
     @State private var isDefault: Bool = true
 
     @State private var saving: Bool = false
+    @State private var switchingDefault = false
     @State private var feedback: (ok: Bool, text: String)?
     @State private var selectedBackend: StorageBackendSummary?
+    @State private var editingBackend: StorageBackendSummary?
 
     var body: some View {
         List {
@@ -103,6 +105,9 @@ struct StorageSettingsView: View {
         .task {
             await store.refreshStorageBackends()
         }
+        .sheet(item: $editingBackend) { backend in
+            StorageEditSheet(store: store, backend: backend)
+        }
         .confirmationDialog(
             selectedBackend?.name ?? "存储策略",
             isPresented: Binding(
@@ -112,6 +117,16 @@ struct StorageSettingsView: View {
             titleVisibility: .visible
         ) {
             if let backend = selectedBackend {
+                if !backend.isDefault {
+                    Button("设为默认") {
+                        Task { await setDefaultBackend(backend.id) }
+                    }
+                    .disabled(switchingDefault)
+                }
+                Button("编辑") {
+                    editingBackend = backend
+                }
+                .disabled(switchingDefault)
                 Button("测试连通性") {
                     Task { await testBackend(backend) }
                 }
@@ -161,7 +176,7 @@ struct StorageSettingsView: View {
         } footer: {
             Text(store.storageBackends.isEmpty
                  ? "还没有存储策略，切换到「添加云盘」直连配置。"
-                 : "全部云盘均由服务端原生直连，无需部署 Alist / OpenList 等第三方服务。")
+                 : "轻点存储项可编辑或设为默认。新上传至云端的文件会使用默认存储。")
         }
     }
 
@@ -289,6 +304,19 @@ struct StorageSettingsView: View {
         }
     }
 
+    private func setDefaultBackend(_ id: String) async {
+        guard !switchingDefault else { return }
+        switchingDefault = true
+        feedback = nil
+        defer { switchingDefault = false }
+        do {
+            try await store.setDefaultStorageBackend(id: id)
+            feedback = (true, "已更新默认存储")
+        } catch {
+            feedback = (false, "切换默认存储失败：\(error.localizedDescription)")
+        }
+    }
+
     private func launchGoogleOAuth() async {
         guard !clientId.trimmingCharacters(in: .whitespaces).isEmpty,
               !clientSecret.trimmingCharacters(in: .whitespaces).isEmpty else {
@@ -381,6 +409,132 @@ struct StorageSettingsView: View {
             tab = 0
         } catch {
             feedback = (false, "保存失败：\(error.localizedDescription)")
+        }
+    }
+}
+
+
+private struct StorageEditSheet: View {
+    let store: DropDrawerStore
+    let backend: StorageBackendSummary
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var capacity = ""
+    @State private var initialCapacity: Int?
+    @State private var credentials: [String: String] = [:]
+    @State private var loading = true
+    @State private var saving = false
+    @State private var errorMessage: String?
+
+    private var isLocal: Bool { backend.kind == "local" }
+
+    private var credentialFields: [(key: String, label: String)] {
+        switch backend.kind {
+        case "google_drive":
+            [("client_secret", "Client Secret"), ("refresh_token", "Refresh Token")]
+        case "quark":
+            [("cookie", "Cookie")]
+        case "baidu_netdisk":
+            [("client_secret", "App Secret"), ("refresh_token", "Refresh Token"), ("access_token", "Access Token")]
+        case "web_dav":
+            [("password", "密码")]
+        case "s3":
+            [("access_key_id", "Access Key"), ("secret_access_key", "Secret Key")]
+        default:
+            []
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    LabeledContent("存储位置", value: backend.displayTarget)
+                    TextField("名称", text: $name)
+                    if isLocal {
+                        TextField("容量上限（字节）", text: $capacity)
+                            .keyboardType(.numberPad)
+                    }
+                    ForEach(credentialFields, id: \.key) { field in
+                        SecureField(field.label, text: Binding(
+                            get: { credentials[field.key, default: ""] },
+                            set: { credentials[field.key] = $0 }
+                        ))
+                    }
+                } footer: {
+                    Text(isLocal
+                         ? "容量上限留空表示不限。"
+                         : "留空保留现有凭据。更换存储位置可使用「添加云盘」。")
+                }
+                .disabled(loading || saving)
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
+            }
+            .navigationTitle("编辑存储")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                        .disabled(saving)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") { Task { await save() } }
+                        .disabled(loading || saving)
+                }
+            }
+            .interactiveDismissDisabled(saving)
+            .task {
+                name = backend.name
+                do {
+                    if isLocal, let maxBytes = try await store.getStorageCapacity(id: backend.id) {
+                        initialCapacity = maxBytes
+                        capacity = String(maxBytes)
+                    }
+                    loading = false
+                } catch {
+                    errorMessage = "无法读取存储配置：\(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    private func save() async {
+        guard !saving else { return }
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+            errorMessage = "存储名称不能为空"
+            return
+        }
+        var config: [String: JSONValue] = [:]
+        for (key, value) in credentials {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                config[key] = .string(key == "password" ? value : trimmed)
+            }
+        }
+        if isLocal {
+            let value = capacity.trimmingCharacters(in: .whitespacesAndNewlines)
+            let bytes = Int(value)
+            if !value.isEmpty && (bytes ?? 0) <= 0 {
+                errorMessage = "容量上限必须为正整数"
+                return
+            }
+            if bytes != initialCapacity {
+                config["max_bytes"] = bytes.map(JSONValue.int) ?? .null
+            }
+        }
+        saving = true
+        errorMessage = nil
+        defer { saving = false }
+        do {
+            try await store.updateStorageBackend(id: backend.id, name: trimmedName, config: config)
+            dismiss()
+        } catch {
+            errorMessage = "保存失败：\(error.localizedDescription)"
         }
     }
 }
