@@ -16,12 +16,11 @@ struct PreferencesView: View {
         URL(string: store.serverUrl)?.host ?? store.serverUrl
     }
 
-    /// Retention choices under the administrator's maximum: "never" and longer
-    /// presets are dropped and the cap itself is offered.
+    /// Keep the server default available and limit explicit presets to the cap.
     private var ttlOptions: [(Int, String)] {
-        let base: [(Int, String)] = [(0, "永不过期"), (24, "24 小时"), (168, "7 天"), (720, "30 天")]
+        let base: [(Int, String)] = [(0, "跟随服务器"), (24, "24 小时"), (168, "7 天"), (720, "30 天")]
         guard let cap = store.maxItemTtlHours, cap > 0 else { return base }
-        var options = base.filter { $0.0 > 0 && $0.0 <= cap }
+        var options = base.filter { $0.0 <= cap }
         if !options.contains(where: { $0.0 == cap }) {
             options.append((cap, (cap % 24 == 0 ? "\(cap / 24) 天" : "\(cap) 小时") + "（上限）"))
         }

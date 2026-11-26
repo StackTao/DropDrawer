@@ -118,7 +118,7 @@ class _PreferencesViewState extends State<PreferencesView> {
     ('cloud_cached', '存云盘'),
   ];
   static const _ttls = [
-    (0, '永不过期'),
+    (0, '跟随服务器'),
     (24, '24 小时'),
     (168, '7 天'),
     (720, '30 天'),
@@ -130,11 +130,10 @@ class _PreferencesViewState extends State<PreferencesView> {
     (100, '100 MB'),
   ];
 
-  /// Retention options under the administrator's maximum: "never" and longer
-  /// presets are dropped and the cap itself is offered.
+  /// Keep the server default available and limit explicit presets to the cap.
   static List<(int, String)> _ttlOptions(int? cap) {
     if (cap == null || cap <= 0) return _ttls;
-    final options = _ttls.where((o) => o.$1 > 0 && o.$1 <= cap).toList();
+    final options = _ttls.where((o) => o.$1 <= cap).toList();
     if (!options.any((o) => o.$1 == cap)) {
       options.add((cap, '${cap % 24 == 0 ? '${cap ~/ 24} 天' : '$cap 小时'}（上限）'));
     }

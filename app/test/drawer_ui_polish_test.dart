@@ -329,14 +329,15 @@ void main() {
         ),
       );
       await tester.pump();
-      // "Never" (the stored default) exceeds the cap, so the cap is shown.
+      // The stored default follows server policy, even when there is a cap.
       await tester.scrollUntilVisible(find.text('默认过期时间'), 200);
-      expect(find.text('3 天（上限）'), findsOneWidget);
+      expect(find.text('跟随服务器'), findsOneWidget);
       await tester.tap(find.text('默认过期时间'));
       await tester.pumpAndSettle();
       expect(find.text('永不过期'), findsNothing);
       expect(find.text('30 天'), findsNothing);
       expect(find.text('24 小时'), findsOneWidget);
+      expect(find.text('3 天（上限）'), findsOneWidget);
     });
   });
 
