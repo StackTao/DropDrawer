@@ -30,13 +30,15 @@ struct ItemDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .quickLookPreview($quickLookURL)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    onCreateShare()
-                } label: {
-                    Image(systemName: "link")
+            if store.canCreateShares {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        onCreateShare()
+                    } label: {
+                        Image(systemName: "link")
+                    }
+                    .accessibilityLabel("创建外链")
                 }
-                .accessibilityLabel("创建外链")
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button(role: .destructive) {
@@ -148,7 +150,7 @@ struct ItemDetailView: View {
                         Label("保存到系统相册", systemImage: "square.and.arrow.down")
                     }
                 }
-                if !item.cloudReady {
+                if !item.cloudReady && store.canUploadToCloud {
                     Button {
                         Task { await store.cacheItemToCloud(itemId: item.id, fileURL: local) }
                     } label: {
@@ -167,10 +169,12 @@ struct ItemDetailView: View {
                 .disabled(!store.canDownloadP2P(item) && !item.cloudReady)
             }
 
-            Button {
-                onCreateShare()
-            } label: {
-                Label("创建公网外链", systemImage: "link")
+            if store.canCreateShares {
+                Button {
+                    onCreateShare()
+                } label: {
+                    Label("创建公网外链", systemImage: "link")
+                }
             }
         }
     }

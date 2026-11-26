@@ -68,6 +68,12 @@ pub enum P2pPathKind {
 pub struct RegisterRequest {
     pub username: String,
     pub password: String,
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub email_code: Option<String>,
+    #[serde(default)]
+    pub invite_code: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,9 +83,44 @@ pub struct LoginRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SendEmailCodeRequest {
+    pub email: String,
+    /// `"register"` or `"reset_password"`
+    pub purpose: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResetPasswordRequest {
+    pub email: String,
+    pub code: String,
+    pub new_password: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthProviderInfo {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthPublicConfig {
+    /// `"open"` | `"invite_only"` | `"closed"`
+    pub registration_mode: String,
+    pub password_login_enabled: bool,
+    pub email_verification_required: bool,
+    pub email_password_reset_enabled: bool,
+    #[serde(default)]
+    pub providers: Vec<AuthProviderInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserProfile {
     pub id: String,
     pub username: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -102,6 +143,9 @@ pub struct RegisterDeviceRequest {
     pub iroh_relay_url: Option<String>,
     #[serde(default)]
     pub direct_addrs: Vec<String>,
+    /// Client app version (e.g. `"0.1.5"`); checked against the server's minimum version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -118,6 +162,8 @@ pub struct DeviceInfo {
     pub replica_items: Vec<String>,
     pub online: bool,
     pub last_seen_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_version: Option<String>,
 }
 
 // ============================================================================
@@ -415,6 +461,8 @@ pub enum WsEvent {
         items: Vec<DrawerItem>,
     },
     DeviceUpdated(DeviceInfo),
+    /// Server policy or announcement changed; clients should refetch `GET /api/client/config`.
+    ConfigChanged,
     ItemAdded(DrawerItem),
     ItemUpdated(DrawerItem),
     ItemDeleted {
@@ -468,4 +516,67 @@ pub struct P2pTransferProgress {
     pub finished: bool,
     pub saved_path: Option<String>,
     pub error: Option<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Effective feature switches for the signed-in user (server switches combined
+/// with the administrator's per-user restrictions). Unknown to older servers, so
+/// every field defaults to the permissive value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClientFeatures {
+    #[serde(default = "default_true")]
+    pub share_create_enabled: bool,
+    #[serde(default = "default_true")]
+    pub cloud_upload_enabled: bool,
+    #[serde(default)]
+    pub share_requires_passcode: bool,
+    #[serde(default)]
+    pub max_share_expires_hours: Option<u64>,
+    #[serde(default)]
+    pub max_share_downloads: Option<u64>,
+    #[serde(default)]
+    pub max_item_ttl_hours: Option<u64>,
+    /// Storage backend kinds the administrator disabled (cannot be added or uploaded to).
+    #[serde(default)]
+    pub disabled_storage_kinds: Vec<StorageBackendKind>,
+}
+
+impl Default for ClientFeatures {
+    fn default() -> Self {
+        Self {
+            share_create_enabled: true,
+            cloud_upload_enabled: true,
+            share_requires_passcode: false,
+            max_share_expires_hours: None,
+            max_share_downloads: None,
+            max_item_ttl_hours: None,
+            disabled_storage_kinds: Vec::new(),
+        }
+    }
+}
+
+/// Server-wide announcement shown as a banner in the clients.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClientAnnouncement {
+    /// Changes whenever the announcement is edited, so a dismissed banner reappears.
+    pub id: String,
+    /// `"info"` | `"warning"` | `"critical"`
+    pub level: String,
+    pub title: String,
+    pub message: String,
+}
+
+/// `GET /api/client/config` (authenticated).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClientConfig {
+    pub server_version: String,
+    #[serde(default)]
+    pub features: ClientFeatures,
+    #[serde(default)]
+    pub announcement: Option<ClientAnnouncement>,
+    #[serde(default)]
+    pub min_client_version: Option<String>,
 }

@@ -14,11 +14,11 @@ use axum::{
 use chrono::{Duration, Utc};
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
 use protocol::{
-    AuthResponse, CloudDownloadInfo, CreateBatchShareRequest, CreateDrawerItemRequest,
-    CreateShareRequest, CreateStorageBackendRequest, DeviceInfo, DownloadPlan, DrawerItem,
-    DrawerItemKind, LoginRequest, P2pSourceInfo, RegisterDeviceRequest, RegisterRequest,
-    ShareLinkInfo, StorageBackendConfig, StorageBackendSummary, StorageHealthResponse,
-    TransferMode, UploadPlan,
+    AuthPublicConfig, AuthResponse, CloudDownloadInfo, CreateBatchShareRequest,
+    CreateDrawerItemRequest, CreateShareRequest, CreateStorageBackendRequest, DeviceInfo,
+    DownloadPlan, DrawerItem, DrawerItemKind, LoginRequest, P2pSourceInfo, RegisterDeviceRequest,
+    RegisterRequest, ResetPasswordRequest, SendEmailCodeRequest, ShareLinkInfo,
+    StorageBackendConfig, StorageBackendSummary, StorageHealthResponse, TransferMode, UploadPlan,
     WsClientCommand, WsEvent,
 };
 use serde::Deserialize;
@@ -26,8 +26,14 @@ use tokio::sync::mpsc;
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use uuid::Uuid;
 
-use crate::auth::{create_jwt, decode_jwt, hash_password, verify_password, AuthUser};
+use crate::auth::{
+    create_versioned_jwt, decode_jwt, hash_password, issue_user_token, validate_user_claims,
+    verify_password, AuthUser,
+};
 use crate::db::DrawerItemRow;
+use crate::mailer::build_verification_email;
+use crate::policy;
+use crate::settings::{RegistrationMode, is_valid_email};
 use crate::state::AppState;
 use crate::storage::{DownloadResolution, local::LocalUploadTooLarge};
 
@@ -64,13 +70,18 @@ pub fn build_router_with_cors(state: Arc<AppState>, allowed_origins: Option<&[St
         .route("/health", get(health))
         .route("/privacy", get(crate::google_login::privacy_notice))
         // Auth
+        .route("/api/auth/config", get(auth_public_config))
         .route("/api/auth/register", post(register))
         .route("/api/auth/login", post(login))
+        .route("/api/auth/email/send-code", post(send_email_code))
+        .route("/api/auth/password/reset", post(reset_password))
         .route("/api/auth/google/start", post(crate::google_login::start))
         .route("/api/auth/google/callback", get(crate::google_login::callback))
         .route("/api/auth/google/poll", post(crate::google_login::poll))
+        // Admin Console (Vaultwarden-style, enabled only when DROPDRAWER_ADMIN_TOKEN is set)
         // Devices
         .route("/api/devices", get(list_devices).post(register_device))
+        .route("/api/client/config", get(client_config))
         // Storage backends & built-in OAuth helpers
         .route(
             "/api/storage",
@@ -115,6 +126,8 @@ pub fn build_router_with_cors(state: Arc<AppState>, allowed_origins: Option<&[St
         // Real-time WebSocket
         .route("/ws", get(ws_upgrade))
         .layer(cors)
+        // The admin console is same-origin only, so it is merged after the CORS layer.
+        .merge(crate::admin::router())
         .with_state(state)
 }
 
@@ -126,16 +139,207 @@ async fn health() -> impl IntoResponse {
 // Auth Handlers
 // ============================================================================
 
+fn hash_email_code(email: &str, purpose: &str, code: &str, secret: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(secret.as_bytes());
+    hasher.update(b":");
+    hasher.update(purpose.as_bytes());
+    hasher.update(b":");
+    hasher.update(email.trim().to_ascii_lowercase().as_bytes());
+    hasher.update(b":");
+    hasher.update(code.trim().as_bytes());
+    hex::encode(hasher.finalize())
+}
+
+fn generate_six_digit_code() -> String {
+    use rand::{RngCore, rngs::OsRng};
+    let n = OsRng.next_u32() % 1_000_000;
+    format!("{n:06}")
+}
+
+async fn auth_public_config(State(state): State<Arc<AppState>>) -> Json<AuthPublicConfig> {
+    let settings = state.runtime_settings();
+    Json(settings.to_public_auth_config(state.has_custom_email_sender()))
+}
+
+async fn send_email_code(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<SendEmailCodeRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let email = req.email.trim().to_ascii_lowercase();
+    if !is_valid_email(&email) {
+        return Err((StatusCode::BAD_REQUEST, "邮箱地址格式无效".to_string()));
+    }
+    let purpose = req.purpose.trim();
+    if purpose != "register" && purpose != "reset_password" {
+        return Err((StatusCode::BAD_REQUEST, "无效的验证码用途".to_string()));
+    }
+
+    let settings = state.runtime_settings();
+    let email_ready = settings.smtp.is_usable() || state.has_custom_email_sender();
+    if !email_ready {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "当前服务器未启用邮件服务".to_string(),
+        ));
+    }
+
+    let rate_key = format!("{purpose}:{email}");
+    if state.email_send_limiter.is_blocked(&rate_key) {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            "发送验证码过于频繁，请稍后再试".to_string(),
+        ));
+    }
+    if let Some(last) = state
+        .db
+        .last_email_verification_at(&email, purpose)
+        .map_err(internal_err)?
+    {
+        let elapsed = (Utc::now() - last).num_seconds();
+        if elapsed < 60 {
+            return Err((
+                StatusCode::TOO_MANY_REQUESTS,
+                format!("请等待 {} 秒后再重新发送验证码", (60 - elapsed).max(1)),
+            ));
+        }
+    }
+
+    if purpose == "register" {
+        if settings.registration_mode == RegistrationMode::Closed {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "当前服务器已关闭新用户注册".to_string(),
+            ));
+        }
+        if let Err(msg) = settings.check_email_domain(&email) {
+            return Err((StatusCode::FORBIDDEN, msg));
+        }
+        if state
+            .db
+            .find_user_by_email(&email)
+            .map_err(internal_err)?
+            .is_some()
+        {
+            return Err((StatusCode::CONFLICT, "该邮箱已被注册".to_string()));
+        }
+    } else {
+        if !settings.features.password_reset_enabled {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "管理员已关闭邮箱找回密码".to_string(),
+            ));
+        }
+        // Avoid user-enumeration: if email is unknown or disabled, still return ok without sending.
+        let existing = state.db.find_user_by_email(&email).map_err(internal_err)?;
+        if existing.is_none_or(|u| !u.email_verified || u.disabled) {
+            state.email_send_limiter.record_failure(&rate_key);
+            return Ok(Json(serde_json::json!({ "ok": true })));
+        }
+    }
+
+    state.email_send_limiter.record_failure(&rate_key);
+    let code = generate_six_digit_code();
+    let code_hash = hash_email_code(&email, purpose, &code, &state.jwt_secret);
+    let expires_at = Utc::now() + Duration::minutes(10);
+    state
+        .db
+        .create_email_verification(&email, purpose, &code_hash, expires_at)
+        .map_err(internal_err)?;
+
+    let message = build_verification_email(&email, &code, purpose);
+    state
+        .send_email(&message)
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("邮件发送失败: {e}")))?;
+
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+async fn reset_password(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ResetPasswordRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let email = req.email.trim().to_ascii_lowercase();
+    if !is_valid_email(&email) {
+        return Err((StatusCode::BAD_REQUEST, "邮箱地址格式无效".to_string()));
+    }
+    if req.new_password.len() < 6 {
+        return Err((StatusCode::BAD_REQUEST, "新密码长度至少 6 位".to_string()));
+    }
+    let settings = state.runtime_settings();
+    if !settings.features.password_reset_enabled {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "管理员已关闭邮箱找回密码".to_string(),
+        ));
+    }
+    if !settings.smtp.is_usable() && !state.has_custom_email_sender() {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "当前服务器未启用邮件服务".to_string(),
+        ));
+    }
+
+    let code_hash = hash_email_code(&email, "reset_password", &req.code, &state.jwt_secret);
+    let valid = state
+        .db
+        .verify_and_consume_email_code(&email, "reset_password", &code_hash)
+        .map_err(internal_err)?;
+    if !valid {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "验证码无效或已过期，请重新获取".to_string(),
+        ));
+    }
+
+    let Some(user) = state.db.find_user_by_email(&email).map_err(internal_err)? else {
+        return Err((StatusCode::BAD_REQUEST, "验证码无效或已过期".to_string()));
+    };
+    if !user.email_verified || user.disabled {
+        return Err((StatusCode::FORBIDDEN, "该账号当前不可重置密码".to_string()));
+    }
+
+    let hash = hash_password(&req.new_password).map_err(internal_err)?;
+    state
+        .db
+        .update_user_password(&user.id, &hash)
+        .map_err(internal_err)?;
+    // A reset password must also end sessions that may have been opened with the old one.
+    state.db.bump_token_version(&user.id).map_err(internal_err)?;
+    state.disconnect_user(&user.id);
+    state.failed_logins.reset(&user.username.to_lowercase());
+    state.failed_logins.reset(&email);
+
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
 async fn register(
     State(state): State<Arc<AppState>>,
     Json(req): Json<RegisterRequest>,
 ) -> Result<Json<AuthResponse>, (StatusCode, String)> {
-    if !state.registration_open() {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "registration is disabled on this server".to_string(),
-        ));
+    let settings = state.runtime_settings();
+    match settings.registration_mode {
+        RegistrationMode::Closed => {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "registration is disabled on this server".to_string(),
+            ));
+        }
+        RegistrationMode::InviteOnly => {
+            if req
+                .invite_code
+                .as_deref()
+                .map(str::trim)
+                .is_none_or(|c| c.is_empty())
+            {
+                return Err((StatusCode::FORBIDDEN, "当前服务器仅支持邀请码注册".to_string()));
+            }
+        }
+        RegistrationMode::Open => {}
     }
+
     let username = req.username.trim();
     if username.len() < 2 || req.password.len() < 6 {
         return Err((
@@ -143,6 +347,7 @@ async fn register(
             "username must be >= 2 chars and password >= 6 chars".to_string(),
         ));
     }
+    policy::validate_username(username)?;
 
     if state
         .db
@@ -153,13 +358,79 @@ async fn register(
         return Err((StatusCode::CONFLICT, "username already exists".to_string()));
     }
 
+    let email_ready = settings.smtp.is_usable() || state.has_custom_email_sender();
+    let require_email = settings.email_verification_required && email_ready;
+    let supplied_email = req
+        .email
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_ascii_lowercase());
+
+    let (verified_email, email_verified) = if require_email || supplied_email.is_some() {
+        let Some(email) = supplied_email else {
+            return Err((StatusCode::BAD_REQUEST, "请填写注册邮箱并完成验证码校验".to_string()));
+        };
+        if !is_valid_email(&email) {
+            return Err((StatusCode::BAD_REQUEST, "邮箱地址格式无效".to_string()));
+        }
+        if let Err(msg) = settings.check_email_domain(&email) {
+            return Err((StatusCode::FORBIDDEN, msg));
+        }
+        if state
+            .db
+            .find_user_by_email(&email)
+            .map_err(internal_err)?
+            .is_some()
+        {
+            return Err((StatusCode::CONFLICT, "该邮箱已被注册".to_string()));
+        }
+        if require_email || req.email_code.as_deref().is_some_and(|c| !c.trim().is_empty()) {
+            let code = req.email_code.as_deref().unwrap_or("").trim();
+            if code.is_empty() {
+                return Err((StatusCode::BAD_REQUEST, "请输入邮箱验证码".to_string()));
+            }
+            let code_hash = hash_email_code(&email, "register", code, &state.jwt_secret);
+            let ok = state
+                .db
+                .verify_and_consume_email_code(&email, "register", &code_hash)
+                .map_err(internal_err)?;
+            if !ok {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "邮箱验证码无效或已过期，请重新获取".to_string(),
+                ));
+            }
+            (Some(email), true)
+        } else {
+            (Some(email), false)
+        }
+    } else {
+        (None, false)
+    };
+
+    if settings.registration_mode == RegistrationMode::InviteOnly {
+        let code = req.invite_code.as_deref().unwrap_or("");
+        let consumed = state.db.consume_invite_code(code).map_err(internal_err)?;
+        if !consumed {
+            return Err((StatusCode::FORBIDDEN, "邀请码无效、已用完或已过期".to_string()));
+        }
+    }
+
     let hash = hash_password(&req.password).map_err(internal_err)?;
     let user_id = Uuid::new_v4().to_string();
     let user = state
         .db
-        .create_user(&user_id, username, &hash)
+        .create_user_with_email(
+            &user_id,
+            username,
+            &hash,
+            verified_email.as_deref(),
+            email_verified,
+        )
         .map_err(internal_err)?;
-    let token = create_jwt(&user.id, &user.username, &state.jwt_secret).map_err(internal_err)?;
+    let token = issue_user_token(&state, &user.id, &user.username).map_err(internal_err)?;
+    let _ = state.db.touch_last_login(&user.id);
 
     Ok(Json(AuthResponse { token, user }))
 }
@@ -168,6 +439,12 @@ async fn login(
     State(state): State<Arc<AppState>>,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<AuthResponse>, (StatusCode, String)> {
+    if !state.runtime_settings().password_login_enabled {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "当前服务器已关闭账号密码登录，请使用其他已启用的登录方式".to_string(),
+        ));
+    }
     let limit_key = req.username.trim().to_lowercase();
     if state.failed_logins.is_blocked(&limit_key) {
         return Err((
@@ -181,22 +458,36 @@ async fn login(
     };
     let user_rec = state
         .db
-        .find_user_by_username(req.username.trim())
+        .find_user_by_identifier(req.username.trim())
         .map_err(internal_err)?
         .ok_or_else(invalid)?;
+
+    if user_rec.disabled {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "该账号已被管理员禁用".to_string(),
+        ));
+    }
 
     if !verify_password_blocking(&req.password, &user_rec.password_hash).await {
         return Err(invalid());
     }
     state.failed_logins.reset(&limit_key);
 
-    let token =
-        create_jwt(&user_rec.id, &user_rec.username, &state.jwt_secret).map_err(internal_err)?;
+    let token = create_versioned_jwt(
+        &user_rec.id,
+        &user_rec.username,
+        user_rec.token_version,
+        &state.jwt_secret,
+    )
+    .map_err(internal_err)?;
+    let _ = state.db.touch_last_login(&user_rec.id);
     Ok(Json(AuthResponse {
         token,
         user: protocol::UserProfile {
             id: user_rec.id,
             username: user_rec.username,
+            email: user_rec.email,
             created_at: user_rec.created_at,
         },
     }))
@@ -211,7 +502,30 @@ async fn register_device(
     State(state): State<Arc<AppState>>,
     Json(req): Json<RegisterDeviceRequest>,
 ) -> Result<Json<DeviceInfo>, (StatusCode, String)> {
+    policy::ensure_client_version(&state, req.app_version.as_deref())?;
+    if state
+        .db
+        .device_removed_after(
+            &auth.user_id,
+            req.device_id.as_deref(),
+            req.iroh_node_id.as_deref(),
+            auth.issued_at,
+        )
+        .map_err(internal_err)?
+    {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            "该设备已被管理员移除，请重新登录".to_string(),
+        ));
+    }
     let _presence = state.presence_changes.lock().await;
+    policy::ensure_device_slot(
+        &state,
+        &auth.user_id,
+        req.device_id.as_deref(),
+        req.platform,
+        req.iroh_node_id.as_deref(),
+    )?;
     let mut device = state
         .db
         .upsert_device(
@@ -222,11 +536,43 @@ async fn register_device(
             req.iroh_node_id.as_deref(),
             req.iroh_relay_url.as_deref(),
             &req.direct_addrs,
+            req.app_version.as_deref(),
         )
         .map_err(internal_err)?;
+    let _ = state.db.clear_device_removal(
+        &auth.user_id,
+        req.device_id.as_deref(),
+        req.iroh_node_id.as_deref(),
+    );
     state.fill_device_presence(&mut device);
     state.broadcast_user(&auth.user_id, WsEvent::DeviceUpdated(device.clone()));
     Ok(Json(device))
+}
+
+#[derive(Debug, Deserialize)]
+struct ClientConfigQuery {
+    #[serde(default)]
+    device_id: Option<String>,
+}
+
+async fn client_config(
+    auth: AuthUser,
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<ClientConfigQuery>,
+) -> Result<Json<protocol::ClientConfig>, (StatusCode, String)> {
+    // Clients poll this when their socket drops; tell a device removed by an
+    // administrator to sign in again instead of reconnecting forever.
+    if state
+        .db
+        .device_removed_after(&auth.user_id, query.device_id.as_deref(), None, auth.issued_at)
+        .map_err(internal_err)?
+    {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            "该设备已被管理员移除，请重新登录".to_string(),
+        ));
+    }
+    policy::client_config(&state, &auth.user_id).map(Json)
 }
 
 async fn list_devices(
@@ -278,6 +624,11 @@ async fn create_storage_backend(
         },
         other => other,
     };
+    let settings = state.runtime_settings();
+    policy::ensure_backend_kind_allowed(&settings.storage_policy, config.kind())?;
+    policy::ensure_endpoints_allowed(&settings, &config)
+        .await
+        .map_err(|e| (StatusCode::FORBIDDEN, e.to_string()))?;
     let rec = state
         .db
         .create_storage_backend(&id, &auth.user_id, &req.name, &config, req.is_default)
@@ -414,7 +765,15 @@ async fn check_storage_health(
         .map_err(internal_err)?
         .ok_or_else(storage_backend_not_found)?;
 
-    let provider = state.build_storage_provider(&rec).map_err(internal_err)?;
+    let provider = match state.storage_provider(&rec).await {
+        Ok(provider) => provider,
+        Err(err) => {
+            return Ok(Json(StorageHealthResponse {
+                ok: false,
+                message: err.to_string(),
+            }))
+        }
+    };
     match provider.health_check().await {
         Ok(msg) => Ok(Json(StorageHealthResponse {
             ok: true,
@@ -444,6 +803,10 @@ async fn start_google_oauth(
     State(state): State<Arc<AppState>>,
     Json(req): Json<GoogleOAuthStartRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    policy::ensure_backend_kind_allowed(
+        &state.runtime_settings().storage_policy,
+        protocol::StorageBackendKind::GoogleDrive,
+    )?;
     let nonce = Uuid::new_v4().to_string();
     let folder_id = if req.folder_id.trim().is_empty() {
         "root".to_string()
@@ -577,12 +940,10 @@ async fn create_drawer_item(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateDrawerItemRequest>,
 ) -> Result<Json<DrawerItem>, (StatusCode, String)> {
+    policy::ensure_item_slot(&state, &auth.user_id)?;
     let now = Utc::now();
     let id = Uuid::new_v4().to_string();
-    let expires_at = req
-        .ttl_hours
-        .map(|h| now + Duration::hours(h as i64))
-        .or_else(|| Some(now + Duration::days(7)));
+    let expires_at = Some(policy::item_expiry(&state, req.ttl_hours, now));
 
     let is_text = req.kind == protocol::DrawerItemKind::Text;
     let row = DrawerItemRow {
@@ -721,12 +1082,13 @@ async fn request_upload_plan(
     let backend = state
         .resolve_backend(&auth.user_id, backend_id)
         .map_err(internal_err)?;
+    policy::ensure_upload_allowed(&state, &auth.user_id, &backend)?;
     let expected_size = req.size.unwrap_or(item.size);
     if matches!(&backend.config, StorageBackendConfig::Local { .. }) {
-        LocalUploadTooLarge::check(state.local_max_file_bytes, item.size.max(expected_size))
+        LocalUploadTooLarge::check(state.local_max_file_bytes(), item.size.max(expected_size))
             .map_err(|err| (StatusCode::PAYLOAD_TOO_LARGE, err.to_string()))?;
     }
-    let provider = state.build_storage_provider(&backend).map_err(internal_err)?;
+    let provider = provider_for(&state, &backend).await?;
 
     // Telegram-style instant deduplication: strictly scoped to the same user
     // and same storage backend, verified against physical storage before reuse.
@@ -828,7 +1190,8 @@ async fn stream_upload_item(
                 .or(item.storage_backend_id.as_deref()),
         )
         .map_err(internal_err)?;
-    let provider = state.build_storage_provider(&backend).map_err(internal_err)?;
+    policy::ensure_upload_allowed(&state, &auth.user_id, &backend)?;
+    let provider = provider_for(&state, &backend).await?;
 
     let content_length = headers
         .get(header::CONTENT_LENGTH)
@@ -921,6 +1284,7 @@ async fn confirm_direct_upload(
         .get_storage_backend(&req.storage_backend_id, &auth.user_id)
         .map_err(internal_err)?
         .ok_or_else(|| (StatusCode::NOT_FOUND, "storage backend not found".to_string()))?;
+    policy::ensure_upload_allowed(&state, &auth.user_id, &backend)?;
     // Only presigned direct uploads are confirmed by the client, and only for the
     // exact key the server handed out in the upload plan.
     if matches!(backend.config, StorageBackendConfig::Local { .. })
@@ -1094,11 +1458,18 @@ async fn get_download_plan(
         if let (Some(backend_id), Some(storage_path)) =
             (item.storage_backend_id.as_deref(), item.storage_path.as_deref())
         {
-            if let Some(backend) = state
+            let settings = state.runtime_settings();
+            let backend = state
                 .db
                 .get_storage_backend(backend_id, &auth.user_id)
-                .map_err(internal_err)?
-            {
+                .map_err(internal_err)?;
+            let backend = match backend {
+                Some(b) if policy::ensure_endpoints_allowed(&settings, &b.config).await.is_ok() => {
+                    Some(b)
+                }
+                _ => None,
+            };
+            if let Some(backend) = backend {
                 let provider = state.build_storage_provider(&backend).map_err(internal_err)?;
                 match provider.resolve_download(storage_path).await {
                     Ok(DownloadResolution::DirectUrl(url)) => {
@@ -1155,7 +1526,7 @@ async fn download_item_content(
         .get_storage_backend(backend_id, &auth.user_id)
         .map_err(internal_err)?
         .ok_or_else(|| (StatusCode::NOT_FOUND, "storage backend not found".to_string()))?;
-    let provider = state.build_storage_provider(&backend).map_err(internal_err)?;
+    let provider = provider_for(&state, &backend).await?;
 
     match provider
         .resolve_download(storage_path)
@@ -1272,6 +1643,15 @@ fn create_share_for_items(
         }
         items.push(item);
     }
+
+    let terms = policy::share_terms(
+        state,
+        user_id,
+        passcode.as_deref(),
+        expires_hours,
+        max_downloads,
+    )?;
+    let (expires_hours, max_downloads) = (terms.expires_hours, terms.max_downloads);
 
     let code = generate_short_code();
     let passcode_hash = passcode
@@ -1466,6 +1846,7 @@ async fn public_share_meta(
         .get_share_link(&code)
         .map_err(internal_err)?
         .ok_or_else(|| (StatusCode::NOT_FOUND, "分享链接不存在或已被撤销".to_string()))?;
+    policy::ensure_share_access(&state, &share.user_id)?;
 
     if let Some(exp) = share.expires_at {
         if exp <= Utc::now() {
@@ -1544,6 +1925,7 @@ async fn public_share_download(
         .get_share_link(&code)
         .map_err(internal_err)?
         .ok_or_else(|| (StatusCode::NOT_FOUND, "分享链接不存在或已被撤销".to_string()))?;
+    policy::ensure_share_access(&state, &share.user_id)?;
 
     validate_share_access(&state, &share, query.passcode.as_deref()).await?;
 
@@ -1592,7 +1974,7 @@ async fn public_share_download(
         .map_err(internal_err)?
         .ok_or_else(|| (StatusCode::NOT_FOUND, "存储策略不存在".to_string()))?;
 
-    let provider = state.build_storage_provider(&backend).map_err(internal_err)?;
+    let provider = provider_for(&state, &backend).await?;
     let incremented = state
         .db
         .increment_share_download(&code)
@@ -1911,6 +2293,8 @@ async fn ws_upgrade(
     let claims = decode_jwt(token, &state.jwt_secret)
         .map_err(|_| (StatusCode::UNAUTHORIZED, "invalid ws token".to_string()))?;
 
+    validate_user_claims(&state, &claims)?;
+
     if state
         .db
         .get_device(&query.device_id, &claims.sub)
@@ -2056,6 +2440,18 @@ fn sanitize_filename(name: &str) -> String {
     } else {
         cleaned
     }
+}
+
+/// Storage provider for a request: endpoints blocked by the admin storage policy are
+/// refused with 403, any other construction failure stays a 500 as before.
+async fn provider_for(
+    state: &AppState,
+    backend: &crate::db::StorageBackendRecord,
+) -> Result<Box<dyn crate::storage::StorageProvider>, (StatusCode, String)> {
+    policy::ensure_endpoints_allowed(&state.runtime_settings(), &backend.config)
+        .await
+        .map_err(|e| (StatusCode::FORBIDDEN, e.to_string()))?;
+    state.build_storage_provider(backend).map_err(internal_err)
 }
 
 fn internal_err<E: std::fmt::Display>(err: E) -> (StatusCode, String) {

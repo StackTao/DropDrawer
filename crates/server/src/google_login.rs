@@ -20,7 +20,7 @@ use tokio::sync::Mutex;
 use url::Url;
 use uuid::Uuid;
 
-use crate::{auth::create_jwt, state::AppState};
+use crate::{auth::issue_user_token, state::AppState};
 
 const CALLBACK_PATH: &str = "/api/auth/google/callback";
 const LIFETIME: Duration = Duration::from_secs(300);
@@ -58,19 +58,31 @@ pub struct GoogleLoginConfig {
 }
 
 impl GoogleLoginConfig {
-    pub fn from_settings(get: impl Fn(&str) -> Option<String>) -> anyhow::Result<Option<Self>> {
-        let read = |key| get(key).unwrap_or_default().trim().to_owned();
-        let client_id = read("DROPDRAWER_GOOGLE_CLIENT_ID");
-        let client_secret = read("DROPDRAWER_GOOGLE_CLIENT_SECRET");
-        let redirect = read("DROPDRAWER_GOOGLE_REDIRECT_URI");
-        if client_id.is_empty() && client_secret.is_empty() && redirect.is_empty() {
-            return Ok(None);
-        }
+    pub fn client_id(&self) -> &str {
+        &self.client_id
+    }
+
+    pub fn client_secret(&self) -> &str {
+        &self.client_secret
+    }
+
+    pub fn redirect_uri(&self) -> &str {
+        self.redirect_uri.as_str()
+    }
+
+    pub fn from_parts(
+        client_id: &str,
+        client_secret: &str,
+        redirect: &str,
+    ) -> anyhow::Result<Self> {
+        let client_id = client_id.trim().to_owned();
+        let client_secret = client_secret.trim().to_owned();
+        let redirect = redirect.trim();
         anyhow::ensure!(
             !client_id.is_empty() && !client_secret.is_empty() && !redirect.is_empty(),
-            "Google sign-in requires DROPDRAWER_GOOGLE_CLIENT_ID, DROPDRAWER_GOOGLE_CLIENT_SECRET and DROPDRAWER_GOOGLE_REDIRECT_URI"
+            "Google sign-in requires client_id, client_secret and redirect_uri"
         );
-        let redirect_uri = Url::parse(&redirect)
+        let redirect_uri = Url::parse(redirect)
             .map_err(|_| anyhow::anyhow!("Invalid Google sign-in redirect URI"))?;
         let loopback = matches!(
             redirect_uri.host_str(),
@@ -86,11 +98,22 @@ impl GoogleLoginConfig {
                 && redirect_uri.fragment().is_none(),
             "Google sign-in redirect URI must be an HTTPS URL ending in {CALLBACK_PATH} (HTTP is allowed for loopback)"
         );
-        Ok(Some(Self {
+        Ok(Self {
             client_id,
             client_secret,
             redirect_uri,
-        }))
+        })
+    }
+
+    pub fn from_settings(get: impl Fn(&str) -> Option<String>) -> anyhow::Result<Option<Self>> {
+        let read = |key| get(key).unwrap_or_default().trim().to_owned();
+        let client_id = read("DROPDRAWER_GOOGLE_CLIENT_ID");
+        let client_secret = read("DROPDRAWER_GOOGLE_CLIENT_SECRET");
+        let redirect = read("DROPDRAWER_GOOGLE_REDIRECT_URI");
+        if client_id.is_empty() && client_secret.is_empty() && redirect.is_empty() {
+            return Ok(None);
+        }
+        Self::from_parts(&client_id, &client_secret, &redirect).map(Some)
     }
 }
 
@@ -146,7 +169,7 @@ pub(crate) async fn privacy_notice() -> &'static str {
 }
 
 pub(crate) async fn start(State(state): State<Arc<AppState>>) -> Result<Response, LoginError> {
-    let google = state.google_login.as_ref().ok_or(UNAVAILABLE)?;
+    let google = state.google_login().ok_or(UNAVAILABLE)?;
     let proof = Proof {
         verifier: random_secret(),
         nonce: random_secret(),
@@ -200,7 +223,7 @@ pub(crate) async fn poll(
     State(state): State<Arc<AppState>>,
     Json(req): Json<PollRequest>,
 ) -> Result<Response, LoginError> {
-    let google = state.google_login.as_ref().ok_or(UNAVAILABLE)?;
+    let google = state.google_login().ok_or(UNAVAILABLE)?;
     let mut attempts = google.attempts.lock().await;
     let attempt = attempts
         .get(&req.state)
@@ -222,7 +245,7 @@ pub(crate) async fn callback(
     State(state): State<Arc<AppState>>,
     Query(query): Query<CallbackQuery>,
 ) -> Response {
-    let Some(google) = state.google_login.as_ref() else {
+    let Some(google) = state.google_login() else {
         return browser_page(Err(UNAVAILABLE));
     };
     let Some(flow_id) = query.state else {
@@ -277,12 +300,24 @@ async fn complete(
     let identity = verify_google_identity(&state.http, config, code, proof)
         .await
         .map_err(|_| FAILED)?;
+    let allow_signup = state.runtime_settings().google_signup_allowed(&identity.email);
     let user = state
         .db
-        .resolve_google_user(&identity.sub, &identity.email, state.registration_open())
+        .resolve_google_user(&identity.sub, &identity.email, allow_signup)
         .map_err(|_| INTERNAL)?
         .ok_or(REGISTRATION_CLOSED)?;
-    let token = create_jwt(&user.id, &user.username, &state.jwt_secret).map_err(|_| INTERNAL)?;
+    if state
+        .db
+        .is_user_disabled_or_missing(&user.id)
+        .unwrap_or(true)
+    {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Your DropDrawer account has been disabled by an administrator",
+        ));
+    }
+    let token = issue_user_token(state, &user.id, &user.username).map_err(|_| INTERNAL)?;
+    let _ = state.db.touch_last_login(&user.id);
     Ok(AuthResponse { token, user })
 }
 
@@ -450,7 +485,7 @@ mod tests {
 
         // Supply a completed authorization without contacting Google's services.
         let flow_id = Uuid::parse_str(start["state"].as_str().unwrap()).unwrap();
-        let google = state.google_login.as_ref().unwrap();
+        let google = state.google_login().unwrap();
         let mut attempts = google.attempts.lock().await;
         let attempt = attempts.get_mut(&flow_id).unwrap();
         let proof = attempt.proof.take().unwrap();
@@ -464,7 +499,7 @@ mod tests {
             .resolve_google_user("test-subject", "google@example.com", true)
             .unwrap()
             .unwrap();
-        let token = create_jwt(&user.id, &user.username, &state.jwt_secret).unwrap();
+        let token = crate::auth::create_jwt(&user.id, &user.username, &state.jwt_secret).unwrap();
         attempt.result = Some(Ok(AuthResponse { token, user }));
         drop(attempts);
 

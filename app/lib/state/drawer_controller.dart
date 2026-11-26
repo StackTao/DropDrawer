@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:mime/mime.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -114,6 +115,7 @@ class DropDrawerController extends ChangeNotifier {
   }
 
   void _restorePrefsSync(SharedPreferences prefs) {
+    _dismissedAnnouncementId = prefs.getString('dismissed_announcement');
     serverUrl = prefs.getString('server_url') ?? serverUrl;
     token = prefs.getString('auth_token');
     defaultDropPolicy = prefs.getString('drop_policy') ?? 'smart';
@@ -171,6 +173,72 @@ class DropDrawerController extends ChangeNotifier {
   }
 
   bool get isLoggedIn => token != null && user != null;
+
+  // ---- Server policy (admin console switches & announcement) ----
+
+  /// Effective switches for this account; `null` until loaded or on old servers.
+  ClientConfig? clientConfig;
+  String? _dismissedAnnouncementId;
+
+  bool get canCreateShares => clientConfig?.features.shareCreateEnabled ?? true;
+  bool get canUploadToCloud => clientConfig?.features.cloudUploadEnabled ?? true;
+  bool get shareRequiresPasscode => clientConfig?.features.shareRequiresPasscode ?? false;
+  int? get maxShareExpiresHours => clientConfig?.features.maxShareExpiresHours;
+  int? get maxShareDownloads => clientConfig?.features.maxShareDownloads;
+
+  /// Whether a storage backend kind may be added (admin console storage policy).
+  bool isStorageKindAllowed(String kind) =>
+      !(clientConfig?.features.disabledStorageKinds.contains(kind) ?? false);
+
+  /// The announcement to show, unless the user already closed this revision.
+  ClientAnnouncement? get activeAnnouncement {
+    final a = clientConfig?.announcement;
+    if (a == null || a.id == _dismissedAnnouncementId) return null;
+    return a;
+  }
+
+  Future<void> dismissAnnouncement() async {
+    final a = clientConfig?.announcement;
+    if (a == null) return;
+    _dismissedAnnouncementId = a.id;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('dismissed_announcement', a.id);
+  }
+
+  Future<void> refreshClientConfig() async {
+    final api = _api;
+    if (api == null) return;
+    try {
+      final cfg = await api.fetchClientConfig(deviceId: deviceId);
+      if (identical(_api, api)) {
+        clientConfig = cfg;
+        notifyListeners();
+      }
+    } catch (e) {
+      if (identical(_api, api)) await _handleAuthFailure(e);
+    }
+  }
+
+  /// Retention choices for new items, capped by the administrator's maximum.
+  int? get maxItemTtlHours => clientConfig?.features.maxItemTtlHours;
+
+  /// Returns to the login screen when the server rejects this session (forced
+  /// sign-out, password reset, disabled account). Returns `true` if it did.
+  Future<bool> _handleAuthFailure(Object error) async {
+    if (!isLoggedIn || !error.toString().contains('HTTP 401')) return false;
+    await logout();
+    statusBanner = '登录状态已失效（可能被管理员强制下线或账号已停用），请重新登录';
+    return true;
+  }
+
+  Future<String?> _appVersion() async {
+    try {
+      return (await PackageInfo.fromPlatform()).version;
+    } catch (_) {
+      return null;
+    }
+  }
   int get activeTransferCount =>
       activeTransfers.values.where((t) => !t.finished).length +
       outgoingTransfers.values.where((t) => !t.finished).length;
@@ -231,7 +299,12 @@ class DropDrawerController extends ChangeNotifier {
         await _postLoginInit();
       } catch (e) {
         final isUnauthorized = e.toString().contains('HTTP 401');
-        if (isUnauthorized) {
+        final upgradeRequired = e.toString().contains('HTTP 426');
+        if (upgradeRequired) {
+          // The administrator requires a newer app; keep the session and point to the updater.
+          statusBanner = _serverMessage(e) ?? '当前版本过低，请更新 DropDrawer 后再使用';
+          unawaited(updates.check());
+        } else if (isUnauthorized) {
           statusBanner = '登录状态已失效，请重新登录';
           token = null;
           user = null;
@@ -256,15 +329,54 @@ class DropDrawerController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<AuthPublicConfig?> fetchServerAuthConfig(String url) async {
+    final clean = url.trim().replaceAll(RegExp(r'/+$'), '');
+    final uri = Uri.tryParse(clean);
+    if (uri == null ||
+        (uri.scheme != 'http' && uri.scheme != 'https') ||
+        uri.host.isEmpty) {
+      return null;
+    }
+    return ApiClient(baseUrl: clean).fetchAuthConfig();
+  }
+
+  Future<void> sendEmailVerificationCode({
+    required String url,
+    required String email,
+    required String purpose,
+  }) async {
+    final api = ApiClient(baseUrl: url.trim().replaceAll(RegExp(r'/+$'), ''));
+    await api.sendEmailCode(email: email, purpose: purpose);
+  }
+
+  Future<void> resetPasswordWithEmail({
+    required String url,
+    required String email,
+    required String code,
+    required String newPassword,
+  }) async {
+    final api = ApiClient(baseUrl: url.trim().replaceAll(RegExp(r'/+$'), ''));
+    await api.resetPassword(email: email, code: code, newPassword: newPassword);
+  }
+
   Future<void> authenticate({
     required String url,
     required String username,
     required String password,
     required bool isRegister,
+    String? email,
+    String? emailCode,
+    String? inviteCode,
   }) async {
     final api = ApiClient(baseUrl: url.trim().replaceAll(RegExp(r'/+$'), ''));
     final (tok, profile) = isRegister
-        ? await api.register(username, password)
+        ? await api.register(
+            username,
+            password,
+            email: email,
+            emailCode: emailCode,
+            inviteCode: inviteCode,
+          )
         : await api.login(username, password);
     await _finishAuthentication(api, tok, profile);
   }
@@ -353,6 +465,7 @@ class DropDrawerController extends ChangeNotifier {
     items = [];
     storageBackends = [];
     shareLinks = [];
+    clientConfig = null;
     p2pReady = false;
     localNodeInfo = null;
 
@@ -375,8 +488,10 @@ class DropDrawerController extends ChangeNotifier {
       irohNodeId: localNodeInfo?.nodeId,
       irohRelayUrl: localNodeInfo?.relayUrl,
       directAddrs: localNodeInfo?.directAddrs ?? const [],
+      appVersion: await _appVersion(),
     );
     deviceId = dev.id;
+    unawaited(refreshClientConfig());
     await prefs.setString('device_id.${user!.id}', dev.id);
     await prefs.setString('device_id', dev.id);
 
@@ -453,6 +568,7 @@ class DropDrawerController extends ChangeNotifier {
     final api = _api;
     if (api == null || !isLoggedIn) return;
     unawaited(_connectWs());
+    unawaited(refreshClientConfig());
     final revision = _deviceRevision;
     final deviceRefresh = api.listDevices().then<void>((fetched) {
       if (identical(_api, api) && revision == _deviceRevision) {
@@ -469,7 +585,9 @@ class DropDrawerController extends ChangeNotifier {
         await refreshStorageBackends();
         if (identical(_api, api)) notifyListeners();
       }
-    } catch (_) {}
+    } catch (e) {
+      if (identical(_api, api) && await _handleAuthFailure(e)) return;
+    }
     await deviceRefresh;
   }
 
@@ -700,6 +818,9 @@ class DropDrawerController extends ChangeNotifier {
     if (!identical(_ws, channel)) return;
     _closeWs();
     if (isLoggedIn) {
+      // The server also drops the socket when it revokes this session; a cheap
+      // authenticated call tells the two cases apart.
+      unawaited(refreshClientConfig());
       _wsReconnectTimer = Timer(const Duration(seconds: 3), _connectWs);
     }
     notifyListeners();
@@ -724,6 +845,9 @@ class DropDrawerController extends ChangeNotifier {
     final payload = map['payload'];
 
     switch (type) {
+      case 'config_changed':
+        unawaited(refreshClientConfig());
+        break;
       case 'snapshot':
         _deviceRevision++;
         final pMap = payload as Map<String, dynamic>;
@@ -879,9 +1003,9 @@ class DropDrawerController extends ChangeNotifier {
       thumbBase64 = await windowService.generateThumbnailBase64(filePath);
     }
 
-    final bool shouldRegisterP2p;
-    final bool shouldAutoCloud;
-    final String mode;
+    bool shouldRegisterP2p;
+    bool shouldAutoCloud;
+    String mode;
 
     if (defaultDropPolicy == 'cloud_cached') {
       shouldRegisterP2p = false;
@@ -898,6 +1022,13 @@ class DropDrawerController extends ChangeNotifier {
       mode = shouldAutoCloud
           ? (p2pReady ? 'hybrid' : 'cloud_cached')
           : 'p2p_only';
+    }
+    if (shouldAutoCloud && !canUploadToCloud) {
+      // The administrator turned cloud uploads off: fall back to P2P only.
+      shouldAutoCloud = false;
+      shouldRegisterP2p = p2pReady;
+      mode = 'p2p_only';
+      statusBanner = '服务器已关闭云端上传，文件将只通过设备间 P2P 传输';
     }
 
     try {
@@ -1084,6 +1215,11 @@ class DropDrawerController extends ChangeNotifier {
     String? storageBackendId,
   }) async {
     if (_api == null) return;
+    if (!canUploadToCloud) {
+      statusBanner = '服务器已关闭云端上传，请使用设备间 P2P 传输';
+      notifyListeners();
+      return;
+    }
     final file = File(filePath);
     if (!await file.exists()) {
       if (_pendingCloudUploads.remove(itemId) != null) {
@@ -1558,6 +1694,9 @@ class DropDrawerController extends ChangeNotifier {
     if (_api == null) {
       throw StateError('未连接到服务器');
     }
+    if (!canCreateShares) {
+      throw StateError('服务器已关闭外链分享');
+    }
     if (targets.isEmpty) {
       throw StateError('请至少选择一个条目');
     }
@@ -1895,4 +2034,24 @@ class PendingDrop {
   final String name;
 
   PendingDrop({required this.id, required this.name});
+}
+
+/// User-facing text for an error from [ApiClient] or the controller: drops the
+/// `HttpException:` / `HTTP 4xx:` / `Bad state:` prefixes and keeps the server's message.
+String describeError(Object error) {
+  final message = _serverMessage(error);
+  if (message != null) return message;
+  return error
+      .toString()
+      .replaceFirst('HttpException: ', '')
+      .replaceFirst('Bad state: ', '');
+}
+
+/// Body of an `HttpException('HTTP <code>: <body>')` from [ApiClient], if any.
+String? _serverMessage(Object error) {
+  final text = error.toString();
+  final idx = text.indexOf(RegExp(r'HTTP \d{3}: '));
+  if (idx < 0) return null;
+  final body = text.substring(idx).replaceFirst(RegExp(r'HTTP \d{3}: '), '').trim();
+  return body.isEmpty ? null : body;
 }

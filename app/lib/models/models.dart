@@ -1,12 +1,158 @@
 class UserProfile {
   final String id;
   final String username;
+  final String? email;
 
-  UserProfile({required this.id, required this.username});
+  UserProfile({required this.id, required this.username, this.email});
 
   factory UserProfile.fromJson(Map<String, dynamic> json) => UserProfile(
         id: json['id'] as String,
         username: json['username'] as String,
+        email: json['email'] as String?,
+      );
+}
+
+class AuthProviderInfo {
+  final String id;
+  final String name;
+  final String kind;
+  final bool enabled;
+
+  const AuthProviderInfo({
+    required this.id,
+    required this.name,
+    required this.kind,
+    required this.enabled,
+  });
+
+  factory AuthProviderInfo.fromJson(Map<String, dynamic> json) =>
+      AuthProviderInfo(
+        id: json['id'] as String? ?? '',
+        name: json['name'] as String? ?? '',
+        kind: json['kind'] as String? ?? '',
+        enabled: json['enabled'] as bool? ?? false,
+      );
+}
+
+class AuthPublicConfig {
+  /// `'open'` | `'invite_only'` | `'closed'`
+  final String registrationMode;
+  final bool passwordLoginEnabled;
+  final bool emailVerificationRequired;
+  final bool emailPasswordResetEnabled;
+  final List<AuthProviderInfo> providers;
+
+  const AuthPublicConfig({
+    this.registrationMode = 'open',
+    this.passwordLoginEnabled = true,
+    this.emailVerificationRequired = false,
+    this.emailPasswordResetEnabled = false,
+    this.providers = const [],
+  });
+
+  bool get registrationAllowed => registrationMode != 'closed';
+  bool get inviteCodeRequired => registrationMode == 'invite_only';
+  bool get googleEnabled =>
+      providers.any((p) => p.id == 'google' && p.enabled);
+
+  factory AuthPublicConfig.fromJson(Map<String, dynamic> json) =>
+      AuthPublicConfig(
+        registrationMode: json['registration_mode'] as String? ?? 'open',
+        passwordLoginEnabled: json['password_login_enabled'] as bool? ?? true,
+        emailVerificationRequired:
+            json['email_verification_required'] as bool? ?? false,
+        emailPasswordResetEnabled:
+            json['email_password_reset_enabled'] as bool? ?? false,
+        providers: (json['providers'] as List<dynamic>? ?? const [])
+            .map((e) => AuthProviderInfo.fromJson(e as Map<String, dynamic>))
+            .toList(),
+      );
+}
+
+/// Effective server switches for the signed-in user (`GET /api/client/config`).
+/// Defaults are permissive so older servers without the endpoint keep working.
+class ClientFeatures {
+  final bool shareCreateEnabled;
+  final bool cloudUploadEnabled;
+  final bool shareRequiresPasscode;
+  final int? maxShareExpiresHours;
+  final int? maxShareDownloads;
+  final int? maxItemTtlHours;
+
+  /// Storage kinds (`'web_dav'`, `'s3'`, ...) the administrator disabled.
+  final List<String> disabledStorageKinds;
+
+  const ClientFeatures({
+    this.shareCreateEnabled = true,
+    this.cloudUploadEnabled = true,
+    this.shareRequiresPasscode = false,
+    this.maxShareExpiresHours,
+    this.maxShareDownloads,
+    this.maxItemTtlHours,
+    this.disabledStorageKinds = const [],
+  });
+
+  factory ClientFeatures.fromJson(Map<String, dynamic> json) => ClientFeatures(
+        shareCreateEnabled: json['share_create_enabled'] as bool? ?? true,
+        cloudUploadEnabled: json['cloud_upload_enabled'] as bool? ?? true,
+        shareRequiresPasscode: json['share_requires_passcode'] as bool? ?? false,
+        maxShareExpiresHours: (json['max_share_expires_hours'] as num?)?.toInt(),
+        maxShareDownloads: (json['max_share_downloads'] as num?)?.toInt(),
+        maxItemTtlHours: (json['max_item_ttl_hours'] as num?)?.toInt(),
+        disabledStorageKinds: (json['disabled_storage_kinds'] as List<dynamic>? ?? const [])
+            .whereType<String>()
+            .toList(),
+      );
+}
+
+/// Server-wide announcement banner.
+class ClientAnnouncement {
+  final String id;
+
+  /// `'info'` | `'warning'` | `'critical'`
+  final String level;
+  final String title;
+  final String message;
+
+  const ClientAnnouncement({
+    required this.id,
+    this.level = 'info',
+    this.title = '',
+    this.message = '',
+  });
+
+  factory ClientAnnouncement.fromJson(Map<String, dynamic> json) =>
+      ClientAnnouncement(
+        id: json['id'] as String? ?? '',
+        level: json['level'] as String? ?? 'info',
+        title: json['title'] as String? ?? '',
+        message: json['message'] as String? ?? '',
+      );
+}
+
+class ClientConfig {
+  final String serverVersion;
+  final ClientFeatures features;
+  final ClientAnnouncement? announcement;
+  final String? minClientVersion;
+
+  const ClientConfig({
+    this.serverVersion = '',
+    this.features = const ClientFeatures(),
+    this.announcement,
+    this.minClientVersion,
+  });
+
+  factory ClientConfig.fromJson(Map<String, dynamic> json) => ClientConfig(
+        serverVersion: json['server_version'] as String? ?? '',
+        features: json['features'] is Map<String, dynamic>
+            ? ClientFeatures.fromJson(json['features'] as Map<String, dynamic>)
+            : const ClientFeatures(),
+        announcement: json['announcement'] is Map<String, dynamic>
+            ? ClientAnnouncement.fromJson(
+                json['announcement'] as Map<String, dynamic>)
+            : null,
+        minClientVersion: json['min_client_version'] as String?,
       );
 }
 

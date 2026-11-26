@@ -180,16 +180,39 @@ struct StorageSettingsView: View {
         }
     }
 
+    /// Kinds the server still allows adding (admin console storage policy).
+    private var allowedKinds: [StorageKindOption] {
+        StorageKindOption.allCases.filter { store.isStorageKindAllowed($0.rawValue) }
+    }
+
     @ViewBuilder
     private var addFormSections: some View {
+        if allowedKinds.isEmpty {
+            Section {
+                Text("服务器管理员已停用所有可添加的存储类型，暂时无法添加新的云盘。")
+                    .foregroundStyle(.secondary)
+            }
+        } else {
+            kindAndFieldSections
+        }
+    }
+
+    @ViewBuilder
+    private var kindAndFieldSections: some View {
         Section {
             Picker("类型", selection: $kind) {
-                ForEach(StorageKindOption.allCases) { option in
+                ForEach(allowedKinds) { option in
                     Text(option.label).tag(option)
                 }
             }
             .onChange(of: kind) { _, newKind in
                 applyDefaults(for: newKind)
+            }
+            .task(id: allowedKinds.map(\.rawValue)) {
+                // Move off a kind the administrator has just disabled.
+                if !allowedKinds.contains(kind), let first = allowedKinds.first {
+                    kind = first
+                }
             }
         }
 

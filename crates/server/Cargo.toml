@@ -42,6 +42,8 @@ jsonwebtoken = "9"
 async-trait = "0.1"
 dashmap = "6"
 dotenvy = "0.15.7"
+lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "builder", "hostname"] }
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 
 [dev-dependencies]
 tempfile = "3"

@@ -89,6 +89,10 @@ class _ShareViewState extends State<ShareView> {
     try {
       final pass = _passcodeCtrl.text.trim();
       final customTitle = _titleCtrl.text.trim();
+      if (pass.isEmpty &&
+          (widget.controller.clientConfig?.features.shareRequiresPasscode ?? false)) {
+        throw StateError('服务器要求外链必须设置提取码');
+      }
       final created = await widget.controller.createShareLinkForItems(
         widget.targetItems,
         title: customTitle.isEmpty ? null : customTitle,
@@ -117,6 +121,7 @@ class _ShareViewState extends State<ShareView> {
   @override
   Widget build(BuildContext context) {
     final c = widget.controller;
+    _clampChoices();
     final hasTargets = widget.targetItems.isNotEmpty;
     final isBundle = widget.targetItems.length > 1;
 
@@ -180,8 +185,14 @@ class _ShareViewState extends State<ShareView> {
       body: ListView(
             padding: const EdgeInsets.all(14),
             children: [
-              if (hasTargets) ...[
+              if (hasTargets && c.canCreateShares) ...[
                 _buildCreateSection(c, widget.targetItems),
+                const SizedBox(height: 16),
+              ] else if (hasTargets) ...[
+                Text(
+                  '服务器已关闭外链分享，暂时无法创建新的外链。',
+                  style: TextStyle(fontSize: 12.5, color: MacPalette.amber),
+                ),
                 const SizedBox(height: 16),
               ],
               Row(
@@ -238,18 +249,55 @@ class _ShareViewState extends State<ShareView> {
     );
   }
 
-  static const _expiryOptions = [
+  static const _baseExpiryOptions = [
     (1, '1 小时'),
     (24, '24 小时'),
     (168, '7 天'),
     (0, '永久'),
   ];
-  static const _downloadOptions = [
+  static const _baseDownloadOptions = [
     (0, '不限'),
     (1, '1 次（阅后即焚）'),
     (5, '5 次'),
     (20, '20 次'),
   ];
+
+  static String _hoursLabel(int h) => h % 24 == 0 ? '${h ~/ 24} 天' : '$h 小时';
+
+  /// Applies an administrator cap: drops "unlimited" (0) and larger choices,
+  /// and offers the cap itself when it is not one of the presets.
+  static List<(int, String)> _capped(
+    List<(int, String)> base,
+    int? cap,
+    String Function(int) label,
+  ) {
+    if (cap == null || cap <= 0) return base;
+    final options = base.where((o) => o.$1 > 0 && o.$1 <= cap).toList();
+    if (!options.any((o) => o.$1 == cap)) options.add((cap, label(cap)));
+    return options;
+  }
+
+  List<(int, String)> get _expiryOptions => _capped(
+        _baseExpiryOptions,
+        widget.controller.maxShareExpiresHours,
+        (h) => '${_hoursLabel(h)}（上限）',
+      );
+  List<(int, String)> get _downloadOptions => _capped(
+        _baseDownloadOptions,
+        widget.controller.maxShareDownloads,
+        (n) => '$n 次（上限）',
+      );
+
+  /// Keeps the selected values inside the administrator's caps.
+  void _clampChoices() {
+    final expiry = _expiryOptions;
+    if (!expiry.any((o) => o.$1 == _expiresHours)) {
+      final fallback = expiry.where((o) => o.$1 <= 24 && o.$1 > 0).lastOrNull ?? expiry.first;
+      _expiresHours = fallback.$1;
+    }
+    final downloads = _downloadOptions;
+    if (!downloads.any((o) => o.$1 == _maxDownloads)) _maxDownloads = downloads.last.$1;
+  }
 
   static String _optionLabel(List<(int, String)> options, int value) =>
       options.where((o) => o.$1 == value).firstOrNull?.$2 ?? '$value';
@@ -317,7 +365,9 @@ class _ShareViewState extends State<ShareView> {
             ),
           PhoneSection(
             header: '访问设置',
-            footer: '提取码留空时，任何拿到链接的人都能下载。',
+            footer: widget.controller.shareRequiresPasscode
+                ? '服务器要求外链必须设置提取码。'
+                : '提取码留空时，任何拿到链接的人都能下载。',
             children: [
               PhoneRow(
                 title: '有效期',
@@ -333,7 +383,7 @@ class _ShareViewState extends State<ShareView> {
               ),
               PhoneFieldRow(
                 controller: _passcodeCtrl,
-                label: '提取码',
+                label: widget.controller.shareRequiresPasscode ? '提取码（必填）' : '提取码',
                 placeholder: '留空为公开',
                 trailing: PhoneBarButton(
                   glass: false,
@@ -624,12 +674,7 @@ class _ShareViewState extends State<ShareView> {
           const SizedBox(height: 5),
           MacSegmentedControl<int>(
             selected: _expiresHours,
-            items: const [
-              (1, '1 小时'),
-              (24, '24 小时'),
-              (168, '7 天'),
-              (0, '永久'),
-            ],
+            items: _expiryOptions,
             onChanged: (v) => setState(() => _expiresHours = v),
           ),
           const SizedBox(height: 10),
@@ -640,12 +685,9 @@ class _ShareViewState extends State<ShareView> {
           const SizedBox(height: 5),
           MacSegmentedControl<int>(
             selected: _maxDownloads,
-            items: const [
-              (0, '不限'),
-              (1, '1次(阅后即焚)'),
-              (5, '5 次'),
-              (20, '20 次'),
-            ],
+            items: _downloadOptions
+                .map((o) => o.$1 == 1 ? (1, '1次(阅后即焚)') : o)
+                .toList(),
             onChanged: (v) => setState(() => _maxDownloads = v),
           ),
           const SizedBox(height: 10),
@@ -660,7 +702,7 @@ class _ShareViewState extends State<ShareView> {
                 Expanded(
                   child: MacFormField(
                     controller: _passcodeCtrl,
-                    label: '提取码',
+                    label: widget.controller.shareRequiresPasscode ? '提取码（必填）' : '提取码',
                     placeholder: '留空为公开免密',
                   ),
                 ),

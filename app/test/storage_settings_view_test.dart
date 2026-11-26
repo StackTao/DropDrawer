@@ -133,4 +133,70 @@ void main() {
       },
     );
   }
+
+  for (final phone in [false, true]) {
+    testWidgets('hides storage kinds the administrator disabled (phone=$phone)', (tester) async {
+      tester.view.physicalSize = Size(phone ? 390 : 340, 760);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final controller = _StorageController();
+      addTearDown(controller.dispose);
+      controller.clientConfig = const ClientConfig(
+        features: ClientFeatures(disabledStorageKinds: ['google_drive', 'web_dav', 's3']),
+      );
+      final platform = phone ? TargetPlatform.iOS : TargetPlatform.macOS;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildAppTheme(mobile: phone, android: false).copyWith(platform: platform),
+          home: UiDensity(
+            touch: phone,
+            child: Scaffold(
+              body: ListenableBuilder(
+                listenable: controller,
+                builder: (_, _) => StorageSettingsView(controller: controller, onBack: () {}),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text(phone ? '添加云盘' : '添加原生云盘'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      // The default selection (Google Drive) moves to the first allowed kind.
+      expect(find.text('夸克网盘'), findsWidgets);
+      if (phone) {
+        await tester.tap(find.text('类型'));
+        await tester.pumpAndSettle();
+      }
+      expect(find.text('WebDAV'), findsNothing);
+      expect(find.text('S3 / R2'), findsNothing);
+      expect(find.text('百度网盘'), findsWidgets);
+    });
+  }
+
+  testWidgets('explains when every storage kind is disabled', (tester) async {
+    tester.view.physicalSize = const Size(340, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final controller = _StorageController();
+    addTearDown(controller.dispose);
+    controller.clientConfig = const ClientConfig(
+      features: ClientFeatures(
+        disabledStorageKinds: ['google_drive', 'quark', 'baidu_netdisk', 'web_dav', 's3', 'local'],
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ListenableBuilder(
+            listenable: controller,
+            builder: (_, _) => StorageSettingsView(controller: controller, onBack: () {}),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('添加原生云盘'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('已停用所有可添加的存储类型'), findsOneWidget);
+  });
 }

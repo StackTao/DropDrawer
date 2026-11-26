@@ -302,6 +302,42 @@ void main() {
       expect(ctrl.defaultDropPolicy, 'p2p_only');
       expect(find.text('纯 P2P'), findsOneWidget); // the row's value
     });
+
+    testWidgets('retention choices respect the administrator maximum', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      tester.view.physicalSize = const Size(390 * 3, 844 * 3);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      final ctrl = _TestController(_FakeWindowService(mobile: true));
+      addTearDown(ctrl.dispose);
+      ctrl.clientConfig = const ClientConfig(features: ClientFeatures(maxItemTtlHours: 72));
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: Scaffold(
+            body: UiDensity(
+              touch: true,
+              child: MediaQuery(
+                data: const MediaQueryData(size: Size(390, 844)),
+                child: ListenableBuilder(
+                  listenable: ctrl,
+                  builder: (_, _) => PreferencesView(controller: ctrl, onBack: () {}),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      // "Never" (the stored default) exceeds the cap, so the cap is shown.
+      await tester.scrollUntilVisible(find.text('默认过期时间'), 200);
+      expect(find.text('3 天（上限）'), findsOneWidget);
+      await tester.tap(find.text('默认过期时间'));
+      await tester.pumpAndSettle();
+      expect(find.text('永不过期'), findsNothing);
+      expect(find.text('30 天'), findsNothing);
+      expect(find.text('24 小时'), findsOneWidget);
+    });
   });
 
   testWidgets('transfer progress updates without rebuilding the drawer', (tester) async {
@@ -992,5 +1028,32 @@ void main() {
     expect(relativeTimeLabel(DateTime(2026, 11, 24, 23, 0), now: now), '昨天');
     expect(relativeTimeLabel(DateTime(2026, 3, 2, 9, 0), now: now), '3月2日');
     expect(relativeTimeLabel(DateTime(2025, 3, 2, 9, 0), now: now), '2025年3月2日');
+  });
+
+  test('AuthPublicConfig parses registration mode, email rules and providers', () {
+    final cfg = AuthPublicConfig.fromJson({
+      'registration_mode': 'invite_only',
+      'password_login_enabled': true,
+      'email_verification_required': true,
+      'email_password_reset_enabled': true,
+      'providers': [
+        {'id': 'google', 'name': 'Google', 'kind': 'oauth2_oidc', 'enabled': true},
+      ],
+    });
+    expect(cfg.registrationAllowed, isTrue);
+    expect(cfg.inviteCodeRequired, isTrue);
+    expect(cfg.emailVerificationRequired, isTrue);
+    expect(cfg.emailPasswordResetEnabled, isTrue);
+    expect(cfg.googleEnabled, isTrue);
+
+    final closed = AuthPublicConfig.fromJson({
+      'registration_mode': 'closed',
+      'password_login_enabled': false,
+      'email_verification_required': false,
+      'email_password_reset_enabled': false,
+      'providers': const [],
+    });
+    expect(closed.registrationAllowed, isFalse);
+    expect(closed.googleEnabled, isFalse);
   });
 }

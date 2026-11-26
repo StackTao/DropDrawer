@@ -16,6 +16,25 @@ struct PreferencesView: View {
         URL(string: store.serverUrl)?.host ?? store.serverUrl
     }
 
+    /// Retention choices under the administrator's maximum: "never" and longer
+    /// presets are dropped and the cap itself is offered.
+    private var ttlOptions: [(Int, String)] {
+        let base: [(Int, String)] = [(0, "永不过期"), (24, "24 小时"), (168, "7 天"), (720, "30 天")]
+        guard let cap = store.maxItemTtlHours, cap > 0 else { return base }
+        var options = base.filter { $0.0 > 0 && $0.0 <= cap }
+        if !options.contains(where: { $0.0 == cap }) {
+            options.append((cap, (cap % 24 == 0 ? "\(cap / 24) 天" : "\(cap) 小时") + "（上限）"))
+        }
+        return options
+    }
+
+    /// The stored preference, shown as the cap when it exceeds it.
+    private var ttlSelection: Int {
+        let value = store.defaultTtlHours
+        if ttlOptions.contains(where: { $0.0 == value }) { return value }
+        return store.maxItemTtlHours ?? value
+    }
+
     var body: some View {
         Form {
             Section {
@@ -115,13 +134,12 @@ struct PreferencesView: View {
                 }
 
                 Picker(selection: Binding(
-                    get: { store.defaultTtlHours },
+                    get: { ttlSelection },
                     set: { store.setDefaultTtlHours($0) }
                 )) {
-                    Text("永不过期").tag(0)
-                    Text("24 小时").tag(24)
-                    Text("7 天").tag(168)
-                    Text("30 天").tag(720)
+                    ForEach(ttlOptions, id: \.0) { option in
+                        Text(option.1).tag(option.0)
+                    }
                 } label: {
                     Label {
                         Text("自动清理")

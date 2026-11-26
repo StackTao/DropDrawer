@@ -39,6 +39,60 @@ public final class DropDrawerStore {
 
     public var isLoggedIn: Bool { user != nil && api?.token != nil }
 
+    // MARK: - Server policy (admin console switches & announcement)
+
+    /// Effective switches for this account; `nil` until loaded or on older servers.
+    public var clientConfig: ClientConfig?
+    public var dismissedAnnouncementId: String?
+
+    public var canCreateShares: Bool { clientConfig?.features.shareCreateEnabled ?? true }
+    public var canUploadToCloud: Bool { clientConfig?.features.cloudUploadEnabled ?? true }
+    public var shareRequiresPasscode: Bool { clientConfig?.features.shareRequiresPasscode ?? false }
+    public var maxShareExpiresHours: Int? { clientConfig?.features.maxShareExpiresHours }
+    public var maxShareDownloads: Int? { clientConfig?.features.maxShareDownloads }
+
+    /// Whether a storage backend kind may be added (admin console storage policy).
+    public func isStorageKindAllowed(_ kind: String) -> Bool {
+        !(clientConfig?.features.disabledStorageKinds.contains(kind) ?? false)
+    }
+
+    /// Announcement to show, unless the user already closed this revision.
+    public var activeAnnouncement: ClientAnnouncement? {
+        guard let a = clientConfig?.announcement, a.id != dismissedAnnouncementId else { return nil }
+        return a
+    }
+
+    public func dismissAnnouncement() {
+        guard let a = clientConfig?.announcement else { return }
+        dismissedAnnouncementId = a.id
+        storage.dismissedAnnouncementId = a.id
+    }
+
+    public func refreshClientConfig() async {
+        guard let api else { return }
+        do {
+            clientConfig = try await api.fetchClientConfig(deviceId: deviceId)
+        } catch APIError.httpStatus(401, _) {
+            handleSessionRevoked(by: api)
+        } catch {
+            // Offline or transient: keep the last known switches.
+        }
+    }
+
+    /// The server rejected this session (forced sign-out, password reset or a
+    /// disabled account): return to the login screen with an explanation.
+    private func handleSessionRevoked(by client: APIClient) {
+        guard api === client, isLoggedIn else { return }
+        logout()
+        authError = "登录状态已失效（可能被管理员强制下线或账号已停用），请重新登录"
+    }
+
+    public var maxItemTtlHours: Int? { clientConfig?.features.maxItemTtlHours }
+
+    private var appVersion: String? {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+    }
+
     // MARK: - Internal state
 
     private let storage: SessionStorage
@@ -77,6 +131,7 @@ public final class DropDrawerStore {
         self.dropPolicy = storage.dropPolicy
         self.autoCloudThresholdMb = storage.autoCloudThresholdMb
         self.defaultTtlHours = storage.defaultTtlHours
+        self.dismissedAnnouncementId = storage.dismissedAnnouncementId
         self.localFilePaths = storage.localFilePaths
         self.pendingCloudUploads = storage.pendingCloudUploads.filter {
             FileManager.default.fileExists(atPath: $0.value)
@@ -159,7 +214,39 @@ public final class DropDrawerStore {
         await finishSignInSetup()
     }
 
-    public func login(server: String, username: String, password: String, register: Bool) async {
+    public func fetchAuthConfig(server: String) async -> AuthPublicConfig? {
+        let cleaned = server.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: cleaned),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              url.host != nil
+        else { return nil }
+        return await APIClient(baseUrl: cleaned).fetchAuthConfig()
+    }
+
+    public func sendEmailCode(server: String, email: String, purpose: String) async throws {
+        let cleaned = server.trimmingCharacters(in: .whitespacesAndNewlines)
+        try await APIClient(baseUrl: cleaned).sendEmailCode(email: email, purpose: purpose)
+    }
+
+    public func resetPassword(server: String, email: String, code: String, newPassword: String) async throws {
+        let cleaned = server.trimmingCharacters(in: .whitespacesAndNewlines)
+        try await APIClient(baseUrl: cleaned).resetPassword(
+            email: email,
+            code: code,
+            newPassword: newPassword
+        )
+    }
+
+    public func login(
+        server: String,
+        username: String,
+        password: String,
+        register: Bool,
+        email: String? = nil,
+        emailCode: String? = nil,
+        inviteCode: String? = nil
+    ) async {
         authLoading = true
         authError = nil
         defer { authLoading = false }
@@ -169,7 +256,13 @@ public final class DropDrawerStore {
         let client = APIClient(baseUrl: cleaned)
         do {
             let auth = register
-                ? try await client.register(username: username.trimmingCharacters(in: .whitespacesAndNewlines), password: password)
+                ? try await client.register(
+                    username: username.trimmingCharacters(in: .whitespacesAndNewlines),
+                    password: password,
+                    email: email,
+                    emailCode: emailCode,
+                    inviteCode: inviteCode
+                )
                 : try await client.login(username: username.trimmingCharacters(in: .whitespacesAndNewlines), password: password)
             applyAuth(client: client, auth: auth)
             await finishSignInSetup()
@@ -237,6 +330,7 @@ public final class DropDrawerStore {
         items = []
         shareLinks = []
         storageBackends = []
+        clientConfig = nil
         activeTransfers = [:]
         outgoingTransfers = [:]
         p2pDownloadIds = [:]
@@ -312,10 +406,18 @@ public final class DropDrawerStore {
                 platform: platform,
                 irohNodeId: localNodeInfo?.nodeId,
                 irohRelayUrl: localNodeInfo?.relayUrl,
-                directAddrs: localNodeInfo?.directAddrs ?? []
+                directAddrs: localNodeInfo?.directAddrs ?? [],
+                appVersion: appVersion
             )
             deviceId = info.id
             storage.deviceId = info.id
+        } catch APIError.httpStatus(426, let body) {
+            // The administrator requires a newer app version.
+            showToast(body.isEmpty ? "当前版本过低，请更新 DropDrawer" : body)
+        } catch APIError.httpStatus(401, let body) {
+            // Session revoked or this device was removed by an administrator.
+            logout()
+            authError = body.isEmpty ? "登录状态已失效，请重新登录" : body
         } catch {
             showToast("设备注册失败：\(error.localizedDescription)")
         }
@@ -327,11 +429,13 @@ public final class DropDrawerStore {
         async let fetchedDevices = api.listDevices()
         async let refreshedBackends: Void = refreshStorageBackends()
         async let fetchedShares = api.listShareLinks()
+        async let refreshedConfig: Void = refreshClientConfig()
 
         if let list = try? await fetchedItems { items = list }
         if let devs = try? await fetchedDevices { devices = devs }
         await refreshedBackends
         if let links = try? await fetchedShares { shareLinks = links }
+        await refreshedConfig
         reRegisterLocalFilesForP2P()
         resumePendingCloudUploads()
     }
@@ -574,6 +678,8 @@ public final class DropDrawerStore {
         nodeAddrTask?.cancel()
         wsConnected = false
         guard isLoggedIn else { return }
+        // The server also closes the socket when it revokes this session.
+        Task { await refreshClientConfig() }
         let delaySecs = min(30, 1 << min(wsReconnectAttempt, 5))
         wsReconnectAttempt += 1
         wsLoopTask = Task { [weak self] in
@@ -633,6 +739,8 @@ public final class DropDrawerStore {
         let payload = root["payload"]
 
         switch type {
+        case "config_changed":
+            Task { await refreshClientConfig() }
         case "snapshot":
             guard let dict = payload as? [String: Any] else { return }
             if let devsObj = dict["devices"],
@@ -785,7 +893,7 @@ public final class DropDrawerStore {
                     size: size,
                     mimeType: mime,
                     thumbnailBase64: thumb,
-                    transferMode: transferMode,
+                    transferMode: canUploadToCloud ? transferMode : "p2p_only",
                     ttlHours: defaultTtlHours > 0 ? defaultTtlHours : nil
                 )
                 items.removeAll { $0.id == created.id }
@@ -797,8 +905,10 @@ public final class DropDrawerStore {
                     _ = try? p2p.registerFile(itemId: created.id, path: localCopy.path)
                 }
 
-                if shouldUploadCloud {
+                if shouldUploadCloud && canUploadToCloud {
                     await cacheItemToCloud(itemId: created.id, fileURL: localCopy)
+                } else if shouldUploadCloud {
+                    showToast("服务器已关闭云端上传，文件将只通过 P2P 传输")
                 } else {
                     showToast("已加入列表（P2P 直连）")
                 }
@@ -857,6 +967,10 @@ public final class DropDrawerStore {
 
     public func cacheItemToCloud(itemId: String, fileURL: URL) async {
         guard let api, activeCancelTokens[itemId] == nil else { return }
+        guard canUploadToCloud else {
+            showToast("服务器已关闭云端上传，请使用设备间 P2P 传输")
+            return
+        }
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             pendingCloudUploads.removeValue(forKey: itemId)
             storage.pendingCloudUploads = pendingCloudUploads
@@ -1165,6 +1279,11 @@ public final class DropDrawerStore {
         maxDownloads: Int? = nil
     ) async throws -> ShareLinkInfo {
         guard let api else { throw APIError.message("未登录") }
+        guard canCreateShares else { throw APIError.message("服务器已关闭外链分享") }
+        if clientConfig?.features.shareRequiresPasscode == true,
+           (passcode ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            throw APIError.message("服务器要求外链必须设置提取码")
+        }
         // Ensure files are uploaded to cloud before creating public share links.
         for item in targetItems where !item.isText && !item.cloudReady {
             if let local = localFileURL(for: item.id) {

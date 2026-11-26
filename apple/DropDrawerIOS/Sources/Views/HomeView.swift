@@ -33,6 +33,11 @@ struct HomeView: View {
     var body: some View {
         NavigationStack(path: $path) {
             List(selection: $selectedIds) {
+                if !isSelecting, let announcement = store.activeAnnouncement {
+                    AnnouncementSection(announcement: announcement) {
+                        withAnimation { store.dismissAnnouncement() }
+                    }
+                }
                 if !isSelecting {
                     quickActionsSection
                 }
@@ -163,15 +168,17 @@ struct HomeView: View {
                         .fontWeight(.semibold)
                     }
                     ToolbarItemGroup(placement: .bottomBar) {
-                        Button {
-                            let targets = store.items.filter { selectedIds.contains($0.id) }
-                            editMode = .inactive
-                            selectedIds.removeAll()
-                            path.append(.shares(targets))
-                        } label: {
-                            Label("打包外链", systemImage: "link")
+                        if store.canCreateShares {
+                            Button {
+                                let targets = store.items.filter { selectedIds.contains($0.id) }
+                                editMode = .inactive
+                                selectedIds.removeAll()
+                                path.append(.shares(targets))
+                            } label: {
+                                Label("打包外链", systemImage: "link")
+                            }
+                            .disabled(selectedIds.isEmpty)
                         }
-                        .disabled(selectedIds.isEmpty)
 
                         Spacer()
 
@@ -348,13 +355,15 @@ struct HomeView: View {
             }
         }
 
-        Button {
-            path.append(.shares([item]))
-        } label: {
-            Label("创建外链", systemImage: "link")
+        if store.canCreateShares {
+            Button {
+                path.append(.shares([item]))
+            } label: {
+                Label("创建外链", systemImage: "link")
+            }
         }
 
-        if !item.isText && !item.cloudReady, let local = store.localFileURL(for: item.id) {
+        if store.canUploadToCloud, !item.isText && !item.cloudReady, let local = store.localFileURL(for: item.id) {
             Button {
                 Task { await store.cacheItemToCloud(itemId: item.id, fileURL: local) }
             } label: {

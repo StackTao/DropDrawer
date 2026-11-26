@@ -18,6 +18,7 @@ import 'preferences_view.dart';
 import 'share_view.dart';
 import 'storage_settings_view.dart';
 import 'theme.dart';
+import 'announcement_banner.dart';
 import 'update_banner.dart';
 
 enum _DrawerPage { drawer, storage, devices, share, preview, preferences }
@@ -1040,6 +1041,7 @@ class _DrawerScreenState extends State<DrawerScreen>
                     if (_selectionMode)
                       _buildBatchFooter(c)
                     else ...[
+                      AnnouncementBanner(controller: c, mobile: false),
                       UpdateBanner(updates: c.updates, mobile: false),
                       _buildFooter(c),
                     ],
@@ -1278,8 +1280,10 @@ class _DrawerScreenState extends State<DrawerScreen>
         ),
         if (selecting)
           _buildBatchFooter(c)
-        else
+        else ...[
+          AnnouncementBanner(controller: c, mobile: true),
           UpdateBanner(updates: c.updates, mobile: true),
+        ],
       ],
     );
   }
@@ -1366,8 +1370,10 @@ class _DrawerScreenState extends State<DrawerScreen>
         ),
         if (selecting)
           _buildBatchFooter(c)
-        else
+        else ...[
+          AnnouncementBanner(controller: c, mobile: true),
           UpdateBanner(updates: c.updates, mobile: true),
+        ],
       ],
     );
   }
@@ -1871,9 +1877,11 @@ class _DrawerScreenState extends State<DrawerScreen>
         })
       else
         action('下载', CupertinoIcons.arrow_down_circle, () => c.downloadItem(item)),
-      action('创建外链', CupertinoIcons.link,
-          () => _switchPage(_DrawerPage.share, shareItems: [item])),
-      if (item.kind == 'file' && isMine && !item.cloudReady && localPath != null)
+      if (c.canCreateShares)
+        action('创建外链', CupertinoIcons.link,
+            () => _switchPage(_DrawerPage.share, shareItems: [item])),
+      if (item.kind == 'file' && isMine && !item.cloudReady && localPath != null &&
+          c.canUploadToCloud)
         action('存到云盘', CupertinoIcons.cloud_upload,
             () => c.cacheItemToCloud(item.id, localPath)),
       action('选择', CupertinoIcons.checkmark_circle,
@@ -2802,6 +2810,7 @@ class _DrawerScreenState extends State<DrawerScreen>
               );
             },
           ),
+          if (c.canCreateShares)
           _batchFooterBtn(
             isMobile: isMobile,
             icon: CupertinoIcons.link,
@@ -2816,6 +2825,7 @@ class _DrawerScreenState extends State<DrawerScreen>
               _switchPage(_DrawerPage.share, shareItems: targets);
             },
           ),
+          if (c.canUploadToCloud)
           _batchFooterBtn(
             isMobile: isMobile,
             icon: CupertinoIcons.cloud_upload,
@@ -3588,6 +3598,7 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                 const SizedBox(width: 4),
                 if (!widget.selectionMode) ...[
                   if (item.kind == 'text') ...[
+                    if (c.canCreateShares)
                     MacIconButton(
                       icon: CupertinoIcons.link,
                       tooltip: '创建外链分享',
@@ -3608,6 +3619,7 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                       },
                     ),
                   ] else ...[
+                    if (c.canCreateShares)
                     MacIconButton(
                       icon: CupertinoIcons.link,
                       tooltip: '创建外链分享',
@@ -3615,7 +3627,7 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                       boxSize: actionBox,
                       onPressed: widget.onShare,
                     ),
-                    if (isMine && !item.cloudReady && localPath != null)
+                    if (isMine && !item.cloudReady && localPath != null && c.canUploadToCloud)
                       MacIconButton(
                         icon: CupertinoIcons.cloud_upload,
                         tooltip: '转存到云盘 (离线可下)',

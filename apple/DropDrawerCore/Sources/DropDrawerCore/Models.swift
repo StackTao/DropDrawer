@@ -3,11 +3,61 @@ import Foundation
 public struct UserProfile: Codable, Sendable, Equatable, Identifiable {
     public let id: String
     public let username: String
+    public let email: String?
 
-    public init(id: String, username: String) {
+    public init(id: String, username: String, email: String? = nil) {
         self.id = id
         self.username = username
+        self.email = email
     }
+}
+
+public struct AuthProviderInfo: Codable, Sendable, Equatable, Identifiable {
+    public let id: String
+    public let name: String
+    public let kind: String
+    public let enabled: Bool
+
+    public init(id: String, name: String, kind: String, enabled: Bool) {
+        self.id = id
+        self.name = name
+        self.kind = kind
+        self.enabled = enabled
+    }
+}
+
+public struct AuthPublicConfig: Codable, Sendable, Equatable {
+    public let registrationMode: String
+    public let passwordLoginEnabled: Bool
+    public let emailVerificationRequired: Bool
+    public let emailPasswordResetEnabled: Bool
+    public let providers: [AuthProviderInfo]
+
+    enum CodingKeys: String, CodingKey {
+        case registrationMode = "registration_mode"
+        case passwordLoginEnabled = "password_login_enabled"
+        case emailVerificationRequired = "email_verification_required"
+        case emailPasswordResetEnabled = "email_password_reset_enabled"
+        case providers
+    }
+
+    public init(
+        registrationMode: String = "open",
+        passwordLoginEnabled: Bool = true,
+        emailVerificationRequired: Bool = false,
+        emailPasswordResetEnabled: Bool = false,
+        providers: [AuthProviderInfo] = []
+    ) {
+        self.registrationMode = registrationMode
+        self.passwordLoginEnabled = passwordLoginEnabled
+        self.emailVerificationRequired = emailVerificationRequired
+        self.emailPasswordResetEnabled = emailPasswordResetEnabled
+        self.providers = providers
+    }
+
+    public var registrationAllowed: Bool { registrationMode != "closed" }
+    public var inviteCodeRequired: Bool { registrationMode == "invite_only" }
+    public var googleEnabled: Bool { providers.contains { $0.id == "google" && $0.enabled } }
 }
 
 public struct DeviceInfo: Codable, Sendable, Equatable, Identifiable {
@@ -611,4 +661,108 @@ public func formatBytes(_ bytes: Int64) -> String {
         return String(format: "%.1f MB", Double(bytes) / (1024.0 * 1024.0))
     }
     return String(format: "%.2f GB", Double(bytes) / (1024.0 * 1024.0 * 1024.0))
+}
+
+// MARK: - Server policy (admin console)
+
+/// Effective server switches for the signed-in account (`GET /api/client/config`).
+/// Missing fields default to the permissive value so older servers keep working.
+public struct ClientFeatures: Codable, Sendable, Equatable {
+    public var shareCreateEnabled: Bool
+    public var cloudUploadEnabled: Bool
+    public var shareRequiresPasscode: Bool
+    public var maxShareExpiresHours: Int?
+    public var maxShareDownloads: Int?
+    public var maxItemTtlHours: Int?
+    /// Storage kinds (`"web_dav"`, `"s3"`, ...) the administrator disabled.
+    public var disabledStorageKinds: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case shareCreateEnabled = "share_create_enabled"
+        case cloudUploadEnabled = "cloud_upload_enabled"
+        case shareRequiresPasscode = "share_requires_passcode"
+        case maxShareExpiresHours = "max_share_expires_hours"
+        case maxShareDownloads = "max_share_downloads"
+        case maxItemTtlHours = "max_item_ttl_hours"
+        case disabledStorageKinds = "disabled_storage_kinds"
+    }
+
+    public init(
+        shareCreateEnabled: Bool = true,
+        cloudUploadEnabled: Bool = true,
+        shareRequiresPasscode: Bool = false,
+        maxShareExpiresHours: Int? = nil,
+        maxShareDownloads: Int? = nil,
+        maxItemTtlHours: Int? = nil,
+        disabledStorageKinds: [String] = []
+    ) {
+        self.shareCreateEnabled = shareCreateEnabled
+        self.cloudUploadEnabled = cloudUploadEnabled
+        self.shareRequiresPasscode = shareRequiresPasscode
+        self.maxShareExpiresHours = maxShareExpiresHours
+        self.maxShareDownloads = maxShareDownloads
+        self.maxItemTtlHours = maxItemTtlHours
+        self.disabledStorageKinds = disabledStorageKinds
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        shareCreateEnabled = try c.decodeIfPresent(Bool.self, forKey: .shareCreateEnabled) ?? true
+        cloudUploadEnabled = try c.decodeIfPresent(Bool.self, forKey: .cloudUploadEnabled) ?? true
+        shareRequiresPasscode = try c.decodeIfPresent(Bool.self, forKey: .shareRequiresPasscode) ?? false
+        maxShareExpiresHours = try c.decodeIfPresent(Int.self, forKey: .maxShareExpiresHours)
+        maxShareDownloads = try c.decodeIfPresent(Int.self, forKey: .maxShareDownloads)
+        maxItemTtlHours = try c.decodeIfPresent(Int.self, forKey: .maxItemTtlHours)
+        disabledStorageKinds = try c.decodeIfPresent([String].self, forKey: .disabledStorageKinds) ?? []
+    }
+}
+
+/// Server-wide announcement banner. `id` changes whenever the admin edits it.
+public struct ClientAnnouncement: Codable, Sendable, Equatable {
+    public let id: String
+    /// `"info"` | `"warning"` | `"critical"`
+    public let level: String
+    public let title: String
+    public let message: String
+
+    public init(id: String, level: String = "info", title: String = "", message: String = "") {
+        self.id = id
+        self.level = level
+        self.title = title
+        self.message = message
+    }
+}
+
+public struct ClientConfig: Codable, Sendable, Equatable {
+    public var serverVersion: String
+    public var features: ClientFeatures
+    public var announcement: ClientAnnouncement?
+    public var minClientVersion: String?
+
+    enum CodingKeys: String, CodingKey {
+        case serverVersion = "server_version"
+        case features
+        case announcement
+        case minClientVersion = "min_client_version"
+    }
+
+    public init(
+        serverVersion: String = "",
+        features: ClientFeatures = ClientFeatures(),
+        announcement: ClientAnnouncement? = nil,
+        minClientVersion: String? = nil
+    ) {
+        self.serverVersion = serverVersion
+        self.features = features
+        self.announcement = announcement
+        self.minClientVersion = minClientVersion
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        serverVersion = try c.decodeIfPresent(String.self, forKey: .serverVersion) ?? ""
+        features = try c.decodeIfPresent(ClientFeatures.self, forKey: .features) ?? ClientFeatures()
+        announcement = try c.decodeIfPresent(ClientAnnouncement.self, forKey: .announcement)
+        minClientVersion = try c.decodeIfPresent(String.self, forKey: .minClientVersion)
+    }
 }

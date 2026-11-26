@@ -1,7 +1,12 @@
+pub mod admin;
 pub mod auth;
 pub mod db;
 pub mod google_login;
+pub mod mailer;
+pub mod net_guard;
+pub mod policy;
 pub mod routes;
+pub mod settings;
 pub mod state;
 pub mod storage;
 

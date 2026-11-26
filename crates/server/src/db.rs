@@ -8,6 +8,18 @@ use protocol::{
 };
 use rusqlite::{params, Connection, OptionalExtension};
 
+mod admin;
+mod admins;
+mod system;
+
+pub use admins::{AdminAccount, AdminAccountSummary, AdminRole};
+
+pub use admin::{
+    AdminBackendKindCount, AdminDeviceRow, AdminItemRow, AdminOverviewStats, AdminShareRow,
+    AdminUserSummary, AdminVersionCount, UserAuthState, UserPolicy,
+};
+pub use system::{AuditEntry, InviteCodeRecord};
+
 #[derive(Clone)]
 pub struct Database {
     conn: Arc<Mutex<Connection>>,
@@ -18,7 +30,12 @@ pub struct UserRecord {
     pub id: String,
     pub username: String,
     pub password_hash: String,
+    pub email: Option<String>,
+    pub email_verified: bool,
+    pub disabled: bool,
     pub created_at: DateTime<Utc>,
+    /// Bumped to revoke every JWT issued to this user (forced sign-out, password change).
+    pub token_version: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -167,16 +184,62 @@ impl Database {
                  ON devices(user_id);
              CREATE INDEX IF NOT EXISTS idx_storage_backends_user
                  ON storage_backends(user_id);
+
+             CREATE TABLE IF NOT EXISTS system_settings (
+                 key TEXT PRIMARY KEY,
+                 value_json TEXT NOT NULL,
+                 updated_at TEXT NOT NULL
+             );
+
+             CREATE TABLE IF NOT EXISTS invite_codes (
+                 code TEXT PRIMARY KEY,
+                 note TEXT,
+                 max_uses INTEGER NOT NULL DEFAULT 1,
+                 used_count INTEGER NOT NULL DEFAULT 0,
+                 expires_at TEXT,
+                 created_at TEXT NOT NULL
+             );
+
+             CREATE TABLE IF NOT EXISTS email_verifications (
+                 id TEXT PRIMARY KEY,
+                 email TEXT NOT NULL,
+                 purpose TEXT NOT NULL,
+                 code_hash TEXT NOT NULL,
+                 attempts INTEGER NOT NULL DEFAULT 0,
+                 expires_at TEXT NOT NULL,
+                 consumed INTEGER NOT NULL DEFAULT 0,
+                 created_at TEXT NOT NULL
+             );
+
+             CREATE INDEX IF NOT EXISTS idx_email_verifications_lookup
+                 ON email_verifications(email, purpose, created_at DESC);
             ",
         )?;
         // Idempotent migrations for databases created before newer columns were added.
         let _ = conn.execute("ALTER TABLE share_links ADD COLUMN title TEXT", []);
         let _ = conn.execute("ALTER TABLE drawer_items ADD COLUMN content_sha256 TEXT", []);
+        let _ = conn.execute("ALTER TABLE users ADD COLUMN email TEXT", []);
+        let _ = conn.execute(
+            "ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_drawer_items_dedup
              ON drawer_items(user_id, storage_backend_id, content_sha256, size)",
             [],
         )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_users_email_lower
+             ON users(LOWER(email))",
+            [],
+        )?;
+        system::migrate(&conn)?;
+        admin::migrate(&conn)?;
+        admins::migrate(&conn)?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
@@ -192,15 +255,39 @@ impl Database {
         username: &str,
         password_hash: &str,
     ) -> anyhow::Result<UserProfile> {
+        self.create_user_with_email(id, username, password_hash, None, false)
+    }
+
+    pub fn create_user_with_email(
+        &self,
+        id: &str,
+        username: &str,
+        password_hash: &str,
+        email: Option<&str>,
+        email_verified: bool,
+    ) -> anyhow::Result<UserProfile> {
         let now = Utc::now();
+        let norm_email = email
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_ascii_lowercase());
         let conn = self.lock_conn();
         conn.execute(
-            "INSERT INTO users (id, username, password_hash, created_at) VALUES (?1, ?2, ?3, ?4)",
-            params![id, username, password_hash, now.to_rfc3339()],
+            "INSERT INTO users (id, username, password_hash, email, email_verified, disabled, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6)",
+            params![
+                id,
+                username,
+                password_hash,
+                norm_email,
+                email_verified as i32,
+                now.to_rfc3339()
+            ],
         )?;
         Ok(UserProfile {
             id: id.to_string(),
             username: username.to_string(),
+            email: norm_email,
             created_at: now,
         })
     }
@@ -214,14 +301,15 @@ impl Database {
         let mut conn = self.lock_conn();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let existing = tx.query_row(
-            "SELECT u.id, u.username, u.created_at FROM google_accounts g
+            "SELECT u.id, u.username, u.email, u.created_at FROM google_accounts g
              JOIN users u ON u.id = g.user_id WHERE g.subject = ?1",
             [subject],
             |row| {
-                let created: String = row.get(2)?;
+                let created: String = row.get(3)?;
                 Ok(UserProfile {
                     id: row.get(0)?,
                     username: row.get(1)?,
+                    email: row.get(2)?,
                     created_at: DateTime::parse_from_rfc3339(&created)
                         .map(|d| d.with_timezone(&Utc))
                         .unwrap_or_else(|_| Utc::now()),
@@ -240,37 +328,267 @@ impl Database {
             |row| row.get(0),
         )?;
         let username = if username_taken { format!("{email} ({id})") } else { email.to_owned() };
+        let norm_email = email.trim().to_ascii_lowercase();
+        let email_taken: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM users WHERE LOWER(email) = ?1)",
+            [&norm_email],
+            |row| row.get(0),
+        )?;
+        let stored_email = (!email_taken && !norm_email.is_empty()).then_some(norm_email);
         tx.execute(
-            "INSERT INTO users (id, username, password_hash, created_at) VALUES (?1, ?2, '', ?3)",
-            params![id, username, created_at.to_rfc3339()],
+            "INSERT INTO users (id, username, password_hash, email, email_verified, disabled, created_at)
+             VALUES (?1, ?2, '', ?3, ?4, 0, ?5)",
+            params![
+                id,
+                username,
+                stored_email,
+                stored_email.is_some() as i32,
+                created_at.to_rfc3339()
+            ],
         )?;
         tx.execute(
             "INSERT INTO google_accounts (subject, user_id) VALUES (?1, ?2)",
             params![subject, id],
         )?;
         tx.commit()?;
-        Ok(Some(UserProfile { id, username, created_at }))
+        Ok(Some(UserProfile {
+            id,
+            username,
+            email: stored_email,
+            created_at,
+        }))
+    }
+
+    fn map_user_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<UserRecord> {
+        let email_verified: i32 = row.get(4)?;
+        let disabled: i32 = row.get(5)?;
+        let created: String = row.get(6)?;
+        Ok(UserRecord {
+            id: row.get(0)?,
+            username: row.get(1)?,
+            password_hash: row.get(2)?,
+            email: row.get(3)?,
+            email_verified: email_verified != 0,
+            disabled: disabled != 0,
+            created_at: DateTime::parse_from_rfc3339(&created)
+                .map(|d| d.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now()),
+            token_version: row.get::<_, i64>(7)?.max(0) as u64,
+        })
     }
 
     pub fn find_user_by_username(&self, username: &str) -> anyhow::Result<Option<UserRecord>> {
         let conn = self.lock_conn();
         conn.query_row(
-            "SELECT id, username, password_hash, created_at FROM users WHERE username = ?1",
+            "SELECT id, username, password_hash, email, email_verified, disabled, created_at, token_version
+             FROM users WHERE username = ?1",
             params![username],
-            |row| {
-                let created: String = row.get(3)?;
-                Ok(UserRecord {
-                    id: row.get(0)?,
-                    username: row.get(1)?,
-                    password_hash: row.get(2)?,
-                    created_at: DateTime::parse_from_rfc3339(&created)
-                        .map(|d| d.with_timezone(&Utc))
-                        .unwrap_or_else(|_| Utc::now()),
-                })
-            },
+            Self::map_user_row,
         )
         .optional()
         .map_err(Into::into)
+    }
+
+    pub fn find_user_by_id(&self, id: &str) -> anyhow::Result<Option<UserRecord>> {
+        let conn = self.lock_conn();
+        conn.query_row(
+            "SELECT id, username, password_hash, email, email_verified, disabled, created_at, token_version
+             FROM users WHERE id = ?1",
+            params![id],
+            Self::map_user_row,
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    pub fn find_user_by_email(&self, email: &str) -> anyhow::Result<Option<UserRecord>> {
+        let norm = email.trim().to_ascii_lowercase();
+        let conn = self.lock_conn();
+        conn.query_row(
+            "SELECT id, username, password_hash, email, email_verified, disabled, created_at, token_version
+             FROM users WHERE LOWER(email) = ?1",
+            params![norm],
+            Self::map_user_row,
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    /// Look up by exact username first, then fall back to verified email (case-insensitive).
+    pub fn find_user_by_identifier(&self, identifier: &str) -> anyhow::Result<Option<UserRecord>> {
+        let trimmed = identifier.trim();
+        if let Some(u) = self.find_user_by_username(trimmed)? {
+            return Ok(Some(u));
+        }
+        let norm = trimmed.to_ascii_lowercase();
+        let conn = self.lock_conn();
+        conn.query_row(
+            "SELECT id, username, password_hash, email, email_verified, disabled, created_at, token_version
+             FROM users WHERE LOWER(email) = ?1 AND email_verified = 1",
+            params![norm],
+            Self::map_user_row,
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    pub fn is_user_disabled_or_missing(&self, user_id: &str) -> anyhow::Result<bool> {
+        let conn = self.lock_conn();
+        let disabled: Option<i32> = conn
+            .query_row(
+                "SELECT disabled FROM users WHERE id = ?1",
+                params![user_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(match disabled {
+            None => true,
+            Some(d) => d != 0,
+        })
+    }
+
+    pub fn set_user_disabled(&self, user_id: &str, disabled: bool) -> anyhow::Result<bool> {
+        let conn = self.lock_conn();
+        let affected = conn.execute(
+            "UPDATE users SET disabled = ?1 WHERE id = ?2",
+            params![disabled as i32, user_id],
+        )?;
+        Ok(affected > 0)
+    }
+
+    pub fn update_user_password(&self, user_id: &str, password_hash: &str) -> anyhow::Result<bool> {
+        let conn = self.lock_conn();
+        let affected = conn.execute(
+            "UPDATE users SET password_hash = ?1 WHERE id = ?2",
+            params![password_hash, user_id],
+        )?;
+        Ok(affected > 0)
+    }
+
+    pub fn delete_user(&self, user_id: &str) -> anyhow::Result<bool> {
+        let conn = self.lock_conn();
+        let affected = conn.execute("DELETE FROM users WHERE id = ?1", params![user_id])?;
+        Ok(affected > 0)
+    }
+
+    // ---- Email Verification Codes ----
+
+    pub fn last_email_verification_at(
+        &self,
+        email: &str,
+        purpose: &str,
+    ) -> anyhow::Result<Option<DateTime<Utc>>> {
+        let norm = email.trim().to_ascii_lowercase();
+        let conn = self.lock_conn();
+        let raw: Option<String> = conn
+            .query_row(
+                "SELECT created_at FROM email_verifications
+                 WHERE email = ?1 AND purpose = ?2
+                 ORDER BY created_at DESC LIMIT 1",
+                params![norm, purpose],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(raw.and_then(|s| {
+            DateTime::parse_from_rfc3339(&s)
+                .ok()
+                .map(|d| d.with_timezone(&Utc))
+        }))
+    }
+
+    pub fn create_email_verification(
+        &self,
+        email: &str,
+        purpose: &str,
+        code_hash: &str,
+        expires_at: DateTime<Utc>,
+    ) -> anyhow::Result<()> {
+        let norm = email.trim().to_ascii_lowercase();
+        let now = Utc::now();
+        let id = uuid::Uuid::new_v4().to_string();
+        let mut conn = self.lock_conn();
+        let tx = conn.transaction()?;
+        // Invalidate previous active codes for the same (email, purpose).
+        tx.execute(
+            "UPDATE email_verifications SET consumed = 1
+             WHERE email = ?1 AND purpose = ?2 AND consumed = 0",
+            params![norm, purpose],
+        )?;
+        tx.execute(
+            "INSERT INTO email_verifications (id, email, purpose, code_hash, attempts, expires_at, consumed, created_at)
+             VALUES (?1, ?2, ?3, ?4, 0, ?5, 0, ?6)",
+            params![
+                id,
+                norm,
+                purpose,
+                code_hash,
+                expires_at.to_rfc3339(),
+                now.to_rfc3339()
+            ],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Verify a 6-digit email verification code hash (max 5 attempts, 10-minute TTL).
+    pub fn verify_and_consume_email_code(
+        &self,
+        email: &str,
+        purpose: &str,
+        code_hash: &str,
+    ) -> anyhow::Result<bool> {
+        const MAX_ATTEMPTS: i64 = 5;
+        let norm = email.trim().to_ascii_lowercase();
+        let mut conn = self.lock_conn();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let row: Option<(String, String, i64, String)> = tx
+            .query_row(
+                "SELECT id, code_hash, attempts, expires_at
+                 FROM email_verifications
+                 WHERE email = ?1 AND purpose = ?2 AND consumed = 0
+                 ORDER BY created_at DESC LIMIT 1",
+                params![norm, purpose],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .optional()?;
+        let Some((id, stored_hash, attempts, expires_raw)) = row else {
+            return Ok(false);
+        };
+        let expired = DateTime::parse_from_rfc3339(&expires_raw)
+            .map(|d| d.with_timezone(&Utc) <= Utc::now())
+            .unwrap_or(true);
+        if expired || attempts >= MAX_ATTEMPTS {
+            tx.execute(
+                "UPDATE email_verifications SET consumed = 1 WHERE id = ?1",
+                params![id],
+            )?;
+            tx.commit()?;
+            return Ok(false);
+        }
+        let matches = stored_hash.len() == code_hash.len()
+            && stored_hash
+                .bytes()
+                .zip(code_hash.bytes())
+                .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+                == 0;
+        if matches {
+            tx.execute(
+                "UPDATE email_verifications SET consumed = 1 WHERE id = ?1",
+                params![id],
+            )?;
+            tx.commit()?;
+            Ok(true)
+        } else {
+            let next_attempts = attempts + 1;
+            tx.execute(
+                "UPDATE email_verifications
+                 SET attempts = ?1, consumed = CASE WHEN ?1 >= ?2 THEN 1 ELSE 0 END
+                 WHERE id = ?3",
+                params![next_attempts, MAX_ATTEMPTS, id],
+            )?;
+            tx.commit()?;
+            Ok(false)
+        }
     }
 
     pub fn upsert_device(
@@ -282,8 +600,10 @@ impl Database {
         iroh_node_id: Option<&str>,
         iroh_relay_url: Option<&str>,
         direct_addrs: &[String],
+        app_version: Option<&str>,
     ) -> anyhow::Result<DeviceInfo> {
         let now = Utc::now();
+        let app_version = app_version.map(str::trim).filter(|v| !v.is_empty());
         let platform_str = serde_json::to_string(&platform)?;
         let addrs_json = serde_json::to_string(direct_addrs)?;
         let conn = self.lock_conn();
@@ -316,15 +636,16 @@ impl Database {
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
         };
         conn.execute(
-            "INSERT INTO devices (id, user_id, name, platform, iroh_node_id, iroh_relay_url, direct_addrs_json, last_seen_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "INSERT INTO devices (id, user_id, name, platform, iroh_node_id, iroh_relay_url, direct_addrs_json, last_seen_at, app_version)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT(id) DO UPDATE SET
                  name = excluded.name,
                  platform = excluded.platform,
                  iroh_node_id = COALESCE(excluded.iroh_node_id, devices.iroh_node_id),
                  iroh_relay_url = COALESCE(excluded.iroh_relay_url, devices.iroh_relay_url),
                  direct_addrs_json = excluded.direct_addrs_json,
-                 last_seen_at = excluded.last_seen_at
+                 last_seen_at = excluded.last_seen_at,
+                 app_version = COALESCE(excluded.app_version, devices.app_version)
              WHERE devices.user_id = excluded.user_id",
             params![
                 id,
@@ -334,11 +655,12 @@ impl Database {
                 iroh_node_id,
                 iroh_relay_url,
                 addrs_json,
-                now.to_rfc3339()
+                now.to_rfc3339(),
+                app_version
             ],
         )?;
         conn.query_row(
-            "SELECT id, user_id, name, platform, iroh_node_id, iroh_relay_url, direct_addrs_json, last_seen_at
+            "SELECT id, user_id, name, platform, iroh_node_id, iroh_relay_url, direct_addrs_json, last_seen_at, app_version
              FROM devices WHERE id = ?1 AND user_id = ?2",
             params![id, user_id],
             Self::map_device_row,
@@ -376,7 +698,7 @@ impl Database {
     pub fn get_device(&self, device_id: &str, user_id: &str) -> anyhow::Result<Option<DeviceInfo>> {
         let conn = self.lock_conn();
         conn.query_row(
-            "SELECT id, user_id, name, platform, iroh_node_id, iroh_relay_url, direct_addrs_json, last_seen_at
+            "SELECT id, user_id, name, platform, iroh_node_id, iroh_relay_url, direct_addrs_json, last_seen_at, app_version
              FROM devices WHERE id = ?1 AND user_id = ?2",
             params![device_id, user_id],
             Self::map_device_row,
@@ -388,7 +710,7 @@ impl Database {
     pub fn list_devices(&self, user_id: &str) -> anyhow::Result<Vec<DeviceInfo>> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
-            "SELECT id, user_id, name, platform, iroh_node_id, iroh_relay_url, direct_addrs_json, last_seen_at
+            "SELECT id, user_id, name, platform, iroh_node_id, iroh_relay_url, direct_addrs_json, last_seen_at, app_version
              FROM devices WHERE user_id = ?1 ORDER BY last_seen_at DESC",
         )?;
         let rows = stmt.query_map(params![user_id], Self::map_device_row)?;
@@ -416,6 +738,7 @@ impl Database {
             last_seen_at: DateTime::parse_from_rfc3339(&last_seen)
                 .map(|d| d.with_timezone(&Utc))
                 .unwrap_or_else(|_| Utc::now()),
+            app_version: row.get(8)?,
         })
     }
 
@@ -1061,4 +1384,15 @@ pub fn hydrate_drawer_item(
         expires_at: row.expires_at,
         created_at: row.created_at,
     }
+}
+
+/// Parse a stored RFC 3339 timestamp, falling back to "now" for corrupt rows.
+pub(crate) fn parse_ts(raw: &str) -> DateTime<Utc> {
+    DateTime::parse_from_rfc3339(raw)
+        .map(|d| d.with_timezone(&Utc))
+        .unwrap_or_else(|_| Utc::now())
+}
+
+pub(crate) fn parse_opt_ts(raw: Option<String>) -> Option<DateTime<Utc>> {
+    raw.and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&Utc)))
 }

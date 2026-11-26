@@ -295,4 +295,86 @@ struct DropDrawerCoreTests {
         #expect(capture.planBody?["content_sha256"] as? String == expectedHash)
         #expect(capture.planBody?["size"] as? Int == payload.count)
     }
+
+    @Test("AuthPublicConfig decodes registration mode, email rules, and enabled providers")
+    func decodeAuthPublicConfig() throws {
+        let json = """
+        {
+          "registration_mode": "invite_only",
+          "password_login_enabled": true,
+          "email_verification_required": true,
+          "email_password_reset_enabled": true,
+          "providers": [
+            {"id": "google", "name": "Google", "kind": "oauth2_oidc", "enabled": true}
+          ]
+        }
+        """
+        let cfg = try JSONDecoder().decode(AuthPublicConfig.self, from: Data(json.utf8))
+        #expect(cfg.registrationAllowed == true)
+        #expect(cfg.inviteCodeRequired == true)
+        #expect(cfg.emailVerificationRequired == true)
+        #expect(cfg.emailPasswordResetEnabled == true)
+        #expect(cfg.googleEnabled == true)
+    }
+
+    @Test("ClientConfig decodes server switches and defaults missing fields to permissive values")
+    func decodeClientConfig() throws {
+        let json = """
+        {
+          "server_version": "0.1.6",
+          "features": {"share_create_enabled": false, "cloud_upload_enabled": false, "share_requires_passcode": true, "max_share_expires_hours": 72, "disabled_storage_kinds": ["web_dav"]},
+          "announcement": {"id": "1700", "level": "warning", "title": "维护", "message": "今晚升级"},
+          "min_client_version": "0.1.5"
+        }
+        """
+        let cfg = try JSONDecoder().decode(ClientConfig.self, from: Data(json.utf8))
+        #expect(cfg.features.shareCreateEnabled == false)
+        #expect(cfg.features.cloudUploadEnabled == false)
+        #expect(cfg.features.shareRequiresPasscode == true)
+        #expect(cfg.features.maxShareExpiresHours == 72)
+        #expect(cfg.features.disabledStorageKinds == ["web_dav"])
+        #expect(cfg.announcement?.level == "warning")
+        #expect(cfg.minClientVersion == "0.1.5")
+
+        let sparse = try JSONDecoder().decode(ClientConfig.self, from: Data(#"{"features": {}}"#.utf8))
+        #expect(sparse.features.shareCreateEnabled == true)
+        #expect(sparse.features.cloudUploadEnabled == true)
+        #expect(sparse.announcement == nil)
+        #expect(sparse.features.disabledStorageKinds.isEmpty)
+    }
+
+    @Test("Store gates sharing and remembers the dismissed announcement")
+    @MainActor
+    func storeAppliesServerPolicy() throws {
+        let suite = "dd.tests.policy.\(UUID().uuidString)"
+        let storage = SessionStorage(suiteName: suite, keychainService: "dd.tests.\(UUID().uuidString)")
+        let store = DropDrawerStore(storage: storage)
+        #expect(store.canCreateShares == true)
+        #expect(store.canUploadToCloud == true)
+
+        #expect(store.isStorageKindAllowed("web_dav") == true)
+        store.clientConfig = ClientConfig(
+            features: ClientFeatures(
+                shareCreateEnabled: false,
+                cloudUploadEnabled: false,
+                shareRequiresPasscode: true,
+                disabledStorageKinds: ["web_dav"]
+            ),
+            announcement: ClientAnnouncement(id: "a1", title: "通知")
+        )
+        #expect(store.canCreateShares == false)
+        #expect(store.canUploadToCloud == false)
+        #expect(store.shareRequiresPasscode == true)
+        #expect(store.isStorageKindAllowed("web_dav") == false)
+        #expect(store.isStorageKindAllowed("s3") == true)
+        #expect(store.activeAnnouncement?.id == "a1")
+
+        store.dismissAnnouncement()
+        #expect(store.activeAnnouncement == nil)
+        #expect(storage.dismissedAnnouncementId == "a1")
+
+        store.clientConfig?.announcement = ClientAnnouncement(id: "a2", title: "新的通知")
+        #expect(store.activeAnnouncement?.id == "a2")
+        UserDefaults.standard.removePersistentDomain(forName: suite)
+    }
 }

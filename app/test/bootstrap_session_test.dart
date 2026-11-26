@@ -87,6 +87,46 @@ void main() {
     controller.dispose();
   });
 
+  test('a session revoked while running returns to the login screen', () async {
+    final prevOverrides = HttpOverrides.current;
+    HttpOverrides.global = null;
+    addTearDown(() => HttpOverrides.global = prevOverrides);
+
+    var revoked = false;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    server.listen((req) async {
+      if (revoked) {
+        req.response.statusCode = HttpStatus.unauthorized;
+        req.response.write('session has been signed out, please log in again');
+      } else {
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode({'server_version': '0.1.6', 'features': {}}));
+      }
+      await req.response.close();
+    });
+
+    SharedPreferences.setMockInitialValues({
+      'server_url': 'http://${server.address.address}:${server.port}',
+      'auth_token': 'valid-jwt',
+      'username': 'alice',
+      'user_id': 'u-1',
+    });
+    final prefs = await SharedPreferences.getInstance();
+    final controller = DropDrawerController(initialPrefs: prefs);
+    addTearDown(controller.dispose);
+
+    await controller.refreshClientConfig();
+    expect(controller.isLoggedIn, isTrue, reason: 'a healthy session stays signed in');
+    expect(controller.clientConfig?.serverVersion, '0.1.6');
+
+    // The administrator forces a sign-out: the next authenticated call gets 401.
+    revoked = true;
+    await controller.refreshClientConfig();
+    expect(controller.isLoggedIn, isFalse);
+    expect(controller.statusBanner, contains('失效'));
+  });
+
   test('persisted pending cloud uploads are restored on relaunch and pruned when file is missing', () async {
     final tmpDir = await Directory.systemTemp.createTemp('dd-pending-test-');
     addTearDown(() => tmpDir.delete(recursive: true));

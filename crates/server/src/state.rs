@@ -1,14 +1,20 @@
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Weak};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, RwLock, Weak};
 use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use protocol::{DeviceInfo, DrawerItem, StorageBackendConfig, WsEvent};
 use tokio::sync::{mpsc, Mutex, OwnedMutexGuard};
 
+use crate::admin::AdminAuthConfig;
 use crate::db::{hydrate_drawer_item, Database, StorageBackendRecord};
 use crate::google_login::{GoogleLogin, GoogleLoginConfig};
+use crate::mailer::{EmailSender, OutgoingEmail, SmtpEmailSender};
+use crate::net_guard::PrivateNetworkGuard;
+use crate::settings::{
+    GoogleProviderSettings, RUNTIME_SETTINGS_KEY, RegistrationMode, RuntimeSettings, SmtpSettings,
+};
 use crate::storage::{build_provider, local::LocalProvider, StorageProvider};
 
 #[derive(Clone)]
@@ -34,7 +40,6 @@ pub struct AppState {
     pub http: reqwest::Client,
     pub jwt_secret: String,
     pub default_local_storage_dir: PathBuf,
-    pub(crate) local_max_file_bytes: Option<u64>,
     /// Active WebSocket connections keyed by `(user_id, device_id)`.
     pub connections: DashMap<(String, String), mpsc::UnboundedSender<WsEvent>>,
     pub(crate) ready_files: DashMap<(String, String), std::collections::BTreeMap<String, String>>,
@@ -42,15 +47,30 @@ pub struct AppState {
     pub(crate) presence_changes: Mutex<()>,
     item_mutations: DashMap<String, Weak<Mutex<()>>>,
     storage_locks: DashMap<(String, String), Weak<Mutex<()>>>,
-    pub(crate) google_login: Option<GoogleLogin>,
+    settings: RwLock<RuntimeSettings>,
+    google_login: RwLock<Option<Arc<GoogleLogin>>>,
+    email_sender: RwLock<Arc<dyn EmailSender>>,
+    has_custom_email_sender: AtomicBool,
+    pub admin_auth: Option<AdminAuthConfig>,
     /// Short-lived Google OAuth2 authorization flows keyed by `state` nonce.
     pub pending_google_oauth: DashMap<String, PendingGoogleOAuth>,
-    /// Whether `POST /api/auth/register` accepts new accounts (`DROPDRAWER_ALLOW_REGISTRATION`).
-    registration_open: AtomicBool,
     /// Failed logins per username.
     pub failed_logins: AttemptLimiter,
     /// Failed passcode attempts per share code.
     pub failed_passcodes: AttemptLimiter,
+    /// Failed admin token attempts per client IP.
+    pub failed_admin_logins: AttemptLimiter,
+    /// Server-wide ceiling on failed admin token attempts (all IPs together).
+    pub failed_admin_logins_global: AttemptLimiter,
+    /// Generation of admin sessions; bumping it signs every admin out.
+    admin_epoch: AtomicU64,
+    /// Mirrors `storage_policy.block_private_endpoints` into the HTTP client.
+    network_guard: PrivateNetworkGuard,
+    /// Serializes read-modify-write updates of the runtime settings.
+    pub(crate) settings_update: Mutex<()>,
+    pub started_at: Instant,
+    /// Email verification send attempts per email.
+    pub email_send_limiter: AttemptLimiter,
 }
 
 /// Fixed-window counter of failed attempts per key (username, share code, ...).
@@ -109,35 +129,166 @@ impl AppState {
         google_config: Option<GoogleLoginConfig>,
         local_max_file_bytes: Option<u64>,
     ) -> Arc<Self> {
-        let http = reqwest::Client::builder()
-            .pool_idle_timeout(std::time::Duration::from_secs(60))
-            .build()
-            .expect("failed to build reqwest client");
+        let mut initial = RuntimeSettings {
+            local_max_file_bytes,
+            ..RuntimeSettings::default()
+        };
+        if let Some(cfg) = &google_config {
+            initial.google = GoogleProviderSettings::from_google_config(cfg);
+        }
+        Self::with_full_config(db, jwt_secret, default_local_storage_dir, initial, None)
+    }
+
+    pub fn with_full_config(
+        db: Database,
+        jwt_secret: String,
+        default_local_storage_dir: PathBuf,
+        env_defaults: RuntimeSettings,
+        admin_auth: Option<AdminAuthConfig>,
+    ) -> Arc<Self> {
+        // Persisted admin settings take precedence over env defaults once saved.
+        let effective_settings = db
+            .get_setting(RUNTIME_SETTINGS_KEY)
+            .ok()
+            .flatten()
+            .and_then(|raw| serde_json::from_str::<RuntimeSettings>(&raw).ok())
+            .unwrap_or(env_defaults);
+        let google_login = effective_settings
+            .google
+            .to_google_config()
+            .ok()
+            .flatten()
+            .map(|cfg| Arc::new(GoogleLogin::new(cfg)));
+        let network_guard =
+            PrivateNetworkGuard::new(effective_settings.storage_policy.block_private_endpoints);
+        let http = network_guard.build_client();
         Arc::new(Self {
+            network_guard,
             db,
             http,
             jwt_secret,
             default_local_storage_dir,
-            local_max_file_bytes,
             connections: DashMap::new(),
             ready_files: DashMap::new(),
             presence_changes: Mutex::new(()),
             item_mutations: DashMap::new(),
             storage_locks: DashMap::new(),
-            google_login: google_config.map(GoogleLogin::new),
+            settings: RwLock::new(effective_settings),
+            google_login: RwLock::new(google_login),
+            email_sender: RwLock::new(Arc::new(SmtpEmailSender)),
+            has_custom_email_sender: AtomicBool::new(false),
+            admin_auth,
             pending_google_oauth: DashMap::new(),
-            registration_open: AtomicBool::new(true),
             failed_logins: AttemptLimiter::new(10, Duration::from_secs(15 * 60)),
             failed_passcodes: AttemptLimiter::new(10, Duration::from_secs(15 * 60)),
+            failed_admin_logins: AttemptLimiter::new(8, Duration::from_secs(15 * 60)),
+            failed_admin_logins_global: AttemptLimiter::new(60, Duration::from_secs(15 * 60)),
+            admin_epoch: AtomicU64::new(rand_epoch()),
+            settings_update: Mutex::new(()),
+            started_at: Instant::now(),
+            email_send_limiter: AttemptLimiter::new(10, Duration::from_secs(15 * 60)),
         })
     }
 
+    pub fn admin_epoch(&self) -> u64 {
+        self.admin_epoch.load(Ordering::Relaxed)
+    }
+
+    /// Invalidate every admin session issued so far.
+    pub fn revoke_admin_sessions(&self) {
+        self.admin_epoch.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn runtime_settings(&self) -> RuntimeSettings {
+        self.settings
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+
+    pub fn apply_and_persist_settings(&self, next: RuntimeSettings) -> anyhow::Result<()> {
+        let google = next
+            .google
+            .to_google_config()?
+            .map(|cfg| Arc::new(GoogleLogin::new(cfg)));
+        let serialized = serde_json::to_string(&next)?;
+        self.db.set_setting(RUNTIME_SETTINGS_KEY, &serialized)?;
+        self.network_guard
+            .set(next.storage_policy.block_private_endpoints);
+        *self.settings.write().unwrap_or_else(|p| p.into_inner()) = next;
+        *self.google_login.write().unwrap_or_else(|p| p.into_inner()) = google;
+        Ok(())
+    }
+
+    pub(crate) fn google_login(&self) -> Option<Arc<GoogleLogin>> {
+        self.google_login
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+
+    pub fn local_max_file_bytes(&self) -> Option<u64> {
+        self.runtime_settings().local_max_file_bytes
+    }
+
+    pub fn default_user_local_quota_bytes(&self) -> Option<u64> {
+        self.runtime_settings().default_user_local_quota_bytes
+    }
+
+    pub fn set_email_sender(&self, sender: Arc<dyn EmailSender>) {
+        *self.email_sender.write().unwrap_or_else(|p| p.into_inner()) = sender;
+        self.has_custom_email_sender.store(true, Ordering::Relaxed);
+    }
+
+    pub fn has_custom_email_sender(&self) -> bool {
+        self.has_custom_email_sender.load(Ordering::Relaxed)
+    }
+
+    pub async fn send_email(&self, email: &OutgoingEmail) -> anyhow::Result<()> {
+        let smtp = self.runtime_settings().smtp;
+        if !smtp.is_usable() && !self.has_custom_email_sender() {
+            anyhow::bail!("服务器未启用 SMTP 邮件服务");
+        }
+        self.send_email_with_config(&smtp, email).await
+    }
+
+    pub async fn send_email_with_config(
+        &self,
+        smtp: &SmtpSettings,
+        email: &OutgoingEmail,
+    ) -> anyhow::Result<()> {
+        let sender = self
+            .email_sender
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        sender.send(smtp, email).await
+    }
+
     pub fn registration_open(&self) -> bool {
-        self.registration_open.load(Ordering::Relaxed)
+        self.runtime_settings().registration_mode == RegistrationMode::Open
     }
 
     pub fn set_registration_open(&self, open: bool) {
-        self.registration_open.store(open, Ordering::Relaxed);
+        let mut guard = self.settings.write().unwrap_or_else(|p| p.into_inner());
+        guard.registration_mode = if open {
+            RegistrationMode::Open
+        } else {
+            RegistrationMode::Closed
+        };
+    }
+
+    pub fn disconnect_user(&self, user_id: &str) {
+        let keys: Vec<(String, String)> = self
+            .connections
+            .iter()
+            .filter(|e| e.key().0 == user_id)
+            .map(|e| e.key().clone())
+            .collect();
+        for key in keys {
+            self.connections.remove(&key);
+            self.ready_files.remove(&key);
+        }
     }
 
     // Serialize storage changes for one item without holding a map guard across an await.
@@ -211,9 +362,18 @@ impl AppState {
             )?;
             if other_refs == 0 {
                 let backend = self.resolve_backend(user_id, Some(backend_id))?;
-                self.build_storage_provider(&backend)?
-                    .delete(storage_path)
-                    .await?;
+                let settings = self.runtime_settings();
+                if let Err(err) =
+                    crate::policy::ensure_endpoints_allowed(&settings, &backend.config).await
+                {
+                    // The admin has since blocked this endpoint; drop the record without
+                    // contacting it so the item (and TTL cleanup) is not stuck forever.
+                    tracing::warn!(item_id, "skipping remote blob deletion: {err}");
+                } else {
+                    self.build_storage_provider(&backend)?
+                        .delete(storage_path)
+                        .await?;
+                }
             }
             self.db.delete_drawer_item(item_id, user_id)?;
         } else {
@@ -287,6 +447,12 @@ impl AppState {
         }
     }
 
+    pub fn broadcast_all(&self, event: WsEvent) {
+        for entry in self.connections.iter() {
+            let _ = entry.value().send(event.clone());
+        }
+    }
+
     pub fn send_to_device(&self, user_id: &str, device_id: &str, event: WsEvent) -> bool {
         if let Some(tx) = self
             .connections
@@ -313,6 +479,7 @@ impl AppState {
         }
         // Auto-provision a default local storage backend for the user if none is configured yet.
         let user_dir = self.user_local_storage_dir(user_id);
+        // The admin quota is applied when the provider is built, so it can change later.
         let cfg = StorageBackendConfig::Local {
             root_dir: user_dir.to_string_lossy().to_string(),
             max_bytes: None,
@@ -341,14 +508,31 @@ impl AppState {
             if root != shared && !root.starts_with(&own) {
                 anyhow::bail!("local storage directory is outside the server storage area");
             }
+            let effective_quota =
+                crate::policy::effective_local_quota(self, &record.user_id, *max_bytes);
             return Ok(Box::new(
-                LocalProvider::new(root, *max_bytes)?
-                    .with_max_file_bytes(self.local_max_file_bytes)
+                LocalProvider::new(root, effective_quota)?
+                    .with_max_file_bytes(self.local_max_file_bytes())
                     .restrict_keys_to(record.user_id.clone()),
             ));
         }
         build_provider(&record.config, self.http.clone())
     }
+
+    /// Build a provider for a request handler, refusing endpoints blocked by the storage policy.
+    pub async fn storage_provider(
+        &self,
+        record: &StorageBackendRecord,
+    ) -> anyhow::Result<Box<dyn StorageProvider>> {
+        crate::policy::ensure_endpoints_allowed(&self.runtime_settings(), &record.config).await?;
+        self.build_storage_provider(record)
+    }
+}
+
+fn rand_epoch() -> u64 {
+    use rand::RngCore;
+    // Keep it small enough to round-trip through JSON numbers exactly.
+    rand::rngs::OsRng.next_u64() >> 12
 }
 
 /// Absolute, lexically normalized form of `path` (`.`/`..` resolved without touching the filesystem).

@@ -72,7 +72,8 @@ class ItemPreviewView extends StatelessWidget {
     }
 
     final actions = [
-      PageAction(icon: CupertinoIcons.link, tooltip: '创建外链分享', onPressed: onShare),
+      if (c.canCreateShares)
+        PageAction(icon: CupertinoIcons.link, tooltip: '创建外链分享', onPressed: onShare),
       PageAction(
         icon: CupertinoIcons.trash,
         tooltip: '移出抽屉',
@@ -93,7 +94,8 @@ class ItemPreviewView extends StatelessWidget {
     return AdaptivePage(
       title: title,
       actions: [
-        PageAction(icon: CupertinoIcons.link, tooltip: '创建外链分享', onPressed: onShare),
+        if (c.canCreateShares)
+          PageAction(icon: CupertinoIcons.link, tooltip: '创建外链分享', onPressed: onShare),
         PageAction(
           icon: CupertinoIcons.trash,
           tooltip: '移出抽屉',
@@ -127,12 +129,13 @@ class ItemPreviewView extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                MacIconButton(
-                  icon: CupertinoIcons.link,
-                  tooltip: '创建外链分享',
-                  size: 14,
-                  onPressed: onShare,
-                ),
+                if (c.canCreateShares)
+                  MacIconButton(
+                    icon: CupertinoIcons.link,
+                    tooltip: '创建外链分享',
+                    size: 14,
+                    onPressed: onShare,
+                  ),
                 const SizedBox(width: 2),
                 MacIconButton(
                   icon: CupertinoIcons.trash,
@@ -735,7 +738,8 @@ class ItemPreviewView extends StatelessWidget {
           label: c.canDownloadP2p(item) ? 'P2P 优先下载' : '从云端下载',
           onPressed: () => c.downloadItem(item),
         ),
-      if (item.kind == 'file' && isMine && !item.cloudReady && localPath != null)
+      if (item.kind == 'file' && isMine && !item.cloudReady && localPath != null &&
+          c.canUploadToCloud)
         PhoneButton(
           kind: PhoneButtonKind.secondary,
           icon: ios ? CupertinoIcons.cloud_upload : Icons.cloud_upload_outlined,
@@ -775,12 +779,14 @@ class ItemPreviewView extends StatelessWidget {
               },
             ),
           ),
-          const SizedBox(width: 8),
-          _secondaryButton(
-            icon: CupertinoIcons.link,
-            label: '外链',
-            onTap: onShare,
-          ),
+          if (c.canCreateShares) ...[
+            const SizedBox(width: 8),
+            _secondaryButton(
+              icon: CupertinoIcons.link,
+              label: '外链',
+              onTap: onShare,
+            ),
+          ],
         ],
       );
     }
@@ -827,17 +833,18 @@ class ItemPreviewView extends StatelessWidget {
             label: controller.canDownloadP2p(item) ? 'P2P 优先下载' : '云端下载',
             onTap: () => c.downloadItem(item),
           ),
-        if (isMine && !item.cloudReady && localPath != null)
+        if (isMine && !item.cloudReady && localPath != null && c.canUploadToCloud)
           _secondaryButton(
             icon: CupertinoIcons.cloud_upload,
             label: '存云盘',
             onTap: () => c.cacheItemToCloud(item.id, localPath),
           ),
-        _secondaryButton(
-          icon: CupertinoIcons.link,
-          label: '外链分享',
-          onTap: onShare,
-        ),
+        if (c.canCreateShares)
+          _secondaryButton(
+            icon: CupertinoIcons.link,
+            label: '外链分享',
+            onTap: onShare,
+          ),
       ],
     );
   }

@@ -62,11 +62,69 @@ class ApiClient {
         if (token != null) 'Authorization': 'Bearer $token',
       };
 
-  Future<(String, UserProfile)> register(String username, String password) async {
+  Future<AuthPublicConfig?> fetchAuthConfig() async {
+    try {
+      final resp = await http
+          .get(Uri.parse('$_cleanBase/api/auth/config'))
+          .timeout(const Duration(seconds: 6));
+      if (resp.statusCode == 404) return null;
+      _check(resp);
+      return AuthPublicConfig.fromJson(
+        jsonDecode(resp.body) as Map<String, dynamic>,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> sendEmailCode({
+    required String email,
+    required String purpose,
+  }) async {
+    final resp = await http.post(
+      Uri.parse('$_cleanBase/api/auth/email/send-code'),
+      headers: _headers(),
+      body: jsonEncode({'email': email.trim(), 'purpose': purpose}),
+    );
+    _check(resp);
+  }
+
+  Future<void> resetPassword({
+    required String email,
+    required String code,
+    required String newPassword,
+  }) async {
+    final resp = await http.post(
+      Uri.parse('$_cleanBase/api/auth/password/reset'),
+      headers: _headers(),
+      body: jsonEncode({
+        'email': email.trim(),
+        'code': code.trim(),
+        'new_password': newPassword,
+      }),
+    );
+    _check(resp);
+  }
+
+  Future<(String, UserProfile)> register(
+    String username,
+    String password, {
+    String? email,
+    String? emailCode,
+    String? inviteCode,
+  }) async {
     final resp = await http.post(
       Uri.parse('$_cleanBase/api/auth/register'),
       headers: _headers(),
-      body: jsonEncode({'username': username, 'password': password}),
+      body: jsonEncode({
+        'username': username,
+        'password': password,
+        if (email != null && email.trim().isNotEmpty) 'email': email.trim(),
+        if (emailCode != null && emailCode.trim().isNotEmpty)
+          'email_code': emailCode.trim(),
+        if (inviteCode != null && inviteCode.trim().isNotEmpty)
+          'invite_code': inviteCode.trim(),
+      }),
     );
     _check(resp);
     final data = jsonDecode(resp.body) as Map<String, dynamic>;
@@ -142,6 +200,7 @@ class ApiClient {
     String? irohNodeId,
     String? irohRelayUrl,
     List<String> directAddrs = const [],
+    String? appVersion,
   }) async {
     final resp = await http.post(
       Uri.parse('$_cleanBase/api/devices'),
@@ -153,10 +212,23 @@ class ApiClient {
         'iroh_node_id': irohNodeId,
         'iroh_relay_url': irohRelayUrl,
         'direct_addrs': directAddrs,
+        'app_version': ?appVersion,
       }),
     );
     _check(resp);
     return DeviceInfo.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
+  }
+
+  /// Feature switches and announcement for this account. `null` when the
+  /// server predates the endpoint (everything is then allowed).
+  Future<ClientConfig?> fetchClientConfig({String? deviceId}) async {
+    final query = deviceId == null ? '' : '?device_id=${Uri.encodeQueryComponent(deviceId)}';
+    final resp = await http
+        .get(Uri.parse('$_cleanBase/api/client/config$query'), headers: _headers())
+        .timeout(const Duration(seconds: 10));
+    if (resp.statusCode == 404) return null;
+    _check(resp);
+    return ClientConfig.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
   }
 
   Future<List<DeviceInfo>> listDevices() async {

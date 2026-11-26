@@ -362,6 +362,23 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
     );
   }
 
+  /// Kinds the server still allows adding (admin console storage policy).
+  List<(String, String)> get _allowedKinds =>
+      _kinds.where((k) => widget.controller.isStorageKindAllowed(k.$1)).toList();
+
+  /// Moves the add form off a kind the administrator has just disabled.
+  void _ensureAllowedKind(List<(String, String)> allowed) {
+    if (allowed.isEmpty || allowed.any((k) => k.$1 == _selectedKind)) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !_allowedKinds.any((k) => k.$1 == _selectedKind)) {
+        final remaining = _allowedKinds;
+        if (remaining.isNotEmpty) _selectKind(remaining.first.$1);
+      }
+    });
+  }
+
+  static const _disabledAllKindsNotice = '服务器管理员已停用所有可添加的存储类型，暂时无法添加新的云盘。';
+
   static const _kinds = [
     ('google_drive', 'Google Drive'),
     ('quark', '夸克网盘'),
@@ -458,6 +475,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
 
   /// Phones: the configured backends and add form as settings groups.
   Widget _buildPhoneBody() {
+    if (_tab == 1 && _editingBackend == null) _ensureAllowedKind(_allowedKinds);
     final c = widget.controller;
     final material = usesMaterialChrome(context);
     final list = c.storageBackends;
@@ -541,17 +559,27 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
                   ),
             ],
           )
+        else if (_allowedKinds.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Text(
+              _disabledAllKindsNotice,
+              style: TextStyle(fontSize: 14, color: MacPalette.textSecondary),
+            ),
+          )
         else ...[
           PhoneSection(
             children: [
               PhoneRow(
                 title: '类型',
-                value: _kinds.firstWhere((k) => k.$1 == _selectedKind).$2,
+                value: (_allowedKinds.where((k) => k.$1 == _selectedKind).firstOrNull ??
+                        _allowedKinds.first)
+                    .$2,
                 onTap: () async {
                   final kind = await showPhoneChoice<String>(
                     context,
                     title: '云盘类型',
-                    options: _kinds,
+                    options: _allowedKinds,
                     selected: _selectedKind,
                     previousTitle: '云盘',
                   );
@@ -943,7 +971,14 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
   }
 
   Widget _buildAddBackendForm() {
-    const kinds = _kinds;
+    final kinds = _allowedKinds;
+    if (kinds.isEmpty) {
+      return Text(
+        _disabledAllKindsNotice,
+        style: TextStyle(fontSize: 12, color: MacPalette.textSecondary),
+      );
+    }
+    _ensureAllowedKind(kinds);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,

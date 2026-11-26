@@ -436,11 +436,64 @@ public final class APIClient: @unchecked Sendable {
 
     // MARK: - Auth
 
-    public func register(username: String, password: String) async throws -> AuthResult {
+    public func fetchAuthConfig() async -> AuthPublicConfig? {
+        do {
+            let req = try makeRequest("/api/auth/config", method: "GET", authenticated: false)
+            let data = try await perform(req)
+            return try JSONDecoder().decode(AuthPublicConfig.self, from: data)
+        } catch {
+            return nil
+        }
+    }
+
+    public func sendEmailCode(email: String, purpose: String) async throws {
+        let req = try makeRequest(
+            "/api/auth/email/send-code",
+            method: "POST",
+            jsonBody: [
+                "email": email.trimmingCharacters(in: .whitespacesAndNewlines),
+                "purpose": purpose,
+            ],
+            authenticated: false
+        )
+        _ = try await perform(req)
+    }
+
+    public func resetPassword(email: String, code: String, newPassword: String) async throws {
+        let req = try makeRequest(
+            "/api/auth/password/reset",
+            method: "POST",
+            jsonBody: [
+                "email": email.trimmingCharacters(in: .whitespacesAndNewlines),
+                "code": code.trimmingCharacters(in: .whitespacesAndNewlines),
+                "new_password": newPassword,
+            ],
+            authenticated: false
+        )
+        _ = try await perform(req)
+    }
+
+    public func register(
+        username: String,
+        password: String,
+        email: String? = nil,
+        emailCode: String? = nil,
+        inviteCode: String? = nil
+    ) async throws -> AuthResult {
+        var body: [String: Any] = ["username": username, "password": password]
+        if let email, !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            body["email"] = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let emailCode, !emailCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            body["email_code"] = emailCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let inviteCode, !inviteCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            body["invite_code"] = inviteCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         let req = try makeRequest(
             "/api/auth/register",
             method: "POST",
-            jsonBody: ["username": username, "password": password],
+            jsonBody: body,
             authenticated: false
         )
         let data = try await perform(req)
@@ -531,7 +584,8 @@ public final class APIClient: @unchecked Sendable {
         platform: String,
         irohNodeId: String? = nil,
         irohRelayUrl: String? = nil,
-        directAddrs: [String] = []
+        directAddrs: [String] = [],
+        appVersion: String? = nil
     ) async throws -> DeviceInfo {
         var body: [String: Any] = [
             "name": name,
@@ -541,9 +595,26 @@ public final class APIClient: @unchecked Sendable {
         body["device_id"] = deviceId ?? NSNull()
         body["iroh_node_id"] = irohNodeId ?? NSNull()
         body["iroh_relay_url"] = irohRelayUrl ?? NSNull()
+        if let appVersion { body["app_version"] = appVersion }
         let req = try makeRequest("/api/devices", method: "POST", jsonBody: body)
         let data = try await perform(req)
         return try JSONDecoder().decode(DeviceInfo.self, from: data)
+    }
+
+    /// Feature switches and announcement for this account; `nil` on servers
+    /// that predate the endpoint (everything is then allowed).
+    public func fetchClientConfig(deviceId: String? = nil) async throws -> ClientConfig? {
+        var path = "/api/client/config"
+        if let deviceId, let encoded = deviceId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
+            path += "?device_id=\(encoded)"
+        }
+        let req = try makeRequest(path)
+        do {
+            let data = try await perform(req)
+            return try JSONDecoder().decode(ClientConfig.self, from: data)
+        } catch APIError.httpStatus(404, _) {
+            return nil
+        }
     }
 
     public func listDevices() async throws -> [DeviceInfo] {

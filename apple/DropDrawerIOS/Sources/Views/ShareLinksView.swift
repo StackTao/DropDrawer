@@ -18,6 +18,45 @@ struct ShareLinksView: View {
     @State private var selectedLink: ShareLinkInfo?
 
     private var isBundle: Bool { targetItems.count > 1 }
+
+    private static func hoursLabel(_ h: Int) -> String {
+        h % 24 == 0 ? "\(h / 24) 天" : "\(h) 小时"
+    }
+
+    /// Applies an administrator cap: drops "unlimited" (0) and larger choices and
+    /// offers the cap itself when it is not one of the presets.
+    private static func capped(_ base: [(Int, String)], cap: Int?, label: (Int) -> String) -> [(Int, String)] {
+        guard let cap, cap > 0 else { return base }
+        var options = base.filter { $0.0 > 0 && $0.0 <= cap }
+        if !options.contains(where: { $0.0 == cap }) { options.append((cap, label(cap))) }
+        return options
+    }
+
+    private var expiryOptions: [(Int, String)] {
+        Self.capped(
+            [(1, "1 小时"), (24, "24 小时"), (168, "7 天"), (0, "永久")],
+            cap: store.maxShareExpiresHours
+        ) { "\(Self.hoursLabel($0))（上限）" }
+    }
+
+    private var downloadOptions: [(Int, String)] {
+        Self.capped(
+            [(0, "不限"), (1, "1 次（阅后即焚）"), (5, "5 次"), (20, "20 次")],
+            cap: store.maxShareDownloads
+        ) { "\($0) 次（上限）" }
+    }
+
+    /// Keeps the selected values inside the administrator's caps.
+    private func clampChoices() {
+        let expiry = expiryOptions
+        if !expiry.contains(where: { $0.0 == expiresHours }) {
+            expiresHours = expiry.last(where: { $0.0 > 0 && $0.0 <= 168 })?.0 ?? expiry.first?.0 ?? 0
+        }
+        let downloads = downloadOptions
+        if !downloads.contains(where: { $0.0 == maxDownloads }) {
+            maxDownloads = downloads.last?.0 ?? 0
+        }
+    }
     private var totalBytes: Int64 { targetItems.reduce(0) { $0 + $1.size } }
     private var pendingUploadCount: Int {
         targetItems.filter { !$0.isText && !$0.cloudReady }.count
@@ -105,20 +144,21 @@ struct ShareLinksView: View {
 
         Section {
             Picker("有效期", selection: $expiresHours) {
-                Text("1 小时").tag(1)
-                Text("24 小时").tag(24)
-                Text("7 天").tag(168)
-                Text("永久").tag(0)
+                ForEach(expiryOptions, id: \.0) { option in
+                    Text(option.1).tag(option.0)
+                }
             }
             Picker("下载次数", selection: $maxDownloads) {
-                Text("不限").tag(0)
-                Text("1 次（阅后即焚）").tag(1)
-                Text("5 次").tag(5)
-                Text("20 次").tag(20)
+                ForEach(downloadOptions, id: \.0) { option in
+                    Text(option.1).tag(option.0)
+                }
+            }
+            .task(id: store.clientConfig) {
+                clampChoices()
             }
             HStack {
-                Text("提取码")
-                TextField("留空为公开", text: $passcode)
+                Text(store.shareRequiresPasscode ? "提取码（必填）" : "提取码")
+                TextField(store.shareRequiresPasscode ? "必填" : "留空为公开", text: $passcode)
                     .multilineTextAlignment(.trailing)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -133,7 +173,9 @@ struct ShareLinksView: View {
         } header: {
             Text("访问设置")
         } footer: {
-            Text("提取码留空时，任何拿到链接的人都能下载。")
+            Text(store.shareRequiresPasscode
+                 ? "服务器要求外链必须设置提取码。"
+                 : "提取码留空时，任何拿到链接的人都能下载。")
         }
 
         if let errorMessage {

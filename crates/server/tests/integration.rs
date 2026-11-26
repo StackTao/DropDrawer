@@ -368,6 +368,9 @@ async fn test_auth_device_local_storage_and_ttl_cleanup() {
         Some(serde_json::to_value(RegisterRequest {
             username: "alice".to_string(),
             password: "password123".to_string(),
+            email: None,
+            email_code: None,
+            invite_code: None,
         })
         .unwrap()),
     )
@@ -402,6 +405,7 @@ async fn test_auth_device_local_storage_and_ttl_cleanup() {
             iroh_node_id: Some("fake-node-id-123".to_string()),
             iroh_relay_url: None,
             direct_addrs: vec!["127.0.0.1:4433".to_string()],
+            app_version: None,
         })
         .unwrap()),
     )
@@ -1887,4 +1891,1164 @@ async fn test_cloud_upload_deduplication_and_refcounted_deletion() {
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     assert_eq!(count_blobs(&alice_blob_dir), 0);
+}
+
+#[tokio::test]
+async fn test_admin_console_auth_hot_settings_invites_and_user_governance() {
+    use dropdrawer_server::{
+        admin::AdminAuthConfig,
+        auth::hash_password,
+        settings::RuntimeSettings,
+    };
+    use protocol::AuthPublicConfig;
+
+    // 1. Without DROPDRAWER_ADMIN_TOKEN, /admin is disabled (404).
+    let (disabled_app, _, _tmp0) = spawn_test_server().await;
+    let (st, _) = send_raw(&disabled_app, "GET", "/admin", None, None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, _) = send_raw(
+        &disabled_app,
+        "POST",
+        "/api/admin/login",
+        None,
+        Some(json!({"token": "anything"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+
+    // 2. With Argon2-hashed admin token (Vaultwarden style), /admin is enabled.
+    let tmp = TempDir::new().unwrap();
+    let db = Database::open(tmp.path().join("admin.db")).unwrap();
+    let admin_secret = "super-strong-admin-token-42";
+    let admin_hash = hash_password(admin_secret).unwrap();
+    let admin_auth = AdminAuthConfig::from_token(Some(&admin_hash));
+    let state = AppState::with_full_config(
+        db,
+        "test-jwt-secret".to_string(),
+        tmp.path().join("blobs"),
+        RuntimeSettings::default(),
+        admin_auth,
+    );
+    let app = build_router(state.clone());
+
+    let (st, page) = send_raw(&app, "GET", "/admin", None, None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(String::from_utf8_lossy(&page).contains("DropDrawer Admin"));
+
+    // Wrong admin token rejected; valid token returns admin JWT.
+    let (st, _) = send_raw(
+        &app,
+        "POST",
+        "/api/admin/login",
+        None,
+        Some(json!({"token": "wrong-token"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+
+    let (st, login_json): (StatusCode, serde_json::Value) = send_json(
+        &app,
+        "POST",
+        "/api/admin/login",
+        None,
+        Some(json!({"token": admin_secret})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let admin_jwt = login_json["token"].as_str().unwrap().to_string();
+
+    // Admin JWT cannot access regular user endpoints.
+    let (st, _) = send_raw(&app, "GET", "/api/devices", Some(&admin_jwt), None).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+
+    // 3. Hot-configure invite_only + Google OAuth via /api/admin/settings.
+    let (st, saved): (StatusCode, serde_json::Value) = send_json(
+        &app,
+        "PUT",
+        "/api/admin/settings",
+        Some(&admin_jwt),
+        Some(json!({
+            "registration_mode": "invite_only",
+            "password_login_enabled": true,
+            "email_verification_required": false,
+            "email_allowed_domains": [],
+            "email_blocked_domains": [],
+            "local_max_file_bytes": 10485760,
+            "default_user_local_quota_bytes": 104857600,
+            "google": {
+                "enabled": true,
+                "client_id": "hot-client-id",
+                "client_secret": "hot-secret-value",
+                "redirect_uri": "https://drop.example.com/api/auth/google/callback"
+            },
+            "smtp": {
+                "enabled": false,
+                "host": "",
+                "port": 587,
+                "security": "start_tls",
+                "username": "",
+                "password": null,
+                "from_address": "",
+                "from_name": "DropDrawer"
+            }
+        })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(saved["google"]["has_client_secret"], true);
+    assert!(saved["google"].get("client_secret").is_none());
+
+    // Public auth config reflects hot changes immediately without restart.
+    let (st, pub_cfg): (StatusCode, AuthPublicConfig) =
+        send_json(&app, "GET", "/api/auth/config", None, None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(pub_cfg.registration_mode, "invite_only");
+    assert!(pub_cfg.providers.iter().any(|p| p.id == "google" && p.enabled));
+
+    // Google /start works live after hot configuration!
+    let (st, google_start): (StatusCode, serde_json::Value) =
+        send_json(&app, "POST", "/api/auth/google/start", None, None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(
+        google_start["authorization_url"]
+            .as_str()
+            .unwrap()
+            .contains("hot-client-id")
+    );
+
+    // 4. Invite-only registration enforcement.
+    let (st, _) = send_raw(
+        &app,
+        "POST",
+        "/api/auth/register",
+        None,
+        Some(json!({"username": "noinvite", "password": "password123"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+
+    let (st, invite): (StatusCode, serde_json::Value) = send_json(
+        &app,
+        "POST",
+        "/api/admin/invites",
+        Some(&admin_jwt),
+        Some(json!({"note": "vip", "max_uses": 1, "expires_hours": 24})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let invite_code = invite["code"].as_str().unwrap().to_string();
+
+    let (st, alice): (StatusCode, AuthResponse) = send_json(
+        &app,
+        "POST",
+        "/api/auth/register",
+        None,
+        Some(json!({
+            "username": "alice_vip",
+            "password": "password123",
+            "invite_code": invite_code,
+        })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+
+    // Regular user JWT cannot access /api/admin/*.
+    let (st, _) = send_raw(&app, "GET", "/api/admin/overview", Some(&alice.token), None).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+
+    // Reusing single-use invite fails.
+    let (st, _) = send_raw(
+        &app,
+        "POST",
+        "/api/auth/register",
+        None,
+        Some(json!({
+            "username": "alice_vip_2",
+            "password": "password123",
+            "invite_code": invite_code,
+        })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+
+    // 5. Disable user -> existing JWT immediately rejected & login blocked.
+    let (st, _) = send_raw(
+        &app,
+        "POST",
+        &format!("/api/admin/users/{}/disable", alice.user.id),
+        Some(&admin_jwt),
+        Some(json!({"disabled": true})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+
+    let (st, _) = send_raw(&app, "GET", "/api/devices", Some(&alice.token), None).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+
+    let (st, _) = send_raw(
+        &app,
+        "POST",
+        "/api/auth/login",
+        None,
+        Some(json!({"username": "alice_vip", "password": "password123"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+
+    // Re-enable, admin reset password, create share, then admin revokes share & deletes user.
+    let (st, _) = send_raw(
+        &app,
+        "POST",
+        &format!("/api/admin/users/{}/disable", alice.user.id),
+        Some(&admin_jwt),
+        Some(json!({"disabled": false})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+
+    let (st, _) = send_raw(
+        &app,
+        "POST",
+        &format!("/api/admin/users/{}/reset-password", alice.user.id),
+        Some(&admin_jwt),
+        Some(json!({"new_password": "newpassword999"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+
+    let (st, relogin): (StatusCode, AuthResponse) = send_json(
+        &app,
+        "POST",
+        "/api/auth/login",
+        None,
+        Some(json!({"username": "alice_vip", "password": "newpassword999"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+
+    let (_, dev): (_, DeviceInfo) = send_json(
+        &app,
+        "POST",
+        "/api/devices",
+        Some(&relogin.token),
+        Some(json!({"device_id": "d1", "name": "Mac", "platform": "macos"})),
+    )
+    .await;
+    let (_, item): (_, DrawerItem) = send_json(
+        &app,
+        "POST",
+        "/api/drawer/items",
+        Some(&relogin.token),
+        Some(json!({
+            "device_id": dev.id,
+            "kind": "text",
+            "name": "note",
+            "size": 4,
+            "text_content": "test",
+            "transfer_mode": "cloud_cached",
+        })),
+    )
+    .await;
+    let (_, share): (_, ShareLinkInfo) = send_json(
+        &app,
+        "POST",
+        &format!("/api/drawer/items/{}/share", item.id),
+        Some(&relogin.token),
+        Some(json!({})),
+    )
+    .await;
+
+    let (st, shares): (StatusCode, Vec<serde_json::Value>) =
+        send_json(&app, "GET", "/api/admin/shares", Some(&admin_jwt), None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(shares.iter().any(|s| s["code"] == share.code));
+
+    let (st, _) = send_raw(
+        &app,
+        "DELETE",
+        &format!("/api/admin/shares/{}", share.code),
+        Some(&admin_jwt),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+
+    let (st, _) = send_raw(
+        &app,
+        "DELETE",
+        &format!("/api/admin/users/{}", alice.user.id),
+        Some(&admin_jwt),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn test_email_verification_registration_domain_rules_and_password_reset() {
+    use dropdrawer_server::{
+        admin::AdminAuthConfig,
+        mailer::MemoryEmailSender,
+        settings::RuntimeSettings,
+    };
+    use protocol::AuthPublicConfig;
+
+    let tmp = TempDir::new().unwrap();
+    let db = Database::open(tmp.path().join("email.db")).unwrap();
+    let state = AppState::with_full_config(
+        db,
+        "test-jwt-secret".to_string(),
+        tmp.path().join("blobs"),
+        RuntimeSettings::default(),
+        AdminAuthConfig::from_token(Some("plain-admin-secret")),
+    );
+    let sink = MemoryEmailSender::new();
+    state.set_email_sender(Arc::new(sink.clone()));
+    let app = build_router(state.clone());
+
+    let (_, admin_login): (_, serde_json::Value) = send_json(
+        &app,
+        "POST",
+        "/api/admin/login",
+        None,
+        Some(json!({"token": "plain-admin-secret"})),
+    )
+    .await;
+    let admin_jwt = admin_login["token"].as_str().unwrap().to_string();
+
+    // Enable SMTP + required email verification + domain whitelist.
+    let (st, _): (StatusCode, serde_json::Value) = send_json(
+        &app,
+        "PUT",
+        "/api/admin/settings",
+        Some(&admin_jwt),
+        Some(json!({
+            "registration_mode": "open",
+            "password_login_enabled": true,
+            "email_verification_required": true,
+            "email_allowed_domains": ["company.com"],
+            "email_blocked_domains": [],
+            "local_max_file_bytes": null,
+            "default_user_local_quota_bytes": null,
+            "google": {"enabled": false, "client_id": "", "client_secret": null, "redirect_uri": ""},
+            "smtp": {
+                "enabled": true,
+                "host": "smtp.company.com",
+                "port": 587,
+                "security": "start_tls",
+                "username": "noreply@company.com",
+                "password": "app-password",
+                "from_address": "noreply@company.com",
+                "from_name": "DropDrawer"
+            }
+        })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+
+    // Public auth config advertises email verification and password reset.
+    let (_, pub_cfg): (_, AuthPublicConfig) =
+        send_json(&app, "GET", "/api/auth/config", None, None).await;
+    assert!(pub_cfg.email_verification_required);
+    assert!(pub_cfg.email_password_reset_enabled);
+
+    // Admin SMTP test button works.
+    let (st, _): (StatusCode, serde_json::Value) = send_json(
+        &app,
+        "POST",
+        "/api/admin/smtp/test",
+        Some(&admin_jwt),
+        Some(json!({"to": "ops@company.com"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let sent = sink.take_sent();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].to, "ops@company.com");
+
+    // Non-whitelisted domain blocked.
+    let (st, _) = send_raw(
+        &app,
+        "POST",
+        "/api/auth/email/send-code",
+        None,
+        Some(json!({"email": "stranger@other.org", "purpose": "register"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+
+    // Send register verification code to whitelisted email.
+    let (st, _): (StatusCode, serde_json::Value) = send_json(
+        &app,
+        "POST",
+        "/api/auth/email/send-code",
+        None,
+        Some(json!({"email": "bob@company.com", "purpose": "register"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let reg_emails = sink.take_sent();
+    assert_eq!(reg_emails.len(), 1);
+    let code = reg_emails[0]
+        .subject
+        .rsplit('：')
+        .next()
+        .unwrap()
+        .trim()
+        .to_string();
+    assert_eq!(code.len(), 6);
+
+    // Wrong code rejected; valid code registers user with verified email.
+    let (st, _) = send_raw(
+        &app,
+        "POST",
+        "/api/auth/register",
+        None,
+        Some(json!({
+            "username": "bob",
+            "password": "password123",
+            "email": "bob@company.com",
+            "email_code": "000000"
+        })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+
+    let (st, reg): (StatusCode, AuthResponse) = send_json(
+        &app,
+        "POST",
+        "/api/auth/register",
+        None,
+        Some(json!({
+            "username": "bob",
+            "password": "password123",
+            "email": "bob@company.com",
+            "email_code": code
+        })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(reg.user.email.as_deref(), Some("bob@company.com"));
+
+    // User can log in with verified email address directly.
+    let (st, _): (StatusCode, AuthResponse) = send_json(
+        &app,
+        "POST",
+        "/api/auth/login",
+        None,
+        Some(json!({"username": "BOB@company.com", "password": "password123"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+
+    // Self-service password reset via email verification code.
+    let (st, _): (StatusCode, serde_json::Value) = send_json(
+        &app,
+        "POST",
+        "/api/auth/email/send-code",
+        None,
+        Some(json!({"email": "bob@company.com", "purpose": "reset_password"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let reset_emails = sink.take_sent();
+    assert_eq!(reset_emails.len(), 1);
+    let reset_code = reset_emails[0]
+        .subject
+        .rsplit('：')
+        .next()
+        .unwrap()
+        .trim()
+        .to_string();
+
+    let (st, _): (StatusCode, serde_json::Value) = send_json(
+        &app,
+        "POST",
+        "/api/auth/password/reset",
+        None,
+        Some(json!({
+            "email": "bob@company.com",
+            "code": reset_code,
+            "new_password": "brandnewpassword"
+        })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+
+    let (st, _) = send_raw(
+        &app,
+        "POST",
+        "/api/auth/login",
+        None,
+        Some(json!({"username": "bob", "password": "password123"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+
+    let (st, _): (StatusCode, AuthResponse) = send_json(
+        &app,
+        "POST",
+        "/api/auth/login",
+        None,
+        Some(json!({"username": "bob", "password": "brandnewpassword"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+}
+
+/// Baseline settings payload (what the admin page sends); tests patch individual fields.
+fn admin_settings_payload() -> serde_json::Value {
+    json!({
+        "registration_mode": "open",
+        "password_login_enabled": true,
+        "email_verification_required": false,
+        "email_allowed_domains": [],
+        "email_blocked_domains": [],
+        "local_max_file_bytes": null,
+        "default_user_local_quota_bytes": null,
+        "google": { "enabled": false, "client_id": "", "client_secret": null, "redirect_uri": "" },
+        "smtp": {
+            "enabled": false, "host": "", "port": 587, "security": "start_tls",
+            "username": "", "password": null, "from_address": "", "from_name": "DropDrawer"
+        }
+    })
+}
+
+fn admin_test_server() -> (Router, Arc<AppState>, TempDir) {
+    use dropdrawer_server::{admin::AdminAuthConfig, settings::RuntimeSettings};
+    let tmp = TempDir::new().unwrap();
+    let db = Database::open(tmp.path().join("admin-policy.db")).unwrap();
+    let state = AppState::with_full_config(
+        db,
+        "test-jwt-secret".to_string(),
+        tmp.path().join("blobs"),
+        RuntimeSettings::default(),
+        AdminAuthConfig::from_token(Some("plain-admin-secret")),
+    );
+    (build_router(state.clone()), state, tmp)
+}
+
+async fn admin_login(app: &Router) -> String {
+    let (st, body): (StatusCode, serde_json::Value) = send_json(
+        app,
+        "POST",
+        "/api/admin/login",
+        None,
+        Some(json!({"token": "plain-admin-secret"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    body["token"].as_str().unwrap().to_string()
+}
+
+async fn put_settings(app: &Router, admin: &str, patch: serde_json::Value) -> StatusCode {
+    let mut payload = admin_settings_payload();
+    for (k, v) in patch.as_object().unwrap() {
+        payload[k] = v.clone();
+    }
+    send_raw(app, "PUT", "/api/admin/settings", Some(admin), Some(payload))
+        .await
+        .0
+}
+
+async fn register_user(app: &Router, name: &str) -> AuthResponse {
+    let (st, auth): (StatusCode, AuthResponse) = send_json(
+        app,
+        "POST",
+        "/api/auth/register",
+        None,
+        Some(json!({"username": name, "password": "password123"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    auth
+}
+
+async fn create_text_item(app: &Router, token: &str, device: &str) -> (StatusCode, Vec<u8>) {
+    send_raw(
+        app,
+        "POST",
+        "/api/drawer/items",
+        Some(token),
+        Some(json!({
+            "device_id": device, "kind": "text", "name": "note", "size": 5,
+            "text_content": "hello", "transfer_mode": "p2p_only"
+        })),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn test_admin_feature_switches_and_per_user_policies_are_enforced() {
+    let (app, _state, _tmp) = admin_test_server();
+    let admin = admin_login(&app).await;
+
+    // Usernames containing markup characters are refused.
+    let (st, _) = send_raw(
+        &app,
+        "POST",
+        "/api/auth/register",
+        None,
+        Some(json!({"username": "x');alert(1)//", "password": "password123"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+
+    let alice = register_user(&app, "alice").await;
+    let bob = register_user(&app, "bob").await;
+    for (tok, dev) in [(&alice.token, "a1"), (&bob.token, "b1")] {
+        let (st, _) = send_raw(
+            &app,
+            "POST",
+            "/api/devices",
+            Some(tok),
+            Some(json!({"device_id": dev, "name": "Mac", "platform": "macos"})),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK);
+    }
+    let (st, body) = create_text_item(&app, &alice.token, "a1").await;
+    assert_eq!(st, StatusCode::OK);
+    let alice_item: DrawerItem = serde_json::from_slice(&body).unwrap();
+    let (st, body) = send_raw(
+        &app,
+        "POST",
+        &format!("/api/drawer/items/{}/share", alice_item.id),
+        Some(&alice.token),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let share: ShareLinkInfo = serde_json::from_slice(&body).unwrap();
+
+    // Limits: one device and two items per user; shares capped at 24h.
+    assert_eq!(
+        put_settings(
+            &app,
+            &admin,
+            json!({
+                "limits": {"max_devices_per_user": 1, "max_items_per_user": 2, "max_item_ttl_hours": 48},
+                "share_policy": {"require_passcode": false, "max_expires_hours": 24, "max_downloads_cap": null}
+            }),
+        )
+        .await,
+        StatusCode::OK
+    );
+    let (st, _) = send_raw(
+        &app,
+        "POST",
+        "/api/devices",
+        Some(&alice.token),
+        Some(json!({"device_id": "a2", "name": "Phone", "platform": "ios"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::FORBIDDEN, "second device exceeds the limit");
+    let (st, _) = send_raw(
+        &app,
+        "POST",
+        "/api/devices",
+        Some(&alice.token),
+        Some(json!({"device_id": "a1", "name": "Mac renamed", "platform": "macos"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "re-registering an existing device is allowed");
+
+    let (st, body) = create_text_item(&app, &alice.token, "a1").await;
+    assert_eq!(st, StatusCode::OK);
+    let second: DrawerItem = serde_json::from_slice(&body).unwrap();
+    let ttl = second.expires_at.unwrap() - second.created_at;
+    assert!(ttl <= Duration::hours(48), "default 7 day TTL is capped by max_item_ttl_hours");
+    let (st, _) = create_text_item(&app, &alice.token, "a1").await;
+    assert_eq!(st, StatusCode::FORBIDDEN, "third item exceeds the limit");
+
+    let (st, body) = send_raw(
+        &app,
+        "POST",
+        &format!("/api/drawer/items/{}/share", second.id),
+        Some(&alice.token),
+        Some(json!({"expires_hours": 1000})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let capped: ShareLinkInfo = serde_json::from_slice(&body).unwrap();
+    assert!(capped.expires_at.unwrap() - capped.created_at <= Duration::hours(24));
+
+    // A payload without the new sections (older admin page) keeps them unchanged.
+    assert_eq!(put_settings(&app, &admin, json!({})).await, StatusCode::OK);
+    let (_, saved): (_, serde_json::Value) =
+        send_json(&app, "GET", "/api/admin/settings", Some(&admin), None).await;
+    assert_eq!(saved["limits"]["max_items_per_user"], 2);
+
+    // Global switches: sharing and cloud uploads off, public access paused.
+    assert_eq!(
+        put_settings(
+            &app,
+            &admin,
+            json!({
+                "features": {
+                    "google_signup_enabled": true, "password_reset_enabled": true,
+                    "cloud_upload_enabled": false, "share_create_enabled": false,
+                    "share_access_enabled": false
+                },
+                "limits": {}
+            }),
+        )
+        .await,
+        StatusCode::OK
+    );
+    let (st, _) = send_raw(
+        &app,
+        "POST",
+        &format!("/api/drawer/items/{}/share", alice_item.id),
+        Some(&alice.token),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let (st, _) = send_raw(&app, "GET", &format!("/api/s/{}/meta", share.code), None, None).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let (st, body) = create_text_item(&app, &bob.token, "b1").await;
+    assert_eq!(st, StatusCode::OK);
+    let bob_item: DrawerItem = serde_json::from_slice(&body).unwrap();
+    let (st, _) = send_raw(
+        &app,
+        "POST",
+        &format!("/api/drawer/items/{}/upload-plan", bob_item.id),
+        Some(&bob.token),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::FORBIDDEN, "cloud uploads are switched off");
+
+    // Switch everything back on; restrict only alice via her personal policy.
+    assert_eq!(put_settings(&app, &admin, json!({"features": {}})).await, StatusCode::OK);
+    let (st, _) = send_raw(&app, "GET", &format!("/api/s/{}/meta", share.code), None, None).await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, _) = send_raw(
+        &app,
+        "PUT",
+        &format!("/api/admin/users/{}/policy", alice.user.id),
+        Some(&admin),
+        Some(json!({"share_blocked": true, "upload_blocked": true, "note": "abuse report"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, _) = send_raw(
+        &app,
+        "POST",
+        &format!("/api/drawer/items/{}/share", alice_item.id),
+        Some(&alice.token),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::FORBIDDEN, "alice may no longer share");
+    let (st, _) = send_raw(
+        &app,
+        "POST",
+        &format!("/api/drawer/items/{}/share", bob_item.id),
+        Some(&bob.token),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "bob is unaffected");
+    let (st, _) = send_raw(
+        &app,
+        "POST",
+        &format!("/api/drawer/items/{}/upload-plan", alice_item.id),
+        Some(&alice.token),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+
+    // Storage policy: disabled kinds and private endpoints are refused.
+    assert_eq!(
+        put_settings(
+            &app,
+            &admin,
+            json!({"storage_policy": {"disabled_backend_kinds": ["web_dav"], "block_private_endpoints": true}}),
+        )
+        .await,
+        StatusCode::OK
+    );
+    let (st, _) = send_raw(
+        &app,
+        "POST",
+        "/api/storage",
+        Some(&bob.token),
+        Some(json!({"name": "NAS", "config": {"kind": "web_dav", "base_url": "https://dav.example.com", "username": "u", "password": "p"}})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let (_, cfg): (_, protocol::ClientConfig) =
+        send_json(&app, "GET", "/api/client/config", Some(&bob.token), None).await;
+    assert_eq!(
+        cfg.features.disabled_storage_kinds,
+        vec![protocol::StorageBackendKind::WebDav],
+        "clients learn which storage kinds to hide"
+    );
+    let (st, _) = send_raw(
+        &app,
+        "POST",
+        "/api/storage",
+        Some(&bob.token),
+        Some(json!({"name": "Minio", "config": {
+            "kind": "s3", "endpoint": "http://127.0.0.1:9000", "region": "us-east-1",
+            "bucket": "b", "access_key_id": "k", "secret_access_key": "s"
+        }})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::FORBIDDEN, "loopback endpoint is blocked");
+
+    // The user detail view exposes devices and policy; devices can be removed.
+    let (st, detail): (StatusCode, serde_json::Value) = send_json(
+        &app,
+        "GET",
+        &format!("/api/admin/users/{}", alice.user.id),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(detail["policy"]["share_blocked"], true);
+    assert_eq!(detail["devices"].as_array().unwrap().len(), 1);
+    assert!(detail["items"][0].get("text_content").is_none(), "content is not exposed");
+    let (st, _) = send_raw(
+        &app,
+        "DELETE",
+        &format!("/api/admin/users/{}/devices/a1", alice.user.id),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+
+    let (_, audit): (_, Vec<serde_json::Value>) =
+        send_json(&app, "GET", "/api/admin/audit", Some(&admin), None).await;
+    let actions: Vec<&str> = audit.iter().filter_map(|e| e["action"].as_str()).collect();
+    for expected in ["admin.login", "settings.update", "user.policy", "device.remove"] {
+        assert!(actions.contains(&expected), "missing audit action {expected}: {actions:?}");
+    }
+}
+
+#[tokio::test]
+async fn test_admin_can_revoke_user_and_admin_sessions() {
+    let (app, _state, _tmp) = admin_test_server();
+    let admin = admin_login(&app).await;
+    let carol = register_user(&app, "carol").await;
+    let (st, _) = send_raw(&app, "GET", "/api/devices", Some(&carol.token), None).await;
+    assert_eq!(st, StatusCode::OK);
+
+    // Forced sign-out revokes every token issued so far.
+    let (st, _) = send_raw(
+        &app,
+        "POST",
+        &format!("/api/admin/users/{}/sign-out", carol.user.id),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, _) = send_raw(&app, "GET", "/api/devices", Some(&carol.token), None).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+
+    // Logging in again yields a token for the new generation.
+    let (st, relogin): (StatusCode, AuthResponse) = send_json(
+        &app,
+        "POST",
+        "/api/auth/login",
+        None,
+        Some(json!({"username": "carol", "password": "password123"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, _) = send_raw(&app, "GET", "/api/devices", Some(&relogin.token), None).await;
+    assert_eq!(st, StatusCode::OK);
+
+    // An admin password reset also ends existing sessions.
+    let (st, _) = send_raw(
+        &app,
+        "POST",
+        &format!("/api/admin/users/{}/reset-password", carol.user.id),
+        Some(&admin),
+        Some(json!({"new_password": "another-password"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, _) = send_raw(&app, "GET", "/api/devices", Some(&relogin.token), None).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+
+    // Admin logout invalidates the admin token itself, not just the cookie.
+    let (st, _) = send_raw(&app, "GET", "/api/admin/session", Some(&admin), None).await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, _) = send_raw(&app, "POST", "/api/admin/logout", Some(&admin), None).await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, _) = send_raw(&app, "GET", "/api/admin/overview", Some(&admin), None).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+
+    // The console page and its assets carry a strict CSP.
+    let resp = app
+        .clone()
+        .oneshot(Request::builder().uri("/admin").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let csp = resp
+        .headers()
+        .get(header::CONTENT_SECURITY_POLICY)
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(csp.contains("script-src 'self'") && !csp.contains("unsafe-inline"));
+    let (st, _) = send_raw(&app, "GET", "/admin/assets/admin.js", None, None).await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, _) = send_raw(&app, "GET", "/admin/assets/../Cargo.toml", None, None).await;
+    assert_ne!(st, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_client_config_announcement_min_version_and_device_removal() {
+    let (app, _state, _tmp) = admin_test_server();
+    let admin = admin_login(&app).await;
+    let dana = register_user(&app, "dana").await;
+
+    // Defaults: everything enabled, no announcement, no minimum version.
+    let (st, cfg): (StatusCode, protocol::ClientConfig) =
+        send_json(&app, "GET", "/api/client/config", Some(&dana.token), None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(cfg.features.share_create_enabled && cfg.features.cloud_upload_enabled);
+    assert!(cfg.announcement.is_none() && cfg.min_client_version.is_none());
+
+    assert_eq!(
+        put_settings(
+            &app,
+            &admin,
+            json!({
+                "announcement": {"enabled": true, "level": "warning", "title": "维护通知", "message": "今晚 23:00 升级"},
+                "client_policy": {"min_version": "v0.2.0"},
+                "share_policy": {"require_passcode": true, "max_expires_hours": 72, "max_downloads_cap": null}
+            }),
+        )
+        .await,
+        StatusCode::OK
+    );
+    let (_, policy_resp) = send_raw(
+        &app,
+        "PUT",
+        &format!("/api/admin/users/{}/policy", dana.user.id),
+        Some(&admin),
+        Some(json!({"upload_blocked": true})),
+    )
+    .await;
+    let _ = policy_resp;
+    let (_, cfg): (_, protocol::ClientConfig) =
+        send_json(&app, "GET", "/api/client/config", Some(&dana.token), None).await;
+    let ann = cfg.announcement.expect("announcement is published");
+    assert_eq!((ann.level.as_str(), ann.title.as_str()), ("warning", "维护通知"));
+    assert_eq!(cfg.min_client_version.as_deref(), Some("0.2.0"));
+    assert!(!cfg.features.cloud_upload_enabled, "per-user restriction is reflected");
+    assert!(cfg.features.share_create_enabled && cfg.features.share_requires_passcode);
+    assert_eq!(cfg.features.max_share_expires_hours, Some(72));
+    assert!(cfg.features.disabled_storage_kinds.is_empty());
+
+    // Re-saving identical announcement keeps its id; editing it changes the id.
+    assert_eq!(put_settings(&app, &admin, json!({})).await, StatusCode::OK);
+    let (_, same): (_, protocol::ClientConfig) =
+        send_json(&app, "GET", "/api/client/config", Some(&dana.token), None).await;
+    assert_eq!(same.announcement.unwrap().id, ann.id);
+
+    // Minimum version: old and unversioned clients get 426, current ones register.
+    let register = |version: Option<&str>| {
+        let mut body = json!({"device_id": "dana-mac", "name": "Mac", "platform": "macos", "iroh_node_id": "node-dana"});
+        if let Some(v) = version {
+            body["app_version"] = json!(v);
+        }
+        body
+    };
+    let (st, _) = send_raw(&app, "POST", "/api/devices", Some(&dana.token), Some(register(None))).await;
+    assert_eq!(st, StatusCode::UPGRADE_REQUIRED);
+    let (st, _) = send_raw(&app, "POST", "/api/devices", Some(&dana.token), Some(register(Some("0.1.9")))).await;
+    assert_eq!(st, StatusCode::UPGRADE_REQUIRED);
+    let (st, dev): (StatusCode, DeviceInfo) =
+        send_json(&app, "POST", "/api/devices", Some(&dana.token), Some(register(Some("0.2.0+7")))).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(dev.app_version.as_deref(), Some("0.2.0+7"));
+    let (_, versions): (_, Vec<serde_json::Value>) =
+        send_json(&app, "GET", "/api/admin/clients", Some(&admin), None).await;
+    assert!(versions.iter().any(|v| v["version"] == "0.2.0+7" && v["platform"] == "macos"));
+
+    // Removing the device bars the old session from re-registering it (by id or node).
+    // (Removal times are compared at second precision, so step past the token's second.)
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let (st, _) = send_raw(
+        &app,
+        "DELETE",
+        &format!("/api/admin/users/{}/devices/dana-mac", dana.user.id),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (st, _) = send_raw(&app, "POST", "/api/devices", Some(&dana.token), Some(register(Some("0.2.0")))).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+    // A running client polling its config learns about the removal too.
+    let (st, _) = send_raw(&app, "GET", "/api/client/config?device_id=dana-mac", Some(&dana.token), None).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+    let (st, _) = send_raw(&app, "GET", "/api/client/config", Some(&dana.token), None).await;
+    assert_eq!(st, StatusCode::OK, "other devices of the account are unaffected");
+    let mut by_node = register(Some("0.2.0"));
+    by_node["device_id"] = json!(null);
+    let (st, _) = send_raw(&app, "POST", "/api/devices", Some(&dana.token), Some(by_node)).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED, "same iroh node under a new id is also refused");
+
+    // Signing in again (a session issued after the removal) may register it.
+    let (_, relogin): (_, AuthResponse) = send_json(
+        &app,
+        "POST",
+        "/api/auth/login",
+        None,
+        Some(json!({"username": "dana", "password": "password123"})),
+    )
+    .await;
+    let (st, _) = send_raw(&app, "POST", "/api/devices", Some(&relogin.token), Some(register(Some("0.2.0")))).await;
+    assert_eq!(st, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_admin_accounts_roles_totp_and_backup() {
+    use dropdrawer_server::admin::totp;
+
+    let (app, state, _tmp) = admin_test_server();
+    let owner = admin_login(&app).await;
+
+    // Owner creates a super admin and a read-only admin.
+    for (name, role) in [("ops-lead", "super"), ("auditor", "viewer")] {
+        let (st, _) = send_raw(
+            &app,
+            "POST",
+            "/api/admin/admins",
+            Some(&owner),
+            Some(json!({"username": name, "password": "correct horse battery", "role": role})),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK);
+    }
+    let (st, _) = send_raw(
+        &app,
+        "POST",
+        "/api/admin/admins",
+        Some(&owner),
+        Some(json!({"username": "weak", "password": "short", "role": "admin"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "admin passwords need 10+ characters");
+
+    let account_login = |name: &str, code: Option<String>| {
+        let mut body = json!({"username": name, "password": "correct horse battery"});
+        if let Some(c) = code {
+            body["totp_code"] = json!(c);
+        }
+        body
+    };
+    let (st, body): (StatusCode, serde_json::Value) =
+        send_json(&app, "POST", "/api/admin/login", None, Some(account_login("auditor", None))).await;
+    assert_eq!(st, StatusCode::OK);
+    let auditor = body["token"].as_str().unwrap().to_string();
+
+    // Viewer: can read, cannot write, cannot manage admins.
+    let (st, _) = send_raw(&app, "GET", "/api/admin/users", Some(&auditor), None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(put_settings(&app, &auditor, json!({})).await, StatusCode::FORBIDDEN);
+    let (st, _) = send_raw(&app, "GET", "/api/admin/admins", Some(&auditor), None).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let (st, _) = send_raw(&app, "GET", "/api/admin/maintenance/backup", Some(&auditor), None).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+
+    // Super admin enrolls TOTP; afterwards logins need a fresh code.
+    let (_, body): (_, serde_json::Value) =
+        send_json(&app, "POST", "/api/admin/login", None, Some(account_login("ops-lead", None))).await;
+    let lead = body["token"].as_str().unwrap().to_string();
+    let (st, setup): (StatusCode, serde_json::Value) =
+        send_json(&app, "POST", "/api/admin/me/totp/setup", Some(&lead), None).await;
+    assert_eq!(st, StatusCode::OK);
+    let secret = setup["secret"].as_str().unwrap().to_string();
+    assert!(setup["qr_data_uri"].as_str().unwrap().starts_with("data:image/svg+xml"));
+    let now = Utc::now().timestamp();
+    let enroll_code = totp::code_at(&secret, totp::current_step(now) - 1).unwrap();
+    let (st, _) = send_raw(
+        &app,
+        "POST",
+        "/api/admin/me/totp/enable",
+        Some(&lead),
+        Some(json!({"code": enroll_code})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+
+    let (st, body) =
+        send_raw(&app, "POST", "/api/admin/login", None, Some(account_login("ops-lead", None))).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+    assert_eq!(String::from_utf8_lossy(&body), "TOTP_REQUIRED");
+    let (st, _) = send_raw(
+        &app,
+        "POST",
+        "/api/admin/login",
+        None,
+        Some(account_login("ops-lead", Some("000000".into()))),
+    )
+    .await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+    // A code from a step already consumed cannot be replayed.
+    let (st, _) = send_raw(
+        &app,
+        "POST",
+        "/api/admin/login",
+        None,
+        Some(account_login("ops-lead", Some(enroll_code.clone()))),
+    )
+    .await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED, "TOTP codes are single use");
+    let fresh = totp::code_at(&secret, totp::current_step(now)).unwrap();
+    let (st, body): (StatusCode, serde_json::Value) = send_json(
+        &app,
+        "POST",
+        "/api/admin/login",
+        None,
+        Some(account_login("ops-lead", Some(fresh))),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let lead2 = body["token"].as_str().unwrap().to_string();
+
+    // Super admin can download a backup that is a valid SQLite database.
+    let (st, bytes) = send_raw(&app, "GET", "/api/admin/maintenance/backup", Some(&lead2), None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(bytes.starts_with(b"SQLite format 3\0"));
+
+    // Disabling an account ends its sessions immediately.
+    let accounts = state.db.list_admin_accounts().unwrap();
+    let auditor_id = &accounts.iter().find(|a| a.username == "auditor").unwrap().id;
+    let (st, _) = send_raw(
+        &app,
+        "PUT",
+        &format!("/api/admin/admins/{auditor_id}"),
+        Some(&lead2),
+        Some(json!({"role": "viewer", "disabled": true})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, _) = send_raw(&app, "GET", "/api/admin/users", Some(&auditor), None).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+
+    // Account logout only ends that account's sessions, not the owner's.
+    let (st, _) = send_raw(&app, "POST", "/api/admin/logout", Some(&lead2), None).await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, _) = send_raw(&app, "GET", "/api/admin/session", Some(&lead2), None).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+    let (st, _) = send_raw(&app, "GET", "/api/admin/session", Some(&owner), None).await;
+    assert_eq!(st, StatusCode::OK);
+
+    let (_, audit): (_, Vec<serde_json::Value>) =
+        send_json(&app, "GET", "/api/admin/audit", Some(&owner), None).await;
+    assert!(audit.iter().any(|e| e["actor"] == "ops-lead" && e["action"] == "maintenance.backup"));
+    assert!(audit.iter().any(|e| e["action"] == "admin.login_failed" && e["target"] == "ops-lead"));
 }

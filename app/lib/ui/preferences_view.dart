@@ -130,6 +130,21 @@ class _PreferencesViewState extends State<PreferencesView> {
     (100, '100 MB'),
   ];
 
+  /// Retention options under the administrator's maximum: "never" and longer
+  /// presets are dropped and the cap itself is offered.
+  static List<(int, String)> _ttlOptions(int? cap) {
+    if (cap == null || cap <= 0) return _ttls;
+    final options = _ttls.where((o) => o.$1 > 0 && o.$1 <= cap).toList();
+    if (!options.any((o) => o.$1 == cap)) {
+      options.add((cap, '${cap % 24 == 0 ? '${cap ~/ 24} 天' : '$cap 小时'}（上限）'));
+    }
+    return options;
+  }
+
+  /// The stored preference, shown as the cap when it exceeds it.
+  static int _ttlValue(List<(int, String)> options, int value, int? cap) =>
+      options.any((o) => o.$1 == value) ? value : (cap ?? value);
+
   static String _label<T>(List<(T, String)> options, T value) =>
       options.where((o) => o.$1 == value).firstOrNull?.$2 ?? '$value';
 
@@ -196,11 +211,14 @@ class _PreferencesViewState extends State<PreferencesView> {
           children: [
             PhoneRow(
               title: '默认过期时间',
-              value: _label(_ttls, c.defaultTtlHours),
+              value: _label(
+                _ttlOptions(c.maxItemTtlHours),
+                _ttlValue(_ttlOptions(c.maxItemTtlHours), c.defaultTtlHours, c.maxItemTtlHours),
+              ),
               onTap: () => _choose(
                 '过期时间',
-                _ttls,
-                c.defaultTtlHours,
+                _ttlOptions(c.maxItemTtlHours),
+                _ttlValue(_ttlOptions(c.maxItemTtlHours), c.defaultTtlHours, c.maxItemTtlHours),
                 c.setDefaultTtlHours,
               ),
             ),
@@ -336,13 +354,12 @@ class _PreferencesViewState extends State<PreferencesView> {
                         ),
                         const SizedBox(height: 8),
                         MacSegmentedControl<int>(
-                          selected: c.defaultTtlHours,
-                          items: const [
-                            (0, '永不过期'),
-                            (24, '24 小时'),
-                            (168, '7 天'),
-                            (720, '30 天'),
-                          ],
+                          selected: _ttlValue(
+                            _ttlOptions(c.maxItemTtlHours),
+                            c.defaultTtlHours,
+                            c.maxItemTtlHours,
+                          ),
+                          items: _ttlOptions(c.maxItemTtlHours),
                           onChanged: c.setDefaultTtlHours,
                         ),
                       ],

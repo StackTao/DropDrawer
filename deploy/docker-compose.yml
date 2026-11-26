@@ -12,8 +12,12 @@ services:
       - DROPDRAWER_DB_PATH=/data/dropdrawer.db
       - DROPDRAWER_LOCAL_STORAGE=/data/blobs
       - DROPDRAWER_LOCAL_MAX_FILE_BYTES=${DROPDRAWER_LOCAL_MAX_FILE_BYTES:-}
+      - DROPDRAWER_LOCAL_USER_QUOTA_BYTES=${DROPDRAWER_LOCAL_USER_QUOTA_BYTES:-}
       # Leave empty to have the server generate one and keep it in /data/jwt_secret.
       - DROPDRAWER_JWT_SECRET=${DROPDRAWER_JWT_SECRET:-}
+      # Vaultwarden-style admin console (/admin). Leave empty to keep /admin disabled.
+      # Accepts either a plaintext secret or an Argon2id PHC hash ($argon2id$...).
+      - DROPDRAWER_ADMIN_TOKEN=${DROPDRAWER_ADMIN_TOKEN:-}
       # Set to false once every account you need has been created.
       - DROPDRAWER_ALLOW_REGISTRATION=${DROPDRAWER_ALLOW_REGISTRATION:-true}
       - DROPDRAWER_TTL_CLEANUP_SECS=${DROPDRAWER_TTL_CLEANUP_SECS:-300}
@@ -21,5 +25,13 @@ services:
       - DROPDRAWER_GOOGLE_CLIENT_ID=${DROPDRAWER_GOOGLE_CLIENT_ID:-}
       - DROPDRAWER_GOOGLE_CLIENT_SECRET=${DROPDRAWER_GOOGLE_CLIENT_SECRET:-}
       - DROPDRAWER_GOOGLE_REDIRECT_URI=${DROPDRAWER_GOOGLE_REDIRECT_URI:-}
+      # Optional initial SMTP defaults (can also be configured live inside /admin).
+      - DROPDRAWER_SMTP_HOST=${DROPDRAWER_SMTP_HOST:-}
+      - DROPDRAWER_SMTP_PORT=${DROPDRAWER_SMTP_PORT:-587}
+      - DROPDRAWER_SMTP_SECURITY=${DROPDRAWER_SMTP_SECURITY:-start_tls}
+      - DROPDRAWER_SMTP_USERNAME=${DROPDRAWER_SMTP_USERNAME:-}
+      - DROPDRAWER_SMTP_PASSWORD=${DROPDRAWER_SMTP_PASSWORD:-}
+      - DROPDRAWER_SMTP_FROM=${DROPDRAWER_SMTP_FROM:-}
+      - DROPDRAWER_SMTP_FROM_NAME=${DROPDRAWER_SMTP_FROM_NAME:-DropDrawer}
     volumes:
       - ./data/server:/data

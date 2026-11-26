@@ -19,6 +19,7 @@ public final class SessionStorage: @unchecked Sendable {
         static let defaultTtlHours = "dd.default_ttl_hours"
         static let localFilePaths = "dd.local_file_paths"
         static let pendingCloudUploads = "dd.pending_cloud_uploads"
+        static let dismissedAnnouncement = "dd.dismissed_announcement"
         static let tokenAccount = "auth_jwt_token"
         static let unsignedSimTokenFallback = "dd.unsigned_sim_token"
     }
@@ -93,6 +94,12 @@ public final class SessionStorage: @unchecked Sendable {
                 defaults.removeObject(forKey: Keys.deviceId)
             }
         }
+    }
+
+    /// Id of the server announcement the user closed most recently.
+    public var dismissedAnnouncementId: String? {
+        get { defaults.string(forKey: Keys.dismissedAnnouncement) }
+        set { defaults.set(newValue, forKey: Keys.dismissedAnnouncement) }
     }
 
     public var dropPolicy: DropPolicy {

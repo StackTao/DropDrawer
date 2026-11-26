@@ -6,8 +6,13 @@ use std::{
 };
 
 use dropdrawer_server::{
-    db::Database, google_login::GoogleLoginConfig, routes::build_router_with_cors,
-    spawn_ttl_cleanup_task, state::AppState,
+    admin::AdminAuthConfig,
+    db::Database,
+    google_login::GoogleLoginConfig,
+    routes::build_router_with_cors,
+    settings::{GoogleProviderSettings, RegistrationMode, RuntimeSettings, SmtpSettings},
+    spawn_ttl_cleanup_task,
+    state::AppState,
 };
 use tracing_subscriber::EnvFilter;
 
@@ -28,25 +33,16 @@ async fn main() -> anyhow::Result<()> {
         .map(|value| value.trim().parse::<NonZeroU64>().map(NonZeroU64::get))
         .transpose()
         .map_err(|_| anyhow::anyhow!("DROPDRAWER_LOCAL_MAX_FILE_BYTES must be a positive byte count"))?;
+    let default_user_local_quota_bytes = get("DROPDRAWER_LOCAL_USER_QUOTA_BYTES")
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.trim().parse::<NonZeroU64>().map(NonZeroU64::get))
+        .transpose()
+        .map_err(|_| anyhow::anyhow!("DROPDRAWER_LOCAL_USER_QUOTA_BYTES must be a positive byte count"))?;
     let jwt_secret = resolve_jwt_secret(&db_path, get("DROPDRAWER_JWT_SECRET").as_deref())?;
     let cleanup_secs: u64 = get("DROPDRAWER_TTL_CLEANUP_SECS")
         .and_then(|v| v.parse().ok())
         .unwrap_or(300);
-    let google_config = GoogleLoginConfig::from_settings(get)?;
-    if google_config.is_some() {
-        tracing::info!("Google sign-in is enabled");
-    }
-    let db = Database::open(&db_path)?;
-    let state = AppState::with_google_login(
-        db,
-        jwt_secret,
-        PathBuf::from(local_storage),
-        google_config,
-        local_max_file_bytes,
-    );
-    if let Some(limit) = local_max_file_bytes {
-        tracing::info!(limit, "server-local per-file upload limit is enabled");
-    }
+    let google_config = GoogleLoginConfig::from_settings(&get)?;
     let allow_registration = get("DROPDRAWER_ALLOW_REGISTRATION")
         .map(|v| {
             !matches!(
@@ -55,9 +51,45 @@ async fn main() -> anyhow::Result<()> {
             )
         })
         .unwrap_or(true);
-    state.set_registration_open(allow_registration);
-    if !allow_registration {
-        tracing::info!("new account registration is disabled");
+    let mut env_defaults = RuntimeSettings {
+        registration_mode: if allow_registration {
+            RegistrationMode::Open
+        } else {
+            RegistrationMode::Closed
+        },
+        local_max_file_bytes,
+        default_user_local_quota_bytes,
+        smtp: SmtpSettings::from_env(&get),
+        ..RuntimeSettings::default()
+    };
+    if let Some(cfg) = &google_config {
+        env_defaults.google = GoogleProviderSettings::from_google_config(cfg);
+    }
+    let admin_auth = AdminAuthConfig::from_token(get("DROPDRAWER_ADMIN_TOKEN").as_deref());
+    if admin_auth.is_some() {
+        tracing::info!("Admin console enabled at /admin");
+    }
+
+    let db = Database::open(&db_path)?;
+    let state = AppState::with_full_config(
+        db,
+        jwt_secret,
+        PathBuf::from(local_storage),
+        env_defaults,
+        admin_auth,
+    );
+    let effective = state.runtime_settings();
+    if effective.google.enabled {
+        tracing::info!("Google sign-in is enabled");
+    }
+    if effective.smtp.is_usable() {
+        tracing::info!(host = %effective.smtp.host, "SMTP email delivery is enabled");
+    }
+    if let Some(limit) = effective.local_max_file_bytes {
+        tracing::info!(limit, "server-local per-file upload limit is enabled");
+    }
+    if effective.registration_mode != RegistrationMode::Open {
+        tracing::info!(mode = effective.registration_mode.as_str(), "restricted registration mode active");
     }
     spawn_ttl_cleanup_task(state.clone(), cleanup_secs);
 
@@ -76,7 +108,10 @@ async fn main() -> anyhow::Result<()> {
     let app = build_router_with_cors(state, cors_origins.as_deref());
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
     tracing::info!("DropDrawer server listening on http://{bind_addr}");
-    axum::serve(listener, app)
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     tracing::info!("DropDrawer server shut down cleanly");
