@@ -46,14 +46,14 @@ final class ShareViewController: UIViewController {
             for provider in item.attachments ?? [] {
                 if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier),
                    let url = await loadFileURL(provider: provider, typeId: UTType.fileURL.identifier) {
-                    if copyToQueue(source: url, queueDir: queueDir) { enqueued = true }
+                    if Self.copyToQueue(source: url, queueDir: queueDir) { enqueued = true }
                 } else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
                     if await saveImageAttachment(provider: provider, queueDir: queueDir) {
                         enqueued = true
                     }
                 } else if provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier),
                           let url = await loadFileURL(provider: provider, typeId: UTType.movie.identifier) {
-                    if copyToQueue(source: url, queueDir: queueDir) { enqueued = true }
+                    if Self.copyToQueue(source: url, queueDir: queueDir) { enqueued = true }
                 } else if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier),
                           let text = await loadString(provider: provider, typeId: UTType.plainText.identifier) {
                     let dest = queueDir.appendingPathComponent("text_\(UUID().uuidString).ddtext")
@@ -76,7 +76,7 @@ final class ShareViewController: UIViewController {
         finish()
     }
 
-    private func copyToQueue(source: URL, queueDir: URL) -> Bool {
+    private nonisolated static func copyToQueue(source: URL, queueDir: URL) -> Bool {
         let scoped = source.startAccessingSecurityScopedResource()
         defer { if scoped { source.stopAccessingSecurityScopedResource() } }
         let name = source.lastPathComponent.isEmpty ? "shared_\(UUID().uuidString)" : source.lastPathComponent
@@ -116,7 +116,7 @@ final class ShareViewController: UIViewController {
         await withCheckedContinuation { cont in
             provider.loadItem(forTypeIdentifier: UTType.image.identifier, options: nil) { item, _ in
                 if let url = item as? URL {
-                    cont.resume(returning: self.copyToQueue(source: url, queueDir: queueDir))
+                    cont.resume(returning: Self.copyToQueue(source: url, queueDir: queueDir))
                 } else if let image = item as? UIImage, let data = image.jpegData(compressionQuality: 0.92) {
                     let dest = queueDir.appendingPathComponent("image_\(Int(Date().timeIntervalSince1970 * 1000)).jpg")
                     cont.resume(returning: (try? data.write(to: dest)) != nil)
