@@ -1528,9 +1528,9 @@ footer { border-top: 1px solid var(--line); padding-block: 30px calc(30px + env(
         </article>
         <article class="dl-card" id="ios-download" data-plat="ios">
           <div class="dl-medallion" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="6" y="2.5" width="12" height="19" rx="3"/><path d="M10.5 18h3" stroke-linecap="round"/></svg></div>
-          <div class="dl-head"><h3>iOS / iPadOS</h3></div>
-          <p>目前提供源码。使用 Flutter 和 Xcode 构建，真机安装需要签名。</p>
-          <a class="btn btn-ghost btn-sm" href="https://github.com/StackTao/DropDrawer#ios" target="_blank" rel="noopener">构建指南</a>
+          <div class="dl-head"><h3>iOS / iPadOS</h3><span class="dl-tag">IPA</span></div>
+          <p>适用于 iOS / iPadOS 18 及以上。下载后请自行签名安装。</p>
+          <a class="btn btn-ghost btn-sm" href="https://github.com/StackTao/DropDrawer/releases/latest/download/DropDrawer-iOS-native-arm64-unsigned.ipa">下载原生 IPA</a>
         </article>
       </div>
       <div class="dl-release-links">
@@ -1773,8 +1773,7 @@ footer { border-top: 1px solid var(--line); padding-block: 30px calc(30px + env(
   let platform;
   if (isIOS) {
     platform = 'ios';
-    ctaLabel.textContent = '查看 iOS 构建指南';
-    $('#hero-primary-cta').href = '#ios-download';
+    ctaLabel.textContent = '下载 iOS IPA';
   } else if (/Android/i.test(ua)) {
     platform = 'android';
     ctaLabel.textContent = '下载 Android 版';
@@ -1794,10 +1793,9 @@ footer { border-top: 1px solid var(--line); padding-block: 30px calc(30px + env(
     const button = $('.btn', card);
     card.classList.add('featured');
     button.classList.replace('btn-ghost', 'btn-primary');
-    if (!isIOS) {
-      $('#hero-primary-cta').href = button.href;
-      $('#nav-dl-btn').href = button.href;
-    }
+    const downloadTarget = isIOS ? '#ios-download' : button.href;
+    $('#hero-primary-cta').href = downloadTarget;
+    $('#nav-dl-btn').href = downloadTarget;
   }
 
   // The download links work without JavaScript or the release metadata.
