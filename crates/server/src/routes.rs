@@ -1,3 +1,7 @@
+mod google_drive_oauth;
+
+use self::google_drive_oauth::{google_oauth_callback, start_google_oauth};
+
 use std::{sync::Arc, time::Duration as StdDuration};
 
 use axum::{
@@ -26,6 +30,7 @@ use tokio::sync::mpsc;
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use uuid::Uuid;
 
+use crate::admin::ClientIp;
 use crate::auth::{
     create_versioned_jwt, decode_jwt, hash_password, issue_user_token, validate_user_claims,
     verify_password, AuthUser,
@@ -259,6 +264,7 @@ async fn send_email_code(
 
 async fn reset_password(
     State(state): State<Arc<AppState>>,
+    ClientIp(ip): ClientIp,
     Json(req): Json<ResetPasswordRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let email = req.email.trim().to_ascii_lowercase();
@@ -309,8 +315,8 @@ async fn reset_password(
     // A reset password must also end sessions that may have been opened with the old one.
     state.db.bump_token_version(&user.id).map_err(internal_err)?;
     state.disconnect_user(&user.id);
-    state.failed_logins.reset(&user.username.to_lowercase());
-    state.failed_logins.reset(&email);
+    state.failed_logins.reset(&login_limit_key(&ip, &user.username));
+    state.failed_logins.reset(&login_limit_key(&ip, &email));
 
     Ok(Json(serde_json::json!({ "ok": true })))
 }
@@ -435,8 +441,13 @@ async fn register(
     Ok(Json(AuthResponse { token, user }))
 }
 
+fn login_limit_key(ip: &str, username: &str) -> String {
+    format!("{ip}|{}", username.trim().to_lowercase())
+}
+
 async fn login(
     State(state): State<Arc<AppState>>,
+    ClientIp(ip): ClientIp,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<AuthResponse>, (StatusCode, String)> {
     if !state.runtime_settings().password_login_enabled {
@@ -445,7 +456,7 @@ async fn login(
             "当前服务器已关闭账号密码登录，请使用其他已启用的登录方式".to_string(),
         ));
     }
-    let limit_key = req.username.trim().to_lowercase();
+    let limit_key = login_limit_key(&ip, &req.username);
     if state.failed_logins.is_blocked(&limit_key) {
         return Err((
             StatusCode::TOO_MANY_REQUESTS,
@@ -784,141 +795,6 @@ async fn check_storage_health(
             message: err.to_string(),
         })),
     }
-}
-
-#[derive(Debug, Deserialize)]
-struct GoogleOAuthStartRequest {
-    name: String,
-    client_id: String,
-    client_secret: String,
-    #[serde(default)]
-    folder_id: String,
-    #[serde(default)]
-    is_default: bool,
-    redirect_uri: String,
-}
-
-async fn start_google_oauth(
-    auth: AuthUser,
-    State(state): State<Arc<AppState>>,
-    Json(req): Json<GoogleOAuthStartRequest>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    policy::ensure_backend_kind_allowed(
-        &state.runtime_settings().storage_policy,
-        protocol::StorageBackendKind::GoogleDrive,
-    )?;
-    let nonce = Uuid::new_v4().to_string();
-    let folder_id = if req.folder_id.trim().is_empty() {
-        "root".to_string()
-    } else {
-        req.folder_id.trim().to_string()
-    };
-    state.pending_google_oauth.insert(
-        nonce.clone(),
-        crate::state::PendingGoogleOAuth {
-            user_id: auth.user_id,
-            name: req.name.trim().to_string(),
-            client_id: req.client_id.trim().to_string(),
-            client_secret: req.client_secret.trim().to_string(),
-            folder_id,
-            is_default: req.is_default,
-            redirect_uri: req.redirect_uri.trim().to_string(),
-        },
-    );
-
-    let auth_url = format!(
-        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=consent&state={}",
-        urlencoding::encode(req.client_id.trim()),
-        urlencoding::encode(req.redirect_uri.trim()),
-        urlencoding::encode("https://www.googleapis.com/auth/drive.file"),
-        urlencoding::encode(&nonce)
-    );
-
-    Ok(Json(serde_json::json!({
-        "auth_url": auth_url,
-        "state": nonce,
-    })))
-}
-
-#[derive(Debug, Deserialize)]
-struct GoogleOAuthCallbackQuery {
-    #[serde(default)]
-    code: Option<String>,
-    #[serde(default)]
-    state: Option<String>,
-    #[serde(default)]
-    error: Option<String>,
-}
-
-async fn google_oauth_callback(
-    State(state): State<Arc<AppState>>,
-    Query(q): Query<GoogleOAuthCallbackQuery>,
-) -> Html<String> {
-    if let Some(err) = q.error {
-        return Html(format!(
-            "<html><body style='font-family:-apple-system,sans-serif;background:#161618;color:#f5f5f7;padding:40px'><h2>授权已取消或失败</h2><p>{err}</p></body></html>"
-        ));
-    }
-    let (Some(code), Some(nonce)) = (q.code, q.state) else {
-        return Html("<html><body style='font-family:-apple-system,sans-serif;background:#161618;color:#f5f5f7;padding:40px'><h2>缺少授权参数</h2></body></html>".to_string());
-    };
-    let Some((_, pending)) = state.pending_google_oauth.remove(&nonce) else {
-        return Html("<html><body style='font-family:-apple-system,sans-serif;background:#161618;color:#f5f5f7;padding:40px'><h2>授权会话已过期，请回到 DropDrawer 重新发起</h2></body></html>".to_string());
-    };
-
-    let resp = state
-        .http
-        .post("https://oauth2.googleapis.com/token")
-        .form(&[
-            ("code", code.as_str()),
-            ("client_id", pending.client_id.as_str()),
-            ("client_secret", pending.client_secret.as_str()),
-            ("redirect_uri", pending.redirect_uri.as_str()),
-            ("grant_type", "authorization_code"),
-        ])
-        .send()
-        .await;
-
-    let Ok(resp) = resp else {
-        return Html("<html><body style='font-family:-apple-system,sans-serif;background:#161618;color:#f5f5f7;padding:40px'><h2>无法连接 Google OAuth 服务器（请检查本机网络/代理）</h2></body></html>".to_string());
-    };
-    let status = resp.status();
-    let body_text = resp.text().await.unwrap_or_default();
-    if !status.is_success() {
-        return Html(format!(
-            "<html><body style='font-family:-apple-system,sans-serif;background:#161618;color:#f5f5f7;padding:40px'><h2>换取 Token 失败 ({status})</h2><pre>{body_text}</pre></body></html>"
-        ));
-    }
-
-    let parsed: serde_json::Value = serde_json::from_str(&body_text).unwrap_or_default();
-    let Some(refresh_token) = parsed["refresh_token"].as_str().filter(|s| !s.is_empty()) else {
-        return Html(format!(
-            "<html><body style='font-family:-apple-system,sans-serif;background:#161618;color:#f5f5f7;padding:40px'><h2>未返回 refresh_token</h2><p>请确保授权页面勾选同意权限。</p><pre>{body_text}</pre></body></html>"
-        ));
-    };
-
-    let cfg = protocol::StorageBackendConfig::GoogleDrive {
-        client_id: pending.client_id,
-        client_secret: pending.client_secret,
-        refresh_token: refresh_token.to_string(),
-        folder_id: pending.folder_id,
-        api_base_url: None,
-        token_url: None,
-    };
-    let backend_id = Uuid::new_v4().to_string();
-    if let Err(err) = state.db.create_storage_backend(
-        &backend_id,
-        &pending.user_id,
-        &pending.name,
-        &cfg,
-        pending.is_default,
-    ) {
-        return Html(format!(
-            "<html><body style='font-family:-apple-system,sans-serif;background:#161618;color:#f5f5f7;padding:40px'><h2>保存存储配置失败</h2><p>{err}</p></body></html>"
-        ));
-    }
-
-    Html("<html><body style='font-family:-apple-system,sans-serif;background:#161618;color:#f5f5f7;padding:48px;text-align:center'><h2>Google Drive 已成功绑定到 DropDrawer</h2><p style='color:#a1a1aa'>可以关闭此页面，回到 DropDrawer 点击刷新即可使用。</p></body></html>".to_string())
 }
 
 // ============================================================================
@@ -1838,14 +1714,11 @@ async fn validate_share_access(
 
 async fn public_share_meta(
     State(state): State<Arc<AppState>>,
+    ClientIp(ip): ClientIp,
     Path(code): Path<String>,
     Query(query): Query<PublicShareQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let share = state
-        .db
-        .get_share_link(&code)
-        .map_err(internal_err)?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, "分享链接不存在或已被撤销".to_string()))?;
+    let share = lookup_public_share(&state, &ip, &code)?;
     policy::ensure_share_access(&state, &share.user_id)?;
 
     if let Some(exp) = share.expires_at {
@@ -1917,14 +1790,11 @@ async fn public_share_meta(
 
 async fn public_share_download(
     State(state): State<Arc<AppState>>,
+    ClientIp(ip): ClientIp,
     Path(code): Path<String>,
     Query(query): Query<PublicShareQuery>,
 ) -> Result<Response, (StatusCode, String)> {
-    let share = state
-        .db
-        .get_share_link(&code)
-        .map_err(internal_err)?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, "分享链接不存在或已被撤销".to_string()))?;
+    let share = lookup_public_share(&state, &ip, &code)?;
     policy::ensure_share_access(&state, &share.user_id)?;
 
     validate_share_access(&state, &share, query.passcode.as_deref()).await?;
@@ -2011,257 +1881,40 @@ async fn public_share_download(
     }
 }
 
-async fn public_share_page(Path(code): Path<String>) -> Html<String> {
-    let safe_code = code
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
-        .collect::<String>();
-    Html(PUBLIC_SHARE_HTML.replace("__SHARE_CODE__", &safe_code))
+fn lookup_public_share(
+    state: &AppState,
+    ip: &str,
+    code: &str,
+) -> Result<crate::db::ShareLinkRow, (StatusCode, String)> {
+    if state.failed_share_lookups.is_blocked(ip) {
+        return Err((StatusCode::TOO_MANY_REQUESTS, "分享链接查询过多，请稍后重试".to_string()));
+    }
+    // Both legacy eight-character codes and new twelve-character codes are valid.
+    if matches!(code.len(), 8 | 12)
+        && code.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        && let Some(share) = state.db.get_share_link(code).map_err(internal_err)?
+    {
+        return Ok(share);
+    }
+    state.failed_share_lookups.record_failure(ip);
+    Err((StatusCode::NOT_FOUND, "分享链接不存在或已被撤销".to_string()))
+}
+
+async fn public_share_page(
+    State(state): State<Arc<AppState>>,
+    ClientIp(ip): ClientIp,
+    Path(code): Path<String>,
+) -> Result<Html<String>, (StatusCode, String)> {
+    let share = lookup_public_share(&state, &ip, &code)?;
+    Ok(Html(PUBLIC_SHARE_HTML.replace("__SHARE_CODE__", &share.code)))
 }
 
 fn generate_short_code() -> String {
-    const ALPHABET: &[u8] = b"abcdefghjkmnpqrstuvwxyz23456789";
-    let bytes = *Uuid::new_v4().as_bytes();
-    (0..8)
-        .map(|i| ALPHABET[(bytes[i] as usize) % ALPHABET.len()] as char)
-        .collect()
+    use rand::{distributions::Alphanumeric, rngs::OsRng, Rng};
+    OsRng.sample_iter(Alphanumeric).take(12).map(char::from).collect()
 }
 
-const PUBLIC_SHARE_HTML: &str = r#"<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>DropDrawer 外链提取</title>
-<style>
-  :root { color-scheme: dark; }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
-    background: radial-gradient(circle at top, #1f2430 0%, #0e1015 70%);
-    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
-    color: #f5f5f7; padding: 20px;
-  }
-  .card {
-    width: 100%; max-width: 480px; background: rgba(28, 28, 32, 0.88);
-    border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 18px;
-    padding: 26px 24px; backdrop-filter: blur(24px);
-    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
-  }
-  .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
-  .logo {
-    width: 30px; height: 30px; border-radius: 8px;
-    background: linear-gradient(135deg, #38bdf8, #2563eb);
-    display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px;
-  }
-  .brand span { font-size: 14px; font-weight: 600; color: rgba(245,245,247,0.9); }
-  .name { font-size: 17px; font-weight: 600; word-break: break-all; margin: 0 0 6px; }
-  .meta { font-size: 12.5px; color: rgba(235,235,245,0.55); margin-bottom: 18px; }
-  .input-row { display: flex; gap: 8px; margin-bottom: 14px; }
-  input {
-    flex: 1; background: rgba(0,0,0,0.32); border: 1px solid rgba(255,255,255,0.14);
-    border-radius: 10px; padding: 10px 12px; color: #fff; font-size: 14px; outline: none;
-  }
-  input:focus { border-color: #0a84ff; }
-  button, a.btn {
-    display: inline-flex; align-items: center; justify-content: center; width: 100%;
-    height: 40px; border-radius: 10px; border: none; cursor: pointer;
-    font-size: 13.5px; font-weight: 600; text-decoration: none;
-    background: #f5f5f7; color: #111113; transition: opacity .15s;
-  }
-  button.secondary, a.mini-btn {
-    background: rgba(255,255,255,0.1); color: #f5f5f7; width: auto; padding: 0 12px;
-    height: 30px; font-size: 12px; border-radius: 8px; text-decoration: none;
-    display: inline-flex; align-items: center; justify-content: center; border: none; cursor: pointer;
-    flex-shrink: 0;
-  }
-  button:hover, a.btn:hover, a.mini-btn:hover { opacity: 0.88; }
-  pre.text-box {
-    background: rgba(0,0,0,0.32); border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 10px; padding: 12px; white-space: pre-wrap; word-break: break-word;
-    max-height: 240px; overflow: auto; font-size: 13px; margin: 0 0 14px;
-  }
-  .bundle-list {
-    display: flex; flex-direction: column; gap: 8px;
-    max-height: 320px; overflow-y: auto; margin-bottom: 16px;
-  }
-  .bundle-row {
-    display: flex; align-items: center; gap: 10px; padding: 10px 12px;
-    background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 11px;
-  }
-  .bundle-info { flex: 1; min-width: 0; }
-  .bundle-title {
-    font-size: 13px; font-weight: 500; white-space: nowrap;
-    overflow: hidden; text-overflow: ellipsis;
-  }
-  .bundle-sub { font-size: 11.5px; color: rgba(235,235,245,0.5); margin-top: 2px; }
-  .err { color: #ff453a; font-size: 12.5px; margin-top: 8px; }
-</style>
-</head>
-<body>
-<div class="card">
-  <div class="brand"><div class="logo">D</div><span>DropDrawer 外链分享</span></div>
-  <div id="app">正在加载分享信息...</div>
-</div>
-<script>
-const code = "__SHARE_CODE__";
-let currentPasscode = new URLSearchParams(location.search).get("p") || "";
-
-function fmtBytes(b) {
-  if (b < 1024) return b + " B";
-  if (b < 1048576) return (b / 1024).toFixed(1) + " KB";
-  if (b < 1073741824) return (b / 1048576).toFixed(1) + " MB";
-  return (b / 1073741824).toFixed(2) + " GB";
-}
-
-function esc(s) {
-  return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-}
-
-function buildDlUrl(itemId) {
-  const params = new URLSearchParams();
-  if (itemId) params.set("item_id", itemId);
-  if (currentPasscode) params.set("passcode", currentPasscode);
-  const qs = params.toString();
-  return "/api/s/" + encodeURIComponent(code) + "/download" + (qs ? ("?" + qs) : "");
-}
-
-async function load(errMsg) {
-  const q = currentPasscode ? ("?passcode=" + encodeURIComponent(currentPasscode)) : "";
-  const resp = await fetch("/api/s/" + encodeURIComponent(code) + "/meta" + q);
-  const el = document.getElementById("app");
-  if (!resp.ok) {
-    const t = await resp.text();
-    el.innerHTML = `<p class="name">无法访问该分享</p><p class="err">${esc(t || resp.statusText)}</p>`;
-    return;
-  }
-  const d = await resp.json();
-  const items = Array.isArray(d.items) ? d.items : [];
-  const countInfo = items.length > 1 ? `共 ${items.length} 项 · ` : "";
-  const limitInfo = d.max_downloads ? ` · 已下载 ${d.download_count}/${d.max_downloads} 次` : ` · 已下载 ${d.download_count} 次`;
-  const expInfo = d.expires_at ? ` · 有效期至 ${new Date(d.expires_at).toLocaleString()}` : "";
-
-  if (d.locked) {
-    el.innerHTML = `
-      <p class="name">${esc(d.name)}</p>
-      <p class="meta">${countInfo}${fmtBytes(d.size)}${limitInfo}${expInfo}</p>
-      <div class="input-row">
-        <input id="pw" placeholder="请输入提取码" value="${esc(currentPasscode)}" />
-        <button class="secondary" style="height:40px;padding:0 16px;" onclick="unlock()">提取</button>
-      </div>
-      ${errMsg ? `<div class="err">${esc(errMsg)}</div>` : ""}
-    `;
-    document.getElementById("pw").addEventListener("keydown", e => { if (e.key === "Enter") unlock(); });
-    return;
-  }
-
-  if (items.length > 1) {
-    window._bundleItems = items;
-    const fileItems = items.filter(it => it.kind === "file");
-    const rowsHtml = items.map((it, idx) => {
-      if (it.kind === "text") {
-        return `
-          <div class="bundle-row">
-            <div class="bundle-info">
-              <div class="bundle-title">${esc(it.name)}</div>
-              <div class="bundle-sub">文本片段 · ${fmtBytes(it.size)}</div>
-            </div>
-            <button class="mini-btn" onclick="copyBundleText(${idx}, this)">复制文本</button>
-          </div>
-        `;
-      }
-      return `
-        <div class="bundle-row">
-          <div class="bundle-info">
-            <div class="bundle-title">${esc(it.name)}</div>
-            <div class="bundle-sub">文件 · ${fmtBytes(it.size)}</div>
-          </div>
-          <a class="mini-btn" href="${buildDlUrl(it.id)}">下载</a>
-        </div>
-      `;
-    }).join("");
-
-    el.innerHTML = `
-      <p class="name">${esc(d.name)}</p>
-      <p class="meta">${countInfo}${fmtBytes(d.size)}${limitInfo}${expInfo}</p>
-      <div class="bundle-list">${rowsHtml}</div>
-      ${fileItems.length > 0 ? `<button onclick="downloadAllFiles(this)">全部下载 (${fileItems.length} 个文件)</button>` : ""}
-    `;
-    return;
-  }
-
-  if (d.kind === "text") {
-    el.innerHTML = `
-      <p class="name">${esc(d.name)}</p>
-      <p class="meta">文本片段 · ${fmtBytes(d.size)}${expInfo}</p>
-      <pre class="text-box" id="txt">${esc(d.text_content || "")}</pre>
-      <button onclick="copyTxt(this)">复制全部文本</button>
-    `;
-    window._sharedText = d.text_content || "";
-    return;
-  }
-
-  el.innerHTML = `
-    <p class="name">${esc(d.name)}</p>
-    <p class="meta">${fmtBytes(d.size)}${limitInfo}${expInfo}</p>
-    <a class="btn" href="${buildDlUrl(null)}">立即下载文件</a>
-  `;
-}
-
-async function unlock() {
-  const typed = document.getElementById("pw").value.trim();
-  if (!typed) return;
-  const q = "?passcode=" + encodeURIComponent(typed);
-  const resp = await fetch("/api/s/" + encodeURIComponent(code) + "/meta" + q);
-  // Failed attempts are rate limited, so never resend a rejected passcode.
-  if (!resp.ok) {
-    currentPasscode = "";
-    load((await resp.text()) || resp.statusText);
-    return;
-  }
-  const d = await resp.json();
-  if (d.locked) {
-    currentPasscode = "";
-    load("提取码不正确，请重试");
-  } else {
-    currentPasscode = typed;
-    load();
-  }
-}
-
-function copyTxt(btn) {
-  navigator.clipboard.writeText(window._sharedText || "");
-  if (btn) btn.textContent = "已复制到剪贴板";
-}
-
-function copyBundleText(idx, btn) {
-  const it = (window._bundleItems || [])[idx];
-  if (!it) return;
-  navigator.clipboard.writeText(it.text_content || it.name || "");
-  if (btn) btn.textContent = "已复制";
-}
-
-function downloadAllFiles(btn) {
-  const files = (window._bundleItems || []).filter(it => it.kind === "file");
-  files.forEach((it, i) => {
-    setTimeout(() => {
-      const a = document.createElement("a");
-      a.href = buildDlUrl(it.id);
-      a.download = it.name;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    }, i * 380);
-  });
-  if (btn) btn.textContent = `已触发 ${files.length} 个文件下载`;
-}
-
-load();
-</script>
-</body>
-</html>
-"#;
+const PUBLIC_SHARE_HTML: &str = include_str!("routes/public_share.html");
 
 // ============================================================================
 // WebSocket Handler

@@ -31,6 +31,8 @@ pub fn spawn_ttl_cleanup_task(state: Arc<AppState>, interval_secs: u64) {
 }
 
 pub async fn run_ttl_cleanup_once(state: &Arc<AppState>) -> anyhow::Result<usize> {
+    let now = std::time::Instant::now();
+    state.pending_google_oauth.retain(|_, pending| pending.expires_at > now);
     let expired = state.db.list_expired_items(Utc::now())?;
     let mut cleaned = 0usize;
     for item in expired {

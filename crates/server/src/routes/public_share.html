@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>DropDrawer 外链提取</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(circle at top, #1f2430 0%, #0e1015 70%);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+    color: #f5f5f7; padding: 20px;
+  }
+  .card {
+    width: 100%; max-width: 480px; background: rgba(28, 28, 32, 0.88);
+    border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 18px;
+    padding: 26px 24px; backdrop-filter: blur(24px);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+  .logo {
+    width: 30px; height: 30px; border-radius: 8px;
+    background: linear-gradient(135deg, #38bdf8, #2563eb);
+    display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px;
+  }
+  .brand span { font-size: 14px; font-weight: 600; color: rgba(245,245,247,0.9); }
+  .name { font-size: 17px; font-weight: 600; word-break: break-all; margin: 0 0 6px; }
+  .meta { font-size: 12.5px; color: rgba(235,235,245,0.55); margin-bottom: 18px; }
+  .input-row { display: flex; gap: 8px; margin-bottom: 14px; }
+  input {
+    flex: 1; background: rgba(0,0,0,0.32); border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 10px; padding: 10px 12px; color: #fff; font-size: 14px; outline: none;
+  }
+  input:focus { border-color: #0a84ff; }
+  button, a.btn {
+    display: inline-flex; align-items: center; justify-content: center; width: 100%;
+    height: 40px; border-radius: 10px; border: none; cursor: pointer;
+    font-size: 13.5px; font-weight: 600; text-decoration: none;
+    background: #f5f5f7; color: #111113; transition: opacity .15s;
+  }
+  button.secondary, a.mini-btn {
+    background: rgba(255,255,255,0.1); color: #f5f5f7; width: auto; padding: 0 12px;
+    height: 30px; font-size: 12px; border-radius: 8px; text-decoration: none;
+    display: inline-flex; align-items: center; justify-content: center; border: none; cursor: pointer;
+    flex-shrink: 0;
+  }
+  button:hover, a.btn:hover, a.mini-btn:hover { opacity: 0.88; }
+  pre.text-box {
+    background: rgba(0,0,0,0.32); border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 10px; padding: 12px; white-space: pre-wrap; word-break: break-word;
+    max-height: 240px; overflow: auto; font-size: 13px; margin: 0 0 14px;
+  }
+  .bundle-list {
+    display: flex; flex-direction: column; gap: 8px;
+    max-height: 320px; overflow-y: auto; margin-bottom: 16px;
+  }
+  .bundle-row {
+    display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+    background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 11px;
+  }
+  .bundle-info { flex: 1; min-width: 0; }
+  .bundle-title {
+    font-size: 13px; font-weight: 500; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .bundle-sub { font-size: 11.5px; color: rgba(235,235,245,0.5); margin-top: 2px; }
+  .err { color: #ff453a; font-size: 12.5px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="brand"><div class="logo">D</div><span>DropDrawer 外链分享</span></div>
+  <div id="app">正在加载分享信息...</div>
+</div>
+<script>
+const code = "__SHARE_CODE__";
+let currentPasscode = new URLSearchParams(location.search).get("p") || "";
+
+function fmtBytes(b) {
+  if (b < 1024) return b + " B";
+  if (b < 1048576) return (b / 1024).toFixed(1) + " KB";
+  if (b < 1073741824) return (b / 1048576).toFixed(1) + " MB";
+  return (b / 1073741824).toFixed(2) + " GB";
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+
+function buildDlUrl(itemId) {
+  const params = new URLSearchParams();
+  if (itemId) params.set("item_id", itemId);
+  if (currentPasscode) params.set("passcode", currentPasscode);
+  const qs = params.toString();
+  return "/api/s/" + encodeURIComponent(code) + "/download" + (qs ? ("?" + qs) : "");
+}
+
+async function load(errMsg) {
+  const q = currentPasscode ? ("?passcode=" + encodeURIComponent(currentPasscode)) : "";
+  const resp = await fetch("/api/s/" + encodeURIComponent(code) + "/meta" + q);
+  const el = document.getElementById("app");
+  if (!resp.ok) {
+    const t = await resp.text();
+    el.innerHTML = `<p class="name">无法访问该分享</p><p class="err">${esc(t || resp.statusText)}</p>`;
+    return;
+  }
+  const d = await resp.json();
+  const items = Array.isArray(d.items) ? d.items : [];
+  const countInfo = items.length > 1 ? `共 ${items.length} 项 · ` : "";
+  const limitInfo = d.max_downloads ? ` · 已下载 ${d.download_count}/${d.max_downloads} 次` : ` · 已下载 ${d.download_count} 次`;
+  const expInfo = d.expires_at ? ` · 有效期至 ${new Date(d.expires_at).toLocaleString()}` : "";
+
+  if (d.locked) {
+    el.innerHTML = `
+      <p class="name">${esc(d.name)}</p>
+      <p class="meta">${countInfo}${fmtBytes(d.size)}${limitInfo}${expInfo}</p>
+      <div class="input-row">
+        <input id="pw" placeholder="请输入提取码" value="${esc(currentPasscode)}" />
+        <button class="secondary" style="height:40px;padding:0 16px;" onclick="unlock()">提取</button>
+      </div>
+      ${errMsg ? `<div class="err">${esc(errMsg)}</div>` : ""}
+    `;
+    document.getElementById("pw").addEventListener("keydown", e => { if (e.key === "Enter") unlock(); });
+    return;
+  }
+
+  if (items.length > 1) {
+    window._bundleItems = items;
+    const fileItems = items.filter(it => it.kind === "file");
+    const rowsHtml = items.map((it, idx) => {
+      if (it.kind === "text") {
+        return `
+          <div class="bundle-row">
+            <div class="bundle-info">
+              <div class="bundle-title">${esc(it.name)}</div>
+              <div class="bundle-sub">文本片段 · ${fmtBytes(it.size)}</div>
+            </div>
+            <button class="mini-btn" onclick="copyBundleText(${idx}, this)">复制文本</button>
+          </div>
+        `;
+      }
+      return `
+        <div class="bundle-row">
+          <div class="bundle-info">
+            <div class="bundle-title">${esc(it.name)}</div>
+            <div class="bundle-sub">文件 · ${fmtBytes(it.size)}</div>
+          </div>
+          <a class="mini-btn" href="${buildDlUrl(it.id)}">下载</a>
+        </div>
+      `;
+    }).join("");
+
+    el.innerHTML = `
+      <p class="name">${esc(d.name)}</p>
+      <p class="meta">${countInfo}${fmtBytes(d.size)}${limitInfo}${expInfo}</p>
+      <div class="bundle-list">${rowsHtml}</div>
+      ${fileItems.length > 0 ? `<button onclick="downloadAllFiles(this)">全部下载 (${fileItems.length} 个文件)</button>` : ""}
+    `;
+    return;
+  }
+
+  if (d.kind === "text") {
+    el.innerHTML = `
+      <p class="name">${esc(d.name)}</p>
+      <p class="meta">文本片段 · ${fmtBytes(d.size)}${expInfo}</p>
+      <pre class="text-box" id="txt">${esc(d.text_content || "")}</pre>
+      <button onclick="copyTxt(this)">复制全部文本</button>
+    `;
+    window._sharedText = d.text_content || "";
+    return;
+  }
+
+  el.innerHTML = `
+    <p class="name">${esc(d.name)}</p>
+    <p class="meta">${fmtBytes(d.size)}${limitInfo}${expInfo}</p>
+    <a class="btn" href="${buildDlUrl(null)}">立即下载文件</a>
+  `;
+}
+
+async function unlock() {
+  const typed = document.getElementById("pw").value.trim();
+  if (!typed) return;
+  const q = "?passcode=" + encodeURIComponent(typed);
+  const resp = await fetch("/api/s/" + encodeURIComponent(code) + "/meta" + q);
+  // Failed attempts are rate limited, so never resend a rejected passcode.
+  if (!resp.ok) {
+    currentPasscode = "";
+    load((await resp.text()) || resp.statusText);
+    return;
+  }
+  const d = await resp.json();
+  if (d.locked) {
+    currentPasscode = "";
+    load("提取码不正确，请重试");
+  } else {
+    currentPasscode = typed;
+    load();
+  }
+}
+
+function copyTxt(btn) {
+  navigator.clipboard.writeText(window._sharedText || "");
+  if (btn) btn.textContent = "已复制到剪贴板";
+}
+
+function copyBundleText(idx, btn) {
+  const it = (window._bundleItems || [])[idx];
+  if (!it) return;
+  navigator.clipboard.writeText(it.text_content || it.name || "");
+  if (btn) btn.textContent = "已复制";
+}
+
+function downloadAllFiles(btn) {
+  const files = (window._bundleItems || []).filter(it => it.kind === "file");
+  files.forEach((it, i) => {
+    setTimeout(() => {
+      const a = document.createElement("a");
+      a.href = buildDlUrl(it.id);
+      a.download = it.name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }, i * 380);
+  });
+  if (btn) btn.textContent = `已触发 ${files.length} 个文件下载`;
+}
+
+load();
+</script>
+</body>
+</html>

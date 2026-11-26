@@ -3,15 +3,16 @@ use std::sync::{Arc, Mutex};
 
 use axum::{
     body::Body,
-    extract::{Path as AxumPath, State},
+    extract::{ConnectInfo, Path as AxumPath, State},
     http::{header, HeaderMap, Request, StatusCode},
     response::IntoResponse,
     routing::{get, post, put},
-    Json, Router,
+    Extension, Json, Router,
 };
 use chrono::{Duration, Utc};
 use futures_util::StreamExt;
 use dropdrawer_server::{
+    admin::TrustProxy,
     db::{Database, DrawerItemRow},
     routes::build_router,
     run_ttl_cleanup_once,
@@ -944,7 +945,7 @@ async fn test_native_google_drive_resumable_upload_download_delete_and_s3() {
 
 #[tokio::test]
 async fn test_public_share_link_passcode_limit_and_revoke() {
-    let (app, _state, _tmp) = spawn_test_server().await;
+    let (app, state, _tmp) = spawn_test_server().await;
 
     let (_, auth): (StatusCode, AuthResponse) = send_json(
         &app,
@@ -1020,6 +1021,8 @@ async fn test_public_share_link_passcode_limit_and_revoke() {
     assert!(share.has_passcode);
     assert_eq!(share.max_downloads, Some(1));
     assert_eq!(share.share_path, format!("/s/{}", share.code));
+    assert_eq!(share.code.len(), 12);
+    assert!(share.code.bytes().all(|byte| byte.is_ascii_alphanumeric()));
 
     // 3. List shares includes the newly created share.
     let (st, shares): (StatusCode, Vec<ShareLinkInfo>) =
@@ -1027,6 +1030,15 @@ async fn test_public_share_link_passcode_limit_and_revoke() {
     assert_eq!(st, StatusCode::OK);
     assert_eq!(shares.len(), 1);
     assert_eq!(shares[0].code, share.code);
+
+    // The eight-character links created by older versions remain usable.
+    let mut legacy = state.db.get_share_link(&share.code).unwrap().unwrap();
+    legacy.code = "abcdefgh".into();
+    state.db.create_share_link(&legacy, std::slice::from_ref(&item.id)).unwrap();
+    let (status, _) = send_raw(&app, "GET", "/s/abcdefgh", None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = send_raw(&app, "GET", "/api/s/abcdefgh/meta", None, None).await;
+    assert_eq!(status, StatusCode::OK);
 
     // 4. Public HTML page loads cleanly and embeds the share code.
     let html_resp = app
@@ -1529,6 +1541,75 @@ async fn test_local_storage_cannot_escape_server_storage_area() {
 }
 
 #[tokio::test]
+async fn google_drive_callback_uses_static_html_and_expires_pending_states() {
+    use std::time::{Duration, Instant};
+    use dropdrawer_server::state::PendingGoogleOAuth;
+
+    let (app, state, _tmp) = spawn_test_server().await;
+    let pending = PendingGoogleOAuth {
+        user_id: "test-user".into(),
+        name: "test-drive".into(),
+        client_id: "test-client".into(),
+        client_secret: "test-secret".into(),
+        folder_id: "root".into(),
+        is_default: false,
+        redirect_uri: "http://example.test/callback".into(),
+        expires_at: Instant::now() + Duration::from_secs(60),
+    };
+    state.pending_google_oauth.insert("cancelled".into(), pending.clone());
+    let uri = "/api/oauth/google/callback?error=%3Cb%3Ecallback-marker%3C%2Fb%3E&state=cancelled";
+    let response = app.clone().oneshot(Request::get(uri).body(Body::empty()).unwrap())
+        .await.unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(response.headers()[header::CONTENT_SECURITY_POLICY]
+        .to_str().unwrap().contains("default-src 'none'"));
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    let body = axum::body::to_bytes(response.into_body(), 8192).await.unwrap();
+    assert!(!String::from_utf8_lossy(&body).contains("callback-marker"));
+    assert!(!state.pending_google_oauth.contains_key("cancelled"));
+
+    let expired = PendingGoogleOAuth {
+        expires_at: Instant::now() - Duration::from_secs(1),
+        ..pending.clone()
+    };
+    state.pending_google_oauth.insert("callback-expired".into(), expired.clone());
+    let (status, body) = send_raw(
+        &app, "GET", "/api/oauth/google/callback?state=callback-expired&code=unused", None, None,
+    ).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(String::from_utf8_lossy(&body).contains("授权会话已过期"));
+    assert!(!state.pending_google_oauth.contains_key("callback-expired"));
+
+    state.pending_google_oauth.insert("cleanup-expired".into(), expired);
+    state.pending_google_oauth.insert("still-valid".into(), pending);
+    run_ttl_cleanup_once(&state).await.unwrap();
+    assert!(!state.pending_google_oauth.contains_key("cleanup-expired"));
+    assert!(state.pending_google_oauth.contains_key("still-valid"));
+}
+
+#[tokio::test]
+async fn public_share_misses_are_limited_across_endpoints() {
+    let (app, _state, _tmp) = spawn_test_server().await;
+    let peer = "192.168.50.10:12000".parse::<std::net::SocketAddr>().unwrap();
+    let app_at_peer = app.clone().layer(Extension(ConnectInfo(peer)));
+    for attempt in 0..60 {
+        let uri = if attempt % 2 == 0 {
+            format!("/api/s/{attempt:012}/meta")
+        } else {
+            format!("/s/{attempt:08}")
+        };
+        let (status, _) = send_raw(&app_at_peer, "GET", &uri, None, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+    let uri = "/api/s/000000000061/download";
+    let (status, _) = send_raw(&app_at_peer, "GET", uri, None, None).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    let peer = "192.168.50.11:12000".parse::<std::net::SocketAddr>().unwrap();
+    let (status, _) = send_raw(&app.layer(Extension(ConnectInfo(peer))), "GET", uri, None, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn test_login_and_passcode_guessing_is_throttled() {
     let (app, _state, _tmp) = spawn_test_server().await;
     let (_, alice): (_, AuthResponse) = send_json(
@@ -1540,9 +1621,11 @@ async fn test_login_and_passcode_guessing_is_throttled() {
     )
     .await;
 
+    let peer = "192.168.50.10:12000".parse::<std::net::SocketAddr>().unwrap();
+    let app_at_peer = app.clone().layer(Extension(ConnectInfo(peer)));
     for _ in 0..10 {
         let (status, _) = send_raw(
-            &app,
+            &app_at_peer,
             "POST",
             "/api/auth/login",
             None,
@@ -1551,16 +1634,23 @@ async fn test_login_and_passcode_guessing_is_throttled() {
         .await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
-    // Even the right password is refused while the account is throttled.
-    let (status, _) = send_raw(
-        &app,
-        "POST",
-        "/api/auth/login",
-        None,
-        Some(json!({"username": "Alice", "password": "password123"})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    // Forwarded IPs are ignored on a directly exposed server, including Docker.
+    let request = || Request::post("/api/auth/login")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("x-forwarded-for", "203.0.113.20")
+        .body(Body::from(json!({"username": "alice", "password": "password123"}).to_string()))
+        .unwrap();
+    let response = app_at_peer.clone().oneshot(request()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+
+    let response = app_at_peer.layer(Extension(TrustProxy(true)))
+        .oneshot(request()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let peer = "192.168.50.11:12000".parse::<std::net::SocketAddr>().unwrap();
+    let response = app.clone().layer(Extension(ConnectInfo(peer)))
+        .oneshot(request()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
 
     let (_, device): (_, DeviceInfo) = send_json(
         &app,

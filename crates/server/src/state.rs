@@ -33,6 +33,7 @@ pub struct PendingGoogleOAuth {
     pub folder_id: String,
     pub is_default: bool,
     pub redirect_uri: String,
+    pub expires_at: Instant,
 }
 
 pub struct AppState {
@@ -54,8 +55,10 @@ pub struct AppState {
     pub admin_auth: Option<AdminAuthConfig>,
     /// Short-lived Google OAuth2 authorization flows keyed by `state` nonce.
     pub pending_google_oauth: DashMap<String, PendingGoogleOAuth>,
-    /// Failed logins per username.
+    /// Failed logins per client IP and normalized username.
     pub failed_logins: AttemptLimiter,
+    /// Public share lookups that found no matching code, per client IP.
+    pub failed_share_lookups: AttemptLimiter,
     /// Failed passcode attempts per share code.
     pub failed_passcodes: AttemptLimiter,
     /// Failed admin token attempts per client IP.
@@ -180,6 +183,7 @@ impl AppState {
             admin_auth,
             pending_google_oauth: DashMap::new(),
             failed_logins: AttemptLimiter::new(10, Duration::from_secs(15 * 60)),
+            failed_share_lookups: AttemptLimiter::new(60, Duration::from_secs(60)),
             failed_passcodes: AttemptLimiter::new(10, Duration::from_secs(15 * 60)),
             failed_admin_logins: AttemptLimiter::new(8, Duration::from_secs(15 * 60)),
             failed_admin_logins_global: AttemptLimiter::new(60, Duration::from_secs(15 * 60)),

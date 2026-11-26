@@ -6,7 +6,7 @@ use std::{
 };
 
 use dropdrawer_server::{
-    admin::AdminAuthConfig,
+    admin::{AdminAuthConfig, TrustProxy},
     db::Database,
     google_login::GoogleLoginConfig,
     routes::build_router_with_cors,
@@ -105,7 +105,10 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!(?origins, "CORS allowed origins configured");
     }
 
-    let app = build_router_with_cors(state, cors_origins.as_deref());
+    let trust_proxy = get("DROPDRAWER_TRUST_PROXY")
+        .is_some_and(|value| matches!(value.trim().to_ascii_lowercase().as_str(), "true" | "1"));
+    let app = build_router_with_cors(state, cors_origins.as_deref())
+        .layer(axum::Extension(TrustProxy(trust_proxy)));
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
     tracing::info!("DropDrawer server listening on http://{bind_addr}");
     axum::serve(

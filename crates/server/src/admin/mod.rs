@@ -108,11 +108,11 @@ pub(crate) fn not_found(what: &str) -> ApiError {
     (StatusCode::NOT_FOUND, format!("{what} not found"))
 }
 
-/// Best-effort client address for rate limiting and the audit log.
-///
-/// The socket peer is used directly unless it is a loopback / private address
-/// (i.e. a reverse proxy in front of the server), in which case the first
-/// `X-Forwarded-For` / `X-Real-IP` entry is trusted instead.
+/// Enables forwarding headers from a private socket peer that is a trusted proxy.
+#[derive(Clone, Copy)]
+pub struct TrustProxy(pub bool);
+
+/// Client address for rate limiting and the audit log.
 #[derive(Debug, Clone)]
 pub struct ClientIp(pub String);
 
@@ -120,25 +120,29 @@ impl<S: Send + Sync> FromRequestParts<S> for ClientIp {
     type Rejection = Infallible;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let forwarded = parts
-            .headers
-            .get("x-forwarded-for")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.split(',').next())
-            .or_else(|| parts.headers.get("x-real-ip").and_then(|v| v.to_str().ok()))
-            .map(str::trim)
-            .and_then(|v| v.parse::<IpAddr>().ok());
-        let peer = parts
+        let Some(peer) = parts
             .extensions
             .get::<ConnectInfo<SocketAddr>>()
-            .map(|ConnectInfo(addr)| addr.ip());
-        let ip = match (peer, forwarded) {
-            (Some(peer), Some(fwd)) if crate::policy::is_restricted_ip(peer) => fwd,
-            (Some(peer), _) => peer,
-            (None, Some(fwd)) => fwd,
-            (None, None) => return Ok(Self("unknown".to_string())),
+            .map(|ConnectInfo(addr)| addr.ip().to_canonical())
+        else {
+            return Ok(Self("unknown".to_string()));
         };
-        Ok(Self(ip.to_string()))
+        if parts.extensions.get::<TrustProxy>().is_some_and(|trust| trust.0)
+            && crate::policy::is_restricted_ip(peer)
+        {
+            let forwarded = parts
+                .headers
+                .get("x-forwarded-for")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.split(',').next())
+                .or_else(|| parts.headers.get("x-real-ip").and_then(|v| v.to_str().ok()))
+                .map(str::trim)
+                .and_then(|v| v.parse::<IpAddr>().ok());
+            if let Some(ip) = forwarded {
+                return Ok(Self(ip.to_canonical().to_string()));
+            }
+        }
+        Ok(Self(peer.to_string()))
     }
 }
 
