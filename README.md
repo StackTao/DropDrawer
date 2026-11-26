@@ -167,6 +167,8 @@ cargo test --workspace
 
 To test P2P independently, run `cargo run --bin dropdrawer-p2p-cli -- seed ./sample.zip` to generate a transfer ticket. On the receiving device, run `cargo run --bin dropdrawer-p2p-cli -- pull '<TICKET_JSON>' ./received.zip`.
 
+Join the discussion on [LINUX DO](https://linux.do/).
+
 ## Star history
 
 <a href="https://www.star-history.com/?repos=StackTao%2FDropDrawer&amp;type=date">

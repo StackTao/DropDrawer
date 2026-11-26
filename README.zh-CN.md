@@ -167,6 +167,8 @@ cargo test --workspace
 
 如需独立验证 P2P，可用 `cargo run --bin dropdrawer-p2p-cli -- seed ./sample.zip` 生成传输票据，再在另一端运行 `cargo run --bin dropdrawer-p2p-cli -- pull '<TICKET_JSON>' ./received.zip`。
 
+欢迎到 [LINUX DO 社区](https://linux.do/) 交流。
+
 ## Star 趋势
 
 <a href="https://www.star-history.com/?repos=StackTao%2FDropDrawer&amp;type=date">
