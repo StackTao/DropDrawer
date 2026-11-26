@@ -396,6 +396,7 @@ Future<bool> showAdaptiveConfirm(
   required String title,
   required String message,
   required String confirmLabel,
+  String cancelLabel = '取消',
   bool destructive = false,
 }) async {
   final android = _isAndroid(context);
@@ -420,7 +421,7 @@ Future<bool> showAdaptiveConfirm(
       title: Text(title),
       content: Text(message),
       actions: [
-        action(ctx, '取消', false),
+        action(ctx, cancelLabel, false),
         action(ctx, confirmLabel, true, danger: destructive),
       ],
     ),

@@ -62,6 +62,8 @@ class DropDrawerController extends ChangeNotifier {
 
   /// Local file paths owned or already downloaded by this device (enables instant drag-out).
   final Map<String, String> localFilePaths = {};
+  /// Persisted cloud uploads interrupted by app exit/network loss, resumed automatically.
+  final Map<String, ({String path, String? storageBackendId})> _pendingCloudUploads = {};
   final Map<String, TransferProgress> activeTransfers = {};
   final Map<String, TransferProgress> outgoingTransfers = {};
   final Set<String> _cancellingSends = {};
@@ -140,6 +142,26 @@ class DropDrawerController extends ChangeNotifier {
       } catch (_) {}
     }
 
+    final savedUploadsRaw = prefs.getString('pending_cloud_uploads');
+    if (savedUploadsRaw != null) {
+      try {
+        final decoded = Map<String, dynamic>.from(jsonDecode(savedUploadsRaw) as Map);
+        for (final entry in decoded.entries) {
+          final raw = entry.value;
+          if (raw is Map) {
+            final path = raw['path']?.toString();
+            final backendId = raw['storage_backend_id']?.toString();
+            if (path != null && path.isNotEmpty && File(path).existsSync()) {
+              _pendingCloudUploads[entry.key] = (
+                path: path,
+                storageBackendId: backendId,
+              );
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
     if (token != null && savedUser != null && savedUserId != null) {
       user = UserProfile(id: savedUserId, username: savedUser);
       deviceId = prefs.getString('device_id.$savedUserId') ??
@@ -149,6 +171,12 @@ class DropDrawerController extends ChangeNotifier {
   }
 
   bool get isLoggedIn => token != null && user != null;
+  int get activeTransferCount =>
+      activeTransfers.values.where((t) => !t.finished).length +
+      outgoingTransfers.values.where((t) => !t.finished).length;
+  bool get hasActiveTransfers => activeTransferCount > 0;
+  @visibleForTesting
+  int get pendingCloudUploadCount => _pendingCloudUploads.length;
   bool canDownloadP2p(DrawerItem item) => item.canP2p ||
       (item.transferMode != 'cloud_cached' && devices.any((d) =>
           d.id != deviceId && d.online && d.replicaItems.contains(item.id)));
@@ -314,6 +342,8 @@ class DropDrawerController extends ChangeNotifier {
     _cancellingSends.clear();
     outgoingTransfers.clear();
     activeTransfers.clear();
+    _pendingCloudUploads.clear();
+    _syncPlatformTransferState();
     p2p.shutdown();
 
     token = null;
@@ -328,6 +358,7 @@ class DropDrawerController extends ChangeNotifier {
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('auth_token');
+    await prefs.remove('pending_cloud_uploads');
     await windowService.setEdgeDrawerMode(false);
     notifyListeners();
   }
@@ -434,6 +465,7 @@ class DropDrawerController extends ChangeNotifier {
       final fetched = await api.listItems();
       if (identical(_api, api)) {
         items = fetched;
+        _resumePendingCloudUploads();
         await refreshStorageBackends();
         if (identical(_api, api)) notifyListeners();
       }
@@ -577,8 +609,10 @@ class DropDrawerController extends ChangeNotifier {
       }
     }
     if (structural) {
+      _syncPlatformTransferState();
       notifyListeners();
     } else {
+      _syncPlatformTransferState();
       _tickTransfers();
     }
   }
@@ -677,6 +711,8 @@ class DropDrawerController extends ChangeNotifier {
     _wsReconnectTimer?.cancel();
     _p2pPollTimer?.cancel();
     _closeWs();
+    unawaited(windowService.setActiveTransferCount(0));
+    unawaited(windowService.updateMobileTransferService(active: false));
     transferTicks.dispose();
     if (_updatesCreated) updates.dispose();
     super.dispose();
@@ -697,6 +733,7 @@ class DropDrawerController extends ChangeNotifier {
         items = (pMap['items'] as List<dynamic>)
             .map((e) => DrawerItem.fromJson(e as Map<String, dynamic>))
             .toList();
+        _resumePendingCloudUploads();
         break;
       case 'device_updated':
         _deviceRevision++;
@@ -752,6 +789,9 @@ class DropDrawerController extends ChangeNotifier {
       case 'item_deleted':
         final itemId = (payload as Map<String, dynamic>)['item_id'] as String;
         items.removeWhere((e) => e.id == itemId);
+        if (_pendingCloudUploads.remove(itemId) != null) {
+          unawaited(_persistPendingCloudUploads());
+        }
         if (p2pReady) {
           try {
             p2p.unregisterFile(itemId);
@@ -951,6 +991,92 @@ class DropDrawerController extends ChangeNotifier {
     await downloadItem(item);
   }
 
+  Future<void> _persistPendingCloudUploads() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (_pendingCloudUploads.isEmpty) {
+        await prefs.remove('pending_cloud_uploads');
+        return;
+      }
+      final encoded = <String, dynamic>{
+        for (final e in _pendingCloudUploads.entries)
+          e.key: {
+            'path': e.value.path,
+            if (e.value.storageBackendId != null)
+              'storage_backend_id': e.value.storageBackendId,
+          },
+      };
+      await prefs.setString('pending_cloud_uploads', jsonEncode(encoded));
+    } catch (_) {}
+  }
+
+  void _resumePendingCloudUploads() {
+    if (_api == null || _pendingCloudUploads.isEmpty) return;
+    final itemsById = {for (final item in items) item.id: item};
+    var changed = false;
+    final toResume = <({String itemId, String path, String? backendId})>[];
+    for (final entry in _pendingCloudUploads.entries.toList()) {
+      final item = itemsById[entry.key];
+      if (item == null || item.cloudReady || !File(entry.value.path).existsSync()) {
+        _pendingCloudUploads.remove(entry.key);
+        changed = true;
+        continue;
+      }
+      if (!_activeCancelTokens.containsKey(entry.key)) {
+        toResume.add((
+          itemId: entry.key,
+          path: entry.value.path,
+          backendId: entry.value.storageBackendId,
+        ));
+      }
+    }
+    if (changed) {
+      unawaited(_persistPendingCloudUploads());
+    }
+    for (final task in toResume) {
+      unawaited(cacheItemToCloud(
+        task.itemId,
+        task.path,
+        storageBackendId: task.backendId,
+      ));
+    }
+  }
+
+  void _syncPlatformTransferState() {
+    final running = activeTransfers.values.where((t) => !t.finished).toList();
+    final outgoingCount =
+        outgoingTransfers.values.where((t) => !t.finished).length;
+    final count = running.length + outgoingCount;
+    unawaited(windowService.setActiveTransferCount(count));
+    if (!windowService.isAndroid) return;
+    if (count == 0) {
+      unawaited(windowService.updateMobileTransferService(active: false));
+      return;
+    }
+    final primary = running.isNotEmpty
+        ? running.first
+        : outgoingTransfers.values.firstWhere((t) => !t.finished);
+    final itemName =
+        items.where((i) => i.id == primary.itemId).firstOrNull?.name ?? '文件';
+    final isUpload = primary.channel == 'upload';
+    final pct = primary.total > 0
+        ? ((primary.transferred * 100) ~/ primary.total).clamp(0, 100)
+        : 0;
+    final title = isUpload
+        ? (count > 1 ? '正在上传 $count 个文件到云盘' : '正在上传到云盘')
+        : (count > 1 ? '正在传输 $count 个文件' : '正在传输文件');
+    final detail = primary.awaitingUploadConfirmation
+        ? '$itemName · 等待云盘确认…'
+        : (primary.total > 0 ? '$itemName · $pct%' : itemName);
+    unawaited(windowService.updateMobileTransferService(
+      active: true,
+      title: title,
+      detail: detail,
+      progress: primary.awaitingUploadConfirmation ? 0 : pct,
+      max: primary.awaitingUploadConfirmation ? 0 : 100,
+    ));
+  }
+
   /// Uploads a local drawer file to the user's configured cloud/server storage backend.
   Future<void> cacheItemToCloud(
     String itemId,
@@ -959,11 +1085,22 @@ class DropDrawerController extends ChangeNotifier {
   }) async {
     if (_api == null) return;
     final file = File(filePath);
-    if (!await file.exists()) return;
+    if (!await file.exists()) {
+      if (_pendingCloudUploads.remove(itemId) != null) {
+        unawaited(_persistPendingCloudUploads());
+      }
+      return;
+    }
     final total = await file.length();
     if (_activeCancelTokens.containsKey(itemId)) return;
     final cancelToken = TransferCancelToken();
     _activeCancelTokens[itemId] = cancelToken;
+
+    _pendingCloudUploads[itemId] = (
+      path: filePath,
+      storageBackendId: storageBackendId,
+    );
+    unawaited(_persistPendingCloudUploads());
 
     final sw = Stopwatch()..start();
     var lastNotifyMs = 0;
@@ -976,6 +1113,7 @@ class DropDrawerController extends ChangeNotifier {
       channel: 'upload',
       finished: false,
     );
+    _syncPlatformTransferState();
     notifyListeners();
 
     try {
@@ -997,6 +1135,7 @@ class DropDrawerController extends ChangeNotifier {
             channel: 'upload',
             finished: false,
           );
+          _syncPlatformTransferState();
           _tickTransfers();
         },
         onAwaitingConfirmation: () {
@@ -1009,9 +1148,12 @@ class DropDrawerController extends ChangeNotifier {
             finished: false,
             awaitingUploadConfirmation: true,
           );
+          _syncPlatformTransferState();
           _tickTransfers();
         },
       );
+      _pendingCloudUploads.remove(itemId);
+      unawaited(_persistPendingCloudUploads());
       activeTransfers[itemId] = TransferProgress(
         itemId: itemId,
         transferred: total,
@@ -1023,6 +1165,8 @@ class DropDrawerController extends ChangeNotifier {
       );
       statusBanner = '已转存到「$defaultStorageBackendName」';
     } on TransferCancelledException {
+      _pendingCloudUploads.remove(itemId);
+      unawaited(_persistPendingCloudUploads());
       activeTransfers.remove(itemId);
       statusBanner = '已取消上传';
     } catch (e) {
@@ -1038,6 +1182,7 @@ class DropDrawerController extends ChangeNotifier {
       statusBanner = '上传云端失败: $e';
     } finally {
       _activeCancelTokens.remove(itemId);
+      _syncPlatformTransferState();
     }
     notifyListeners();
   }
@@ -1157,6 +1302,7 @@ class DropDrawerController extends ChangeNotifier {
       channel: 'cloud',
       finished: false,
     );
+    _syncPlatformTransferState();
     notifyListeners();
 
     try {
@@ -1181,6 +1327,7 @@ class DropDrawerController extends ChangeNotifier {
             channel: 'cloud',
             finished: false,
           );
+          _syncPlatformTransferState();
           _tickTransfers();
         },
       );
@@ -1220,6 +1367,7 @@ class DropDrawerController extends ChangeNotifier {
       );
       statusBanner = '云端下载失败: $e';
     }
+    _syncPlatformTransferState();
     notifyListeners();
   }
 
@@ -1227,8 +1375,12 @@ class DropDrawerController extends ChangeNotifier {
     if (_api == null) return;
     await _api!.deleteItem(itemId);
     localFilePaths.remove(itemId);
+    if (_pendingCloudUploads.remove(itemId) != null) {
+      unawaited(_persistPendingCloudUploads());
+    }
     unawaited(_persistLocalFilePaths());
     activeTransfers.remove(itemId);
+    _syncPlatformTransferState();
     notifyListeners();
   }
 
@@ -1310,6 +1462,7 @@ class DropDrawerController extends ChangeNotifier {
       items.removeWhere((item) => deletedIds.contains(item.id));
       for (final id in deletedIds) {
         localFilePaths.remove(id);
+        _pendingCloudUploads.remove(id);
         activeTransfers.remove(id);
         if (p2pReady) {
           try {
@@ -1318,6 +1471,8 @@ class DropDrawerController extends ChangeNotifier {
         }
       }
       unawaited(_persistLocalFilePaths());
+      unawaited(_persistPendingCloudUploads());
+      _syncPlatformTransferState();
       final deleted = deletedIds.length;
       final failed = result.failedIds.length;
       if (failed > 0) {

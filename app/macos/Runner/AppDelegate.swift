@@ -4,6 +4,7 @@ import FlutterMacOS
 @main
 class AppDelegate: FlutterAppDelegate, NSMenuDelegate {
   private static let showDockIconKey = "dropdrawer.showDockIcon"
+  static var allowImmediateTerminate = false
   private var statusItem: NSStatusItem?
   private var statusMenu: NSMenu?
 
@@ -104,6 +105,27 @@ class AppDelegate: FlutterAppDelegate, NSMenuDelegate {
 
   @objc private func quitApp() {
     NSApp.terminate(nil)
+  }
+
+  override func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+    if Self.allowImmediateTerminate {
+      return .terminateNow
+    }
+    let activeCount = MainFlutterWindow.sharedInstance?.activeTransferCount ?? 0
+    if activeCount <= 0 {
+      return .terminateNow
+    }
+    let alert = NSAlert()
+    alert.alertStyle = .warning
+    alert.messageText = "还有 \(activeCount) 项传输正在进行"
+    alert.informativeText = "退出软件会中断当前传输，下次打开软件时未完成的云盘上传会自动续传。是否仍要退出？"
+    alert.addButton(withTitle: "后台继续")
+    alert.addButton(withTitle: "仍要退出")
+    let response = alert.runModal()
+    if response == .alertSecondButtonReturn {
+      return .terminateNow
+    }
+    return .terminateCancel
   }
 
   override func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

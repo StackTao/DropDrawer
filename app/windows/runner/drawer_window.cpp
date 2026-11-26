@@ -259,6 +259,8 @@ void DrawerWindow::HandleCall(const flutter::MethodCall<Value>& call,
     modal_open_ = Arg<bool>(args, "open");
   } else if (method == "setMainDrawerActive") {
     main_drawer_active_ = Arg<bool>(args, "active");
+  } else if (method == "setActiveTransferCount") {
+    active_transfer_count_ = std::max(0, Arg<int32_t>(args, "count"));
   } else if (method == "getSystemSettings") {
     return result->Success(Value(State()));
   } else if (method == "setShowDockIcon") {
@@ -674,7 +676,18 @@ void DrawerWindow::ShowTrayMenu() {
       break;
     case 2: SetEdgeMode(!edge_); Activate(); break;
     case 3: SetDockLeft(!dock_left_); break;
-    case 4: PostMessageW(window_, kQuitMessage, 0, 0); break;
+    case 4:
+      if (active_transfer_count_ > 0) {
+        const std::wstring msg =
+            L"还有 " + std::to_wstring(active_transfer_count_) +
+            L" 项传输正在进行。\n\n退出软件会中断当前传输，下次打开时未完成的云盘上传会自动续传。是否仍要退出？";
+        if (MessageBoxW(window_, msg.c_str(), L"DropDrawer",
+                        MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) {
+          break;
+        }
+      }
+      PostMessageW(window_, kQuitMessage, 0, 0);
+      break;
   }
   modal_open_ = was_modal;
 }

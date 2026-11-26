@@ -1,8 +1,23 @@
 import DropDrawerCore
 import SwiftUI
+import UIKit
+
+final class DropDrawerIOSAppDelegate: NSObject, UIApplicationDelegate {
+    func application(
+        _ application: UIApplication,
+        handleEventsForBackgroundURLSession identifier: String,
+        completionHandler: @escaping () -> Void
+    ) {
+        BackgroundUploadCoordinator.shared.handleBackgroundEvents(
+            identifier: identifier,
+            completionHandler: completionHandler
+        )
+    }
+}
 
 @main
 struct DropDrawerIOSApp: App {
+    @UIApplicationDelegateAdaptor(DropDrawerIOSAppDelegate.self) private var appDelegate
     @State private var store = DropDrawerStore(
         storage: SessionStorage(suiteName: SessionStorage.appGroupId)
     )

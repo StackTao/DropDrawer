@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/cupertino.dart';
@@ -30,8 +31,10 @@ class DrawerScreen extends StatefulWidget {
   State<DrawerScreen> createState() => _DrawerScreenState();
 }
 
-class _DrawerScreenState extends State<DrawerScreen> {
+class _DrawerScreenState extends State<DrawerScreen>
+    with SingleTickerProviderStateMixin {
   bool _isDragHovering = false;
+  late final AnimationController _glowPulseCtrl;
   bool _handleHovered = false;
   bool _selectionMode = false;
   bool _confirmingClear = false;
@@ -58,6 +61,10 @@ class _DrawerScreenState extends State<DrawerScreen> {
   @override
   void initState() {
     super.initState();
+    _glowPulseCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1100),
+    );
     widget.controller.windowService.onPasteShortcut = _pasteFromClipboard;
     widget.controller.windowService.setMainDrawerActive(true);
     _shownBannerSerial = widget.controller.bannerSerial;
@@ -122,6 +129,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
     _shortcutFocusNode.dispose();
     _searchCtrl.dispose();
     _searchFocusNode.dispose();
+    _glowPulseCtrl.dispose();
     // Leaving the screen ends the undo window: carry out pending deletions.
     final controller = widget.controller;
     for (final id in _pendingDeletes.keys.toList()) {
@@ -133,6 +141,28 @@ class _DrawerScreenState extends State<DrawerScreen> {
       }());
     }
     super.dispose();
+  }
+
+  void _setDragHovering(bool hovering) {
+    if (_isDragHovering == hovering) return;
+    if (hovering) {
+      _glowPulseCtrl.repeat(reverse: true);
+    } else {
+      _glowPulseCtrl
+        ..stop()
+        ..value = 0;
+    }
+    setState(() => _isDragHovering = hovering);
+  }
+
+  String _dropPolicyHint(DropDrawerController c) {
+    if (c.defaultDropPolicy == 'p2p_only') {
+      return '仅本机 P2P 端到端直连 · 不占服务器与云盘';
+    }
+    if (c.defaultDropPolicy == 'cloud_cached') {
+      return '直接上传至「${c.defaultStorageBackendName}」· 离线可下';
+    }
+    return '小于 ${c.autoCloudThresholdBytes ~/ (1024 * 1024)}MB 自动云存 · 大文件纯 P2P 直连';
   }
 
   /// Windows surface: translucent over Mica/Acrylic when DWM applied it,
@@ -289,7 +319,30 @@ class _DrawerScreenState extends State<DrawerScreen> {
     } else if (val == 'logout') {
       c.logout();
     } else if (val == 'quit') {
-      c.windowService.quitApp();
+      unawaited(_confirmAndQuit(c));
+    }
+  }
+
+  Future<void> _confirmAndQuit(DropDrawerController c) async {
+    final active = c.activeTransferCount;
+    if (active <= 0) {
+      await c.windowService.quitApp();
+      return;
+    }
+    final confirmed = await showAdaptiveConfirm(
+      context,
+      title: '还有 $active 项传输正在进行',
+      message: '退出软件会中断当前传输（下次打开时未完成的云盘上传会自动续传）。是否仍要退出？',
+      confirmLabel: '仍要退出',
+      cancelLabel: '后台继续',
+      destructive: true,
+    );
+    if (!mounted) return;
+    if (confirmed) {
+      await c.windowService.setActiveTransferCount(0);
+      await c.windowService.quitApp();
+    } else if (c.windowService.edgeMode) {
+      await c.windowService.collapseDrawer();
     }
   }
 
@@ -473,18 +526,26 @@ class _DrawerScreenState extends State<DrawerScreen> {
                     // Phone navigation bars extend under the status bar.
                     top: false,
                     bottom: isMobile,
-                    child: Stack(
-                      alignment: Alignment.topCenter,
-                      fit: StackFit.expand,
-                      children: [
-                        _buildActivePage(context, c),
-                        if (c.windowService.edgeMode &&
-                            c.windowService.supportsEdgeDrawer)
-                          Positioned(
-                            top: 0,
-                            child: _buildDrawerDragGrip(c.windowService),
-                          ),
-                      ],
+                    child: _wrapDesktopDropRegion(
+                      c: c,
+                      isMobile: isMobile,
+                      child: Stack(
+                        alignment: Alignment.topCenter,
+                        fit: StackFit.expand,
+                        children: [
+                          _buildActivePage(context, c),
+                          if (!isMobile && _page != _DrawerPage.drawer)
+                            _buildSecondaryDropOverlay(c),
+                          if (!isMobile)
+                            _buildInnerEdgeGlow(radius),
+                          if (c.windowService.edgeMode &&
+                              c.windowService.supportsEdgeDrawer)
+                            Positioned(
+                              top: 0,
+                              child: _buildDrawerDragGrip(c.windowService),
+                            ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -493,6 +554,146 @@ class _DrawerScreenState extends State<DrawerScreen> {
           ),
         );
       },
+    );
+  }
+
+  Widget _wrapDesktopDropRegion({
+    required DropDrawerController c,
+    required bool isMobile,
+    required Widget child,
+  }) {
+    if (isMobile) return child;
+    return DropRegion(
+      formats: const [Formats.fileUri, Formats.plainText],
+      hitTestBehavior: HitTestBehavior.opaque,
+      onDropOver: (_) {
+        if (c.windowService.modalOpen) return DropOperation.none;
+        _setDragHovering(true);
+        return DropOperation.copy;
+      },
+      onDropLeave: (_) => _setDragHovering(false),
+      onDropEnded: (_) => _setDragHovering(false),
+      onPerformDrop: (event) => _handleDropSession(c, event),
+      child: child,
+    );
+  }
+
+  /// Website-inspired inner luminous halo around the window border while a
+  /// file or text drag hovers over the drawer (zero layout shift).
+  Widget _buildInnerEdgeGlow(double radius) {
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: AnimatedOpacity(
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOut,
+          opacity: _isDragHovering ? 1.0 : 0.0,
+          child: AnimatedBuilder(
+            animation: _glowPulseCtrl,
+            builder: (_, _) => CustomPaint(
+              painter: _InnerEdgeGlowPainter(
+                color: MacPalette.accent,
+                radius: radius,
+                pulse: Curves.easeInOut.transform(_glowPulseCtrl.value),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Centered luminous drop prompt shown when dragging files/text onto any
+  /// secondary desktop page (Settings, Storage, Devices, Share, Preview).
+  Widget _buildSecondaryDropOverlay(DropDrawerController c) {
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: AnimatedOpacity(
+          duration: const Duration(milliseconds: 150),
+          curve: Curves.easeOut,
+          opacity: _isDragHovering ? 1.0 : 0.0,
+          child: _isDragHovering
+              ? ClipRect(
+                  child: BackdropFilter(
+                    filter: ui.ImageFilter.blur(sigmaX: 6, sigmaY: 6),
+                    child: Container(
+                      color: MacPalette.shade(0.58),
+                      padding: const EdgeInsets.all(24),
+                      child: Center(
+                        child: Container(
+                          constraints: const BoxConstraints(maxWidth: 270),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 20,
+                            vertical: 18,
+                          ),
+                          decoration: BoxDecoration(
+                            color: MacPalette.elevatedBg.withValues(alpha: 0.94),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: MacPalette.accent.withValues(alpha: 0.68),
+                              width: 1.2,
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: MacPalette.accent.withValues(alpha: 0.28),
+                                blurRadius: 28,
+                                spreadRadius: -2,
+                              ),
+                            ],
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                width: 42,
+                                height: 42,
+                                decoration: BoxDecoration(
+                                  color: MacPalette.accent,
+                                  borderRadius: BorderRadius.circular(12),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: MacPalette.accent
+                                          .withValues(alpha: 0.45),
+                                      blurRadius: 16,
+                                      spreadRadius: -2,
+                                    ),
+                                  ],
+                                ),
+                                child: Icon(
+                                  CupertinoIcons.tray_arrow_down_fill,
+                                  size: 20,
+                                  color: MacPalette.onAccent,
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                '松手放入跨端抽屉',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: MacPalette.textPrimary,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                _dropPolicyHint(c),
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: MacPalette.textSecondary,
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                )
+              : const SizedBox.shrink(),
+        ),
+      ),
     );
   }
 
@@ -533,6 +734,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
   /// Stage 1 drag guide pill docked at the drawer's exact right-center position.
   Widget _buildDragGuidePill(DropDrawerController c) {
     final isWindows = c.windowService.isWindows;
+    final pillRadius = isWindows ? 8.0 : 13.0;
     return DropRegion(
       formats: const [Formats.fileUri, Formats.plainText],
       hitTestBehavior: HitTestBehavior.opaque,
@@ -540,61 +742,79 @@ class _DrawerScreenState extends State<DrawerScreen> {
       onPerformDrop: (event) => _handleDropSession(c, event, expandAfterDrop: true),
       child: Material(
         color: Colors.transparent,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14),
-          decoration: BoxDecoration(
-            color: isWindows
-                ? (c.windowService.windowsBackdrop
-                    ? const Color(0xB32B2B2B)
-                    : const Color(0xFF2B2B2B))
-                : const Color(0xEC1C1C20),
-            borderRadius: BorderRadius.circular(isWindows ? 8 : 13),
-            border: Border.all(
-              color: Colors.white.withValues(alpha: isWindows ? 0.12 : 0.2),
-              width: 0.8,
-            ),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: 22,
-                height: 22,
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFF38BDF8), Color(0xFF2563EB)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: const Icon(
-                  CupertinoIcons.tray_arrow_down_fill,
-                  size: 12,
-                  color: Colors.white,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              decoration: BoxDecoration(
+                color: isWindows
+                    ? (c.windowService.windowsBackdrop
+                        ? const Color(0xB32B2B2B)
+                        : const Color(0xFF2B2B2B))
+                    : const Color(0xEC1C1C20),
+                borderRadius: BorderRadius.circular(pillRadius),
+                border: Border.all(
+                  color: MacPalette.accent.withValues(alpha: 0.55),
+                  width: 1.0,
                 ),
               ),
-              const SizedBox(width: 9),
-              // Shrink rather than truncate when the system font or text
-              // scaling is wider than expected.
-              Flexible(
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    '拖到这儿，放入跨端抽屉',
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w500,
-                      color: MacPalette.textPrimary,
-                      decoration: TextDecoration.none,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Container(
+                    width: 22,
+                    height: 22,
+                    decoration: BoxDecoration(
+                      color: MacPalette.accent,
+                      borderRadius: BorderRadius.circular(6),
+                      boxShadow: [
+                        BoxShadow(
+                          color: MacPalette.accent.withValues(alpha: 0.45),
+                          blurRadius: 10,
+                          spreadRadius: -1,
+                        ),
+                      ],
                     ),
-                    maxLines: 1,
+                    child: Icon(
+                      CupertinoIcons.tray_arrow_down_fill,
+                      size: 12,
+                      color: MacPalette.onAccent,
+                    ),
                   ),
+                  const SizedBox(width: 9),
+                  // Shrink rather than truncate when the system font or text
+                  // scaling is wider than expected.
+                  Flexible(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        '拖到这儿，放入跨端抽屉',
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w500,
+                          color: MacPalette.textPrimary,
+                          decoration: TextDecoration.none,
+                        ),
+                        maxLines: 1,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            IgnorePointer(
+              child: CustomPaint(
+                painter: _InnerEdgeGlowPainter(
+                  color: MacPalette.accent,
+                  radius: pillRadius,
+                  pulse: 0.35,
+                  subtle: true,
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -605,7 +825,12 @@ class _DrawerScreenState extends State<DrawerScreen> {
     PerformDropEvent event, {
     bool expandAfterDrop = false,
   }) async {
-    setState(() => _isDragHovering = false);
+    _setDragHovering(false);
+    // Interaction A: always bring the user back to the home drawer on drop so
+    // the new item and its upload/P2P progress are immediately visible.
+    if (_page != _DrawerPage.drawer) {
+      _switchPage(_DrawerPage.drawer);
+    }
     // Open the drawer right away instead of after reading the dropped data.
     final expanding = expandAfterDrop ? c.windowService.expandDrawer() : null;
     final filePaths = <String>[];
@@ -767,38 +992,26 @@ class _DrawerScreenState extends State<DrawerScreen> {
         child: GestureDetector(
           behavior: HitTestBehavior.translucent,
           onTap: () => _shortcutFocusNode.requestFocus(),
-          child: DropRegion(
-            formats: const [Formats.fileUri, Formats.plainText],
-            hitTestBehavior: HitTestBehavior.opaque,
-            onDropOver: (_) {
-              if (!_isDragHovering) setState(() => _isDragHovering = true);
-              return DropOperation.copy;
-            },
-            onDropLeave: (_) {
-              if (_isDragHovering) setState(() => _isDragHovering = false);
-            },
-            onPerformDrop: (event) => _handleDropSession(c, event),
-            child: isMobile
-                ? _buildPhoneHome(context, c, visibleItems)
-                : Column(
-                    children: [
-                      _buildToolbar(context, c),
-                      const Divider(height: 0.5, thickness: 0.5),
-                      _buildDropHeader(c),
-                      if (c.items.isNotEmpty)
-                        _buildBatchActionStrip(c, visibleItems),
-                      if (c.items.isNotEmpty && _searchOpen)
-                        _buildSearchFilterBar(false),
-                      Expanded(child: _buildItemList(context, c, visibleItems)),
-                      if (_selectionMode)
-                        _buildBatchFooter(c)
-                      else ...[
-                        UpdateBanner(updates: c.updates, mobile: false),
-                        _buildFooter(c),
-                      ],
+          child: isMobile
+              ? _buildPhoneHome(context, c, visibleItems)
+              : Column(
+                  children: [
+                    _buildToolbar(context, c),
+                    const Divider(height: 0.5, thickness: 0.5),
+                    _buildDropHeader(c),
+                    if (c.items.isNotEmpty)
+                      _buildBatchActionStrip(c, visibleItems),
+                    if (c.items.isNotEmpty && _searchOpen)
+                      _buildSearchFilterBar(false),
+                    Expanded(child: _buildItemList(context, c, visibleItems)),
+                    if (_selectionMode)
+                      _buildBatchFooter(c)
+                    else ...[
+                      UpdateBanner(updates: c.updates, mobile: false),
+                      _buildFooter(c),
                     ],
-                  ),
-          ),
+                  ],
+                ),
         ),
       ),
     );
@@ -2029,31 +2242,55 @@ class _DrawerScreenState extends State<DrawerScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
                 decoration: BoxDecoration(
                   color: _isDragHovering
-                      ? MacPalette.fill(0.14)
+                      ? MacPalette.accent.withValues(alpha: 0.16)
                       : MacPalette.fill(0.05),
                   borderRadius: BorderRadius.circular(11),
                   border: Border.all(
                     color: _isDragHovering
-                        ? MacPalette.fill(0.45)
+                        ? MacPalette.accent.withValues(alpha: 0.72)
                         : MacPalette.hairline,
                     width: 1.0,
                   ),
+                  boxShadow: _isDragHovering
+                      ? [
+                          BoxShadow(
+                            color: MacPalette.accent.withValues(alpha: 0.24),
+                            blurRadius: 16,
+                            spreadRadius: -2,
+                          ),
+                        ]
+                      : const [],
                 ),
                 child: Row(
                   children: [
-                    Container(
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 140),
                       width: 32,
                       height: 32,
                       decoration: BoxDecoration(
-                        color: MacPalette.fill(0.08),
+                        color: _isDragHovering
+                            ? MacPalette.accent
+                            : MacPalette.fill(0.08),
                         borderRadius: BorderRadius.circular(8),
+                        boxShadow: _isDragHovering
+                            ? [
+                                BoxShadow(
+                                  color: MacPalette.accent
+                                      .withValues(alpha: 0.42),
+                                  blurRadius: 10,
+                                  spreadRadius: -1,
+                                ),
+                              ]
+                            : const [],
                       ),
                       child: Icon(
                         _isDragHovering
-                            ? CupertinoIcons.arrow_down_doc_fill
+                            ? CupertinoIcons.tray_arrow_down_fill
                             : CupertinoIcons.plus,
                         size: 16,
-                        color: MacPalette.textPrimary,
+                        color: _isDragHovering
+                            ? MacPalette.onAccent
+                            : MacPalette.textPrimary,
                       ),
                     ),
                     const SizedBox(width: 10),
@@ -2062,23 +2299,25 @@ class _DrawerScreenState extends State<DrawerScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            _isDragHovering ? '松开以放进抽屉' : '拖入、选取或 ${c.windowService.pasteShortcutLabel} 粘贴',
+                            _isDragHovering
+                                ? '松开即可放入抽屉'
+                                : '拖入、选取或 ${c.windowService.pasteShortcutLabel} 粘贴',
                             style: TextStyle(
                               fontSize: 12.5,
-                              fontWeight: FontWeight.w500,
+                              fontWeight: _isDragHovering
+                                  ? FontWeight.w600
+                                  : FontWeight.w500,
                               color: MacPalette.textPrimary,
                             ),
                           ),
                           const SizedBox(height: 1),
                           Text(
-                            c.defaultDropPolicy == 'p2p_only'
-                                ? '仅本机 P2P 端到端直连 · 不占服务器与云盘'
-                                : (c.defaultDropPolicy == 'cloud_cached'
-                                    ? '直接上传至「${c.defaultStorageBackendName}」· 离线可下'
-                                    : '小于 ${c.autoCloudThresholdBytes ~/ (1024 * 1024)}MB 自动云存 · 大文件纯 P2P 直连'),
+                            _dropPolicyHint(c),
                             style: TextStyle(
                               fontSize: 10.5,
-                              color: MacPalette.textTertiary,
+                              color: _isDragHovering
+                                  ? MacPalette.textSecondary
+                                  : MacPalette.textTertiary,
                             ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
@@ -4131,6 +4370,67 @@ class _PendingDropTile extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Paints a soft inward-blooming luminous halo + crisp glowing rim clipped to
+/// the rounded window interior so desktop windows glow during drag hover
+/// without overflowing native window bounds or shifting layout.
+class _InnerEdgeGlowPainter extends CustomPainter {
+  final Color color;
+  final double radius;
+  final double pulse;
+  final bool subtle;
+
+  const _InnerEdgeGlowPainter({
+    required this.color,
+    required this.radius,
+    required this.pulse,
+    this.subtle = false,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.isEmpty) return;
+    final outer = RRect.fromRectAndRadius(
+      Offset.zero & size,
+      Radius.circular(radius),
+    );
+    canvas.save();
+    canvas.clipRRect(outer);
+
+    final wideHalo = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = subtle ? 14 : 26
+      ..color = color.withValues(alpha: subtle ? 0.16 : (0.24 + 0.10 * pulse))
+      ..maskFilter = MaskFilter.blur(BlurStyle.normal, subtle ? 8 : 14);
+    canvas.drawRRect(outer, wideHalo);
+
+    final midRim = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = subtle ? 6 : 10
+      ..color = color.withValues(alpha: subtle ? 0.24 : (0.38 + 0.14 * pulse))
+      ..maskFilter = MaskFilter.blur(BlurStyle.normal, subtle ? 3.5 : 5);
+    canvas.drawRRect(outer, midRim);
+
+    final rimRect = RRect.fromRectAndRadius(
+      (Offset.zero & size).deflate(0.9),
+      Radius.circular((radius - 0.9).clamp(0.0, radius)),
+    );
+    final crispRim = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = subtle ? 1.2 : 1.8
+      ..color = color.withValues(alpha: subtle ? 0.65 : (0.84 + 0.16 * pulse));
+    canvas.drawRRect(rimRect, crispRim);
+
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(_InnerEdgeGlowPainter old) =>
+      old.color != color ||
+      old.radius != radius ||
+      old.pulse != pulse ||
+      old.subtle != subtle;
 }
 
 /// Short Chinese relative time, e.g. 刚刚 / 5 分钟前 / 昨天 / 3月2日.

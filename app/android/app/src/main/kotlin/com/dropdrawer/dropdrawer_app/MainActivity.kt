@@ -105,6 +105,19 @@ class MainActivity : FlutterActivity() {
                 val imagePath = call.argument<String>("imagePath") ?: ""
                 result.success(readClipboard(imagePath))
             }
+            "updateTransferNotification" -> {
+                val active = call.argument<Boolean>("active") ?: false
+                if (active) {
+                    val title = call.argument<String>("title") ?: "DropDrawer 正在传输"
+                    val detail = call.argument<String>("detail") ?: ""
+                    val progress = call.argument<Int>("progress") ?: 0
+                    val max = call.argument<Int>("max") ?: 0
+                    TransferForegroundService.update(applicationContext, title, detail, progress, max)
+                } else {
+                    TransferForegroundService.stop(applicationContext)
+                }
+                result.success(true)
+            }
             else -> result.notImplemented()
         }
     }

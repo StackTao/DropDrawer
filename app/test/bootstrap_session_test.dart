@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:dropdrawer_app/state/drawer_controller.dart';
@@ -83,6 +84,29 @@ void main() {
     expect(controller.isBootstrapping, isFalse);
     expect(controller.isLoggedIn, isFalse);
     expect(controller.statusBanner, contains('失效'));
+    controller.dispose();
+  });
+
+  test('persisted pending cloud uploads are restored on relaunch and pruned when file is missing', () async {
+    final tmpDir = await Directory.systemTemp.createTemp('dd-pending-test-');
+    addTearDown(() => tmpDir.delete(recursive: true));
+    final existingFile = File('${tmpDir.path}/video.mp4');
+    await existingFile.writeAsString('payload');
+
+    SharedPreferences.setMockInitialValues({
+      'server_url': 'https://drop.example.com',
+      'auth_token': 'saved-jwt',
+      'username': 'alice',
+      'user_id': 'u-1',
+      'pending_cloud_uploads': jsonEncode({
+        'item-live': {'path': existingFile.path, 'storage_backend_id': 'b1'},
+        'item-missing': {'path': '${tmpDir.path}/deleted.mp4'},
+      }),
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    final controller = DropDrawerController(initialPrefs: prefs);
+    expect(controller.pendingCloudUploadCount, 1);
     controller.dispose();
   });
 }

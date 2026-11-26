@@ -18,6 +18,7 @@ public final class SessionStorage: @unchecked Sendable {
         static let autoCloudThresholdMb = "dd.auto_cloud_threshold_mb"
         static let defaultTtlHours = "dd.default_ttl_hours"
         static let localFilePaths = "dd.local_file_paths"
+        static let pendingCloudUploads = "dd.pending_cloud_uploads"
         static let tokenAccount = "auth_jwt_token"
         static let unsignedSimTokenFallback = "dd.unsigned_sim_token"
     }
@@ -50,6 +51,7 @@ public final class SessionStorage: @unchecked Sendable {
             Keys.autoCloudThresholdMb,
             Keys.defaultTtlHours,
             Keys.localFilePaths,
+            Keys.pendingCloudUploads,
             Keys.unsignedSimTokenFallback,
         ]
         for key in keysToMigrate {
@@ -118,6 +120,17 @@ public final class SessionStorage: @unchecked Sendable {
         set { defaults.set(newValue, forKey: Keys.localFilePaths) }
     }
 
+    public var pendingCloudUploads: [String: String] {
+        get { defaults.dictionary(forKey: Keys.pendingCloudUploads) as? [String: String] ?? [:] }
+        set {
+            if newValue.isEmpty {
+                defaults.removeObject(forKey: Keys.pendingCloudUploads)
+            } else {
+                defaults.set(newValue, forKey: Keys.pendingCloudUploads)
+            }
+        }
+    }
+
     public var token: String? {
         get { readKeychain(account: Keys.tokenAccount) }
         set {
@@ -134,6 +147,7 @@ public final class SessionStorage: @unchecked Sendable {
         user = nil
         deviceId = nil
         localFilePaths = [:]
+        pendingCloudUploads = [:]
     }
 
     private func saveKeychain(value: String, account: String) {

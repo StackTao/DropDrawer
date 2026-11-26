@@ -49,6 +49,10 @@ class DrawerWindowService {
   /// and whether DWM actually applied it (Windows 11 22H2 and later).
   bool windowsBackdropEnabled = true;
   bool windowsBackdrop = false;
+  bool modalOpen = false;
+  int _lastActiveTransferCount = 0;
+  bool _mobileTransferActive = false;
+  int _lastMobileTransferNotifyMs = 0;
   void Function()? onStateChanged;
   void Function()? onPasteShortcut;
   void Function(List<String> files, List<String> texts)? onSharedPayload;
@@ -204,6 +208,7 @@ class DrawerWindowService {
   }
 
   Future<void> setModalOpen(bool open) async {
+    modalOpen = open;
     if (!supportsEdgeDrawer) return;
     await _channel.invokeMethod('setModalOpen', {'open': open});
   }
@@ -211,6 +216,46 @@ class DrawerWindowService {
   Future<void> setMainDrawerActive(bool active) async {
     if (!supportsEdgeDrawer) return;
     await _channel.invokeMethod('setMainDrawerActive', {'active': active});
+  }
+
+  /// Tells macOS/Windows native runners how many transfers are currently in
+  /// flight so user-initiated Quit (⌘Q / tray menu) can warn before exiting.
+  Future<void> setActiveTransferCount(int count) async {
+    final normalized = count < 0 ? 0 : count;
+    if (normalized == _lastActiveTransferCount) return;
+    _lastActiveTransferCount = normalized;
+    if (!supportsEdgeDrawer) return;
+    try {
+      await _channel.invokeMethod('setActiveTransferCount', {'count': normalized});
+    } catch (_) {}
+  }
+
+  /// Starts/updates/stops the Android dataSync Foreground Service so cloud
+  /// uploads & downloads continue uninterrupted when the app is backgrounded.
+  Future<void> updateMobileTransferService({
+    required bool active,
+    String title = '',
+    String detail = '',
+    int progress = 0,
+    int max = 0,
+  }) async {
+    if (!isAndroid) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (active && _mobileTransferActive && now - _lastMobileTransferNotifyMs < 500) {
+      return;
+    }
+    if (!active && !_mobileTransferActive) return;
+    _mobileTransferActive = active;
+    _lastMobileTransferNotifyMs = now;
+    try {
+      await _mobileChannel.invokeMethod('updateTransferNotification', {
+        'active': active,
+        'title': title,
+        'detail': detail,
+        'progress': progress,
+        'max': max,
+      });
+    } catch (_) {}
   }
 
   Future<void> revealInFinder(String path) async {

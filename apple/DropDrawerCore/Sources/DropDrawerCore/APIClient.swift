@@ -90,21 +90,133 @@ public struct BatchDeleteResult: Sendable, Equatable {
     public let failedIds: [String]
 }
 
-private final class TransferStreamDelegate: NSObject, URLSessionTaskDelegate, URLSessionDataDelegate, @unchecked Sendable {
-    let onSendProgress: (@Sendable (Int64, Int64) -> Void)?
+/// Shared delegate-based upload coordinator. On iOS it uses a
+/// `URLSessionConfiguration.background` session so file uploads continue
+/// uninterrupted in `nsurlsessiond` when the user backgrounds or locks the phone.
+public final class BackgroundUploadCoordinator: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    public static let sessionIdentifier = "com.dropdrawer.ios.bg-upload"
+    public static let shared = BackgroundUploadCoordinator()
 
-    init(onSendProgress: (@Sendable (Int64, Int64) -> Void)? = nil) {
-        self.onSendProgress = onSendProgress
+    private final class UploadRecord {
+        let onProgress: (@Sendable (Int64, Int64) -> Void)?
+        let cancelToken: TransferCancelToken?
+        var continuation: CheckedContinuation<Data, Error>?
+        var responseBuffer = Data()
+
+        init(
+            onProgress: (@Sendable (Int64, Int64) -> Void)?,
+            cancelToken: TransferCancelToken?
+        ) {
+            self.onProgress = onProgress
+            self.cancelToken = cancelToken
+        }
     }
 
-    func urlSession(
+    private let lock = NSLock()
+    private var records: [Int: UploadRecord] = [:]
+    @MainActor private var backgroundCompletionHandler: (() -> Void)?
+    private lazy var session: URLSession = {
+        #if os(iOS)
+        let cfg = URLSessionConfiguration.background(withIdentifier: Self.sessionIdentifier)
+        cfg.isDiscretionary = false
+        cfg.sessionSendsLaunchEvents = true
+        #else
+        let cfg = URLSessionConfiguration.default
+        #endif
+        cfg.timeoutIntervalForRequest = 60
+        cfg.timeoutIntervalForResource = 3600
+        return URLSession(configuration: cfg, delegate: self, delegateQueue: nil)
+    }()
+
+    @MainActor
+    public func handleBackgroundEvents(
+        identifier: String,
+        completionHandler: @escaping () -> Void
+    ) {
+        guard identifier == Self.sessionIdentifier else {
+            completionHandler()
+            return
+        }
+        backgroundCompletionHandler = completionHandler
+        // Ensure the background session is instantiated so iOS delivers queued delegate callbacks.
+        _ = session
+    }
+
+    func upload(
+        request: URLRequest,
+        fileURL: URL,
+        onProgress: (@Sendable (Int64, Int64) -> Void)?,
+        cancelToken: TransferCancelToken?
+    ) async throws -> Data {
+        if cancelToken?.isCancelled == true { throw TransferCancelledError() }
+        let record = UploadRecord(onProgress: onProgress, cancelToken: cancelToken)
+        let taskHolder = Box<URLSessionUploadTask?>(nil)
+        cancelToken?.attach {
+            taskHolder.withLock { $0?.cancel() }
+        }
+        return try await withCheckedThrowingContinuation { cont in
+            let task = session.uploadTask(with: request, fromFile: fileURL)
+            lock.withLock {
+                record.continuation = cont
+                records[task.taskIdentifier] = record
+            }
+            taskHolder.withLock { $0 = task }
+            if cancelToken?.isCancelled == true {
+                task.cancel()
+            } else {
+                task.resume()
+            }
+        }
+    }
+
+    public func urlSession(
         _ session: URLSession,
         task: URLSessionTask,
         didSendBodyData bytesSent: Int64,
         totalBytesSent: Int64,
         totalBytesExpectedToSend: Int64
     ) {
-        onSendProgress?(totalBytesSent, totalBytesExpectedToSend)
+        let onProgress = lock.withLock { records[task.taskIdentifier]?.onProgress }
+        onProgress?(totalBytesSent, totalBytesExpectedToSend)
+    }
+
+    public func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        lock.withLock {
+            records[dataTask.taskIdentifier]?.responseBuffer.append(data)
+        }
+    }
+
+    public func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        let record = lock.withLock { records.removeValue(forKey: task.taskIdentifier) }
+        guard let record, let cont = record.continuation else { return }
+        record.continuation = nil
+
+        if record.cancelToken?.isCancelled == true {
+            cont.resume(throwing: TransferCancelledError())
+            return
+        }
+        if let error {
+            cont.resume(throwing: error)
+            return
+        }
+        guard let http = task.response as? HTTPURLResponse else {
+            cont.resume(throwing: APIError.message("上传未收到有效响应"))
+            return
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            let msg = String(data: record.responseBuffer, encoding: .utf8) ?? ""
+            cont.resume(throwing: APIError.httpStatus(http.statusCode, msg))
+            return
+        }
+        cont.resume(returning: record.responseBuffer)
+    }
+
+    public func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
+        Task { @MainActor [weak self] in
+            guard let self, let handler = self.backgroundCompletionHandler else { return }
+            self.backgroundCompletionHandler = nil
+            handler()
+        }
     }
 }
 
@@ -581,43 +693,12 @@ public final class APIClient: @unchecked Sendable {
         onProgress: (@Sendable (Int64, Int64) -> Void)?,
         cancelToken: TransferCancelToken?
     ) async throws -> Data {
-        if cancelToken?.isCancelled == true { throw TransferCancelledError() }
-        let delegate = TransferStreamDelegate(onSendProgress: onProgress)
-        let uploadSession = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
-        defer { uploadSession.finishTasksAndInvalidate() }
-
-        let taskHolder = Box<URLSessionUploadTask?>(nil)
-        cancelToken?.attach {
-            taskHolder.withLock { $0?.cancel() }
-        }
-        return try await withCheckedThrowingContinuation { cont in
-            let task = uploadSession.uploadTask(with: request, fromFile: fileURL) { data, response, error in
-                if cancelToken?.isCancelled == true {
-                    cont.resume(throwing: TransferCancelledError())
-                    return
-                }
-                if let error {
-                    cont.resume(throwing: error)
-                    return
-                }
-                guard let http = response as? HTTPURLResponse else {
-                    cont.resume(throwing: APIError.message("上传未收到有效响应"))
-                    return
-                }
-                guard (200..<300).contains(http.statusCode) else {
-                    let msg = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
-                    cont.resume(throwing: APIError.httpStatus(http.statusCode, msg))
-                    return
-                }
-                cont.resume(returning: data ?? Data())
-            }
-            taskHolder.withLock { $0 = task }
-            if cancelToken?.isCancelled == true {
-                task.cancel()
-            } else {
-                task.resume()
-            }
-        }
+        try await BackgroundUploadCoordinator.shared.upload(
+            request: request,
+            fileURL: fileURL,
+            onProgress: onProgress,
+            cancelToken: cancelToken
+        )
     }
 
     public func getDownloadPlan(

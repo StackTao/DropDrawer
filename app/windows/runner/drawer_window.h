@@ -77,6 +77,7 @@ class DrawerWindow {
   bool opened_by_drag_ = false;
   bool modal_open_ = false;
   bool main_drawer_active_ = false;
+  int active_transfer_count_ = 0;
   bool dock_left_ = false;
   bool show_taskbar_ = false;
   bool tray_added_ = false;

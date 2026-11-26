@@ -160,4 +160,30 @@ struct DropDrawerCoreTests {
         let preserved = try String(contentsOf: dest, encoding: .utf8)
         #expect(preserved == "original-content")
     }
+
+    @Test("Pending cloud uploads persist across restarts and clear on item_deleted or logout")
+    @MainActor
+    func pendingCloudUploadsLifecycle() throws {
+        let suite = "test.pending.\(UUID().uuidString)"
+        let service = "test.pending.\(UUID().uuidString)"
+        let storage = SessionStorage(suiteName: suite, keychainService: service)
+        defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+
+        let tempFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dd-pending-\(UUID().uuidString).bin")
+        try Data("hello".utf8).write(to: tempFile)
+        defer { try? FileManager.default.removeItem(at: tempFile) }
+
+        storage.pendingCloudUploads = ["item-1": tempFile.path, "item-2": tempFile.path]
+        let store = DropDrawerStore(storage: storage)
+
+        store.handleWSMessage("""
+        {"type": "item_deleted", "payload": {"item_id": "item-1"}}
+        """)
+        #expect(storage.pendingCloudUploads["item-1"] == nil)
+        #expect(storage.pendingCloudUploads["item-2"] == tempFile.path)
+
+        store.logout()
+        #expect(storage.pendingCloudUploads.isEmpty)
+    }
 }

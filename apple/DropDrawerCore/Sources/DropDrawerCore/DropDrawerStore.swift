@@ -57,9 +57,13 @@ public final class DropDrawerStore {
     private var replicaDownloads: Set<String> = []
     private var cancellingSends: Set<String> = []
     private var activeCancelTokens: [String: TransferCancelToken] = [:]
+    private var pendingCloudUploads: [String: String] = [:]
     private var thumbnailCache: [String: Data] = [:]
     private var isSceneActive: Bool = true
     private var wsReconnectAttempt: Int = 0
+    #if os(iOS)
+    private var backgroundTaskId: UIBackgroundTaskIdentifier = .invalid
+    #endif
 
     public init(
         storage: SessionStorage = SessionStorage(),
@@ -74,6 +78,9 @@ public final class DropDrawerStore {
         self.autoCloudThresholdMb = storage.autoCloudThresholdMb
         self.defaultTtlHours = storage.defaultTtlHours
         self.localFilePaths = storage.localFilePaths
+        self.pendingCloudUploads = storage.pendingCloudUploads.filter {
+            FileManager.default.fileExists(atPath: $0.value)
+        }
         // Restore API client synchronously so `isLoggedIn` is true on frame 0
         // and the login screen never flashes on app relaunch.
         if let token = storage.token, !token.isEmpty, self.user != nil {
@@ -236,11 +243,13 @@ public final class DropDrawerStore {
         replicaDownloads = []
         cancellingSends = []
         activeCancelTokens = [:]
+        pendingCloudUploads = [:]
         localFilePaths = [:]
         thumbnailCache = [:]
         publishedFiles = [:]
         wsReconnectAttempt = 0
         wsConnected = false
+        syncBackgroundExecutionGuard()
         storage.clearSession()
     }
 
@@ -324,6 +333,7 @@ public final class DropDrawerStore {
         await refreshedBackends
         if let links = try? await fetchedShares { shareLinks = links }
         reRegisterLocalFilesForP2P()
+        resumePendingCloudUploads()
     }
 
     public func refreshShareLinks() async {
@@ -634,6 +644,7 @@ public final class DropDrawerStore {
                let itemsData = try? JSONSerialization.data(withJSONObject: itemsObj),
                let parsed = try? JSONDecoder().decode([DrawerItem].self, from: itemsData) {
                 items = parsed
+                resumePendingCloudUploads()
             }
         case "device_updated":
             guard let payload,
@@ -797,10 +808,64 @@ public final class DropDrawerStore {
         }
     }
 
+    private func syncBackgroundExecutionGuard() {
+        #if os(iOS)
+        let hasActive = activeTransfers.values.contains(where: { !$0.finished })
+            || outgoingTransfers.values.contains(where: { !$0.finished })
+        if hasActive && backgroundTaskId == .invalid {
+            backgroundTaskId = UIApplication.shared.beginBackgroundTask(withName: "DropDrawerTransfer") { [weak self] in
+                Task { @MainActor in
+                    guard let self, self.backgroundTaskId != .invalid else { return }
+                    let id = self.backgroundTaskId
+                    self.backgroundTaskId = .invalid
+                    UIApplication.shared.endBackgroundTask(id)
+                }
+            }
+        } else if !hasActive && backgroundTaskId != .invalid {
+            let id = backgroundTaskId
+            backgroundTaskId = .invalid
+            UIApplication.shared.endBackgroundTask(id)
+        }
+        #endif
+    }
+
+    private func resumePendingCloudUploads() {
+        guard api != nil, !pendingCloudUploads.isEmpty else { return }
+        let itemsById = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
+        var changed = false
+        var toResume: [(String, URL)] = []
+        for (itemId, path) in pendingCloudUploads {
+            guard let item = itemsById[itemId],
+                  !item.cloudReady,
+                  FileManager.default.fileExists(atPath: path)
+            else {
+                pendingCloudUploads.removeValue(forKey: itemId)
+                changed = true
+                continue
+            }
+            if activeCancelTokens[itemId] == nil {
+                toResume.append((itemId, URL(fileURLWithPath: path)))
+            }
+        }
+        if changed {
+            storage.pendingCloudUploads = pendingCloudUploads
+        }
+        for (itemId, fileURL) in toResume {
+            Task { await cacheItemToCloud(itemId: itemId, fileURL: fileURL) }
+        }
+    }
+
     public func cacheItemToCloud(itemId: String, fileURL: URL) async {
         guard let api, activeCancelTokens[itemId] == nil else { return }
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            pendingCloudUploads.removeValue(forKey: itemId)
+            storage.pendingCloudUploads = pendingCloudUploads
+            return
+        }
         let cancelToken = TransferCancelToken()
         activeCancelTokens[itemId] = cancelToken
+        pendingCloudUploads[itemId] = fileURL.path
+        storage.pendingCloudUploads = pendingCloudUploads
         activeTransfers[itemId] = TransferProgress(
             itemId: itemId,
             transferred: 0,
@@ -809,6 +874,7 @@ public final class DropDrawerStore {
             channel: "upload",
             finished: false
         )
+        syncBackgroundExecutionGuard()
         do {
             let updated = try await api.uploadItemFile(
                 itemId: itemId,
@@ -846,19 +912,26 @@ public final class DropDrawerStore {
                 },
                 cancelToken: cancelToken
             )
+            pendingCloudUploads.removeValue(forKey: itemId)
+            storage.pendingCloudUploads = pendingCloudUploads
             if let idx = items.firstIndex(where: { $0.id == updated.id }) {
                 items[idx] = updated
             }
             activeTransfers.removeValue(forKey: itemId)
             activeCancelTokens.removeValue(forKey: itemId)
+            syncBackgroundExecutionGuard()
             showToast("已缓存到云盘")
         } catch is TransferCancelledError {
+            pendingCloudUploads.removeValue(forKey: itemId)
+            storage.pendingCloudUploads = pendingCloudUploads
             activeTransfers.removeValue(forKey: itemId)
             activeCancelTokens.removeValue(forKey: itemId)
+            syncBackgroundExecutionGuard()
             showToast("已取消上传")
         } catch {
             activeTransfers.removeValue(forKey: itemId)
             activeCancelTokens.removeValue(forKey: itemId)
+            syncBackgroundExecutionGuard()
             showToast("云盘上传失败：\(error.localizedDescription)")
         }
     }
@@ -1027,6 +1100,9 @@ public final class DropDrawerStore {
 
     private func cleanupLocalFile(for itemId: String) {
         thumbnailCache.removeValue(forKey: itemId)
+        if pendingCloudUploads.removeValue(forKey: itemId) != nil {
+            storage.pendingCloudUploads = pendingCloudUploads
+        }
         guard let path = localFilePaths.removeValue(forKey: itemId) else { return }
         storage.localFilePaths = localFilePaths
         let managedPrefix = downloadsDirectory().standardizedFileURL.path
@@ -1072,6 +1148,8 @@ public final class DropDrawerStore {
         }
         localFilePaths = [:]
         storage.localFilePaths = [:]
+        pendingCloudUploads = [:]
+        storage.pendingCloudUploads = [:]
         thumbnailCache.removeAll()
         showToast(removedCount > 0 ? "已清理 \(removedCount) 个本地缓存文件" : "本地缓存已清空")
         return removedCount

@@ -7,12 +7,14 @@ import 'package:dropdrawer_app/state/drawer_controller.dart';
 import 'package:dropdrawer_app/ui/drawer_screen.dart';
 import 'package:dropdrawer_app/ui/phone_page.dart';
 import 'package:dropdrawer_app/ui/preferences_view.dart';
+import 'package:dropdrawer_app/ui/storage_settings_view.dart';
 import 'package:dropdrawer_app/ui/theme.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:super_drag_and_drop/super_drag_and_drop.dart';
 
 class _FakeWindowService extends DrawerWindowService {
   final bool mobile;
@@ -33,6 +35,7 @@ class _FakeWindowService extends DrawerWindowService {
 class _TestController extends DropDrawerController {
   final DrawerWindowService _window;
   final List<String> deleted = [];
+  final List<String> addedTexts = [];
 
   _TestController(this._window);
 
@@ -49,11 +52,29 @@ class _TestController extends DropDrawerController {
   Future<void> refreshStorageBackends() async {}
 
   @override
+  Future<void> addTextToDrawer(String text) async {
+    addedTexts.add(text);
+  }
+
+  @override
   Future<void> deleteItem(String itemId) async {
     deleted.add(itemId);
     items.removeWhere((e) => e.id == itemId);
     notifyListeners();
   }
+}
+
+class _FakeDropSession extends DropSession {
+  @override
+  final List<DropItem> items;
+
+  _FakeDropSession(this.items);
+
+  @override
+  Set<DropOperation> get allowedOperations => const {DropOperation.copy};
+
+  @override
+  Listenable get onDisposed => ChangeNotifier();
 }
 
 Future<String> _pngBase64() async {
@@ -847,6 +868,80 @@ void main() {
     expect(service.windowsBackdrop, isTrue);
     expect(service.windowsBackdropEnabled, isTrue);
     await tester.pump();
+  });
+
+  testWidgets('desktop secondary pages accept drops, show glow overlay, and return home on drop', (tester) async {
+    final binding = TestDefaultBinaryMessengerBinding.instance;
+    const channel = MethodChannel('com.dropdrawer/drawer_window');
+    binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (_) async => true);
+    addTearDown(() => binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, null));
+
+    tester.view.physicalSize = const Size(420 * 2, 660 * 2);
+    tester.view.devicePixelRatio = 2;
+    addTearDown(tester.view.reset);
+
+    final window = _FakeWindowService(windows: true)..edgeMode = true;
+    final ctrl = _TestController(window)
+      ..user = UserProfile(id: 'u1', username: 'alice')
+      ..token = 'tok';
+    addTearDown(ctrl.dispose);
+
+    await tester.pumpWidget(MaterialApp(
+      theme: buildAppTheme(mobile: false, android: false),
+      home: AnimatedBuilder(
+        animation: ctrl,
+        builder: (_, _) => DrawerScreen(controller: ctrl),
+      ),
+    ));
+    await tester.pump();
+
+    // Navigate to a secondary page (Storage Settings).
+    await tester.tap(find.byTooltip('多云盘与中转存储'));
+    await tester.pump();
+    expect(find.byType(StorageSettingsView), findsOneWidget);
+
+    // DropRegion must remain active on secondary pages.
+    final regionFinder = find.byType(DropRegion);
+    expect(regionFinder, findsOneWidget);
+    final region = tester.widget<DropRegion>(regionFinder);
+    expect(region.formats, containsAll([Formats.fileUri, Formats.plainText]));
+
+    final pos = DropPosition(local: const Offset(100, 100), global: const Offset(100, 100));
+    final session = _FakeDropSession(const []);
+
+    // Modal open blocks drag acceptance.
+    await window.setModalOpen(true);
+    expect(
+      await region.onDropOver(DropOverEvent(session: session, position: pos)),
+      DropOperation.none,
+    );
+    await window.setModalOpen(false);
+
+    // Hovering over the secondary page activates the drop overlay + inner glow.
+    expect(
+      await region.onDropOver(DropOverEvent(session: session, position: pos)),
+      DropOperation.copy,
+    );
+    await tester.pump();
+    expect(find.text('松手放入跨端抽屉'), findsOneWidget);
+
+    // Leaving without dropping dismisses the overlay and keeps the secondary page.
+    region.onDropLeave?.call(DropEvent(session: session));
+    await tester.pump();
+    expect(find.text('松手放入跨端抽屉'), findsNothing);
+    expect(find.byType(StorageSettingsView), findsOneWidget);
+
+    // Performing a drop switches back to the home drawer immediately.
+    await region.onPerformDrop(
+      PerformDropEvent(
+        session: session,
+        position: pos,
+        acceptedOperation: DropOperation.copy,
+      ),
+    );
+    await tester.pump();
+    expect(find.byType(StorageSettingsView), findsNothing);
+    expect(find.textContaining('拖入、选取或'), findsOneWidget);
   });
 
   test('status messages bump the serial even when the text repeats', () {

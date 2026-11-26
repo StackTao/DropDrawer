@@ -62,6 +62,7 @@ class MainFlutterWindow: NSWindow {
   private var isPinned: Bool = false
   private var isModalOpen: Bool = false
   private var isMainDrawerActive: Bool = false
+  var activeTransferCount: Int = 0
   private var previousApp: NSRunningApplication?
   private var workspaceObserver: NSObjectProtocol?
   private var effectView: NSVisualEffectView?
@@ -426,6 +427,10 @@ class MainFlutterWindow: NSWindow {
         let active = (call.arguments as? [String: Any])?["active"] as? Bool ?? false
         self.isMainDrawerActive = active
         result(true)
+      case "setActiveTransferCount":
+        let count = (call.arguments as? [String: Any])?["count"] as? Int ?? 0
+        self.activeTransferCount = max(0, count)
+        result(true)
       case "revealInFinder":
         if let path = (call.arguments as? [String: Any])?["path"] as? String {
           NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
@@ -557,6 +562,7 @@ class MainFlutterWindow: NSWindow {
             if outcome == "installing" {
               // Let Flutter show "正在安装" before the app quits; the helper
               // swaps the bundle once this process has exited.
+              AppDelegate.allowImmediateTerminate = true
               DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                 NSApp.terminate(nil)
               }
