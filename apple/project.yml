@@ -1,0 +1,114 @@
+name: DropDrawer
+options:
+  bundleIdPrefix: com.dropdrawer
+  deploymentTarget:
+    iOS: "18.0"
+  xcodeVersion: "16.0"
+  createIntermediateGroups: true
+  defaultConfig: Debug
+
+packages:
+  DropDrawerCore:
+    path: DropDrawerCore
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.1.1"
+    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_LANGUAGE: zh-Hans
+    LOCALIZATION_PREFERS_STRING_CATALOGS: YES
+
+targets:
+  DropDrawerIOS:
+    type: application
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: DropDrawerIOS/Sources
+      - path: DropDrawerIOS/Resources
+    dependencies:
+      - package: DropDrawerCore
+      - target: DropDrawerShareExtension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.dropdrawer.ios
+        PRODUCT_NAME: DropDrawer
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: DropDrawer
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIFileSharingEnabled: YES
+        INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
+        INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: "用于将收到的图片或视频保存到系统相册。"
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: "用于局域网设备间 P2P 直连传输文件。"
+        INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads: YES
+        SWIFT_STRICT_CONCURRENCY: minimal
+    info:
+      path: DropDrawerIOS/Info.plist
+      properties:
+        CFBundleDisplayName: DropDrawer
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        CFBundleURLTypes:
+          - CFBundleURLName: com.dropdrawer.ios
+            CFBundleURLSchemes:
+              - dropdrawer
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        NSPhotoLibraryAddUsageDescription: "用于将收到的图片或视频保存到系统相册。"
+        NSLocalNetworkUsageDescription: "用于局域网设备间 P2P 直连传输文件。"
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+
+  DropDrawerShareExtension:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: DropDrawerShareExtension/Sources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.dropdrawer.ios.ShareExtension
+        PRODUCT_NAME: DropDrawerShareExtension
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SKIP_INSTALL: YES
+        SWIFT_STRICT_CONCURRENCY: minimal
+    info:
+      path: DropDrawerShareExtension/Info.plist
+      properties:
+        CFBundleDisplayName: DropDrawer
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).ShareViewController"
+          NSExtensionAttributes:
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsFileWithMaxCount: 20
+              NSExtensionActivationSupportsImageWithMaxCount: 20
+              NSExtensionActivationSupportsMovieWithMaxCount: 10
+              NSExtensionActivationSupportsText: true
+              NSExtensionActivationSupportsWebURLWithMaxCount: 5
+
+schemes:
+  DropDrawerIOS:
+    build:
+      targets:
+        DropDrawerIOS: all
+    run:
+      config: Debug
+    test:
+      config: Debug
