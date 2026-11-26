@@ -661,7 +661,7 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
 name = "dropdrawer-p2p-cli"
-version = "0.1.0"
+version = "0.1.6"
 dependencies = [
  "anyhow",
  "chrono",
@@ -674,14 +674,13 @@ dependencies = [
 
 [[package]]
 name = "dropdrawer-server"
-version = "0.1.0"
+version = "0.1.6"
 dependencies = [
  "anyhow",
  "argon2",
  "async-trait",
  "axum",
  "base64 0.22.1",
- "blake3",
  "bytes",
  "chrono",
  "dashmap",
@@ -2342,7 +2341,7 @@ checksum = "7e036b411754132fd6b74e94b74e9a13c5cf606fa93d1885c35860d3060820b1"
 
 [[package]]
 name = "p2p-core"
-version = "0.1.0"
+version = "0.1.6"
 dependencies = [
  "anyhow",
  "blake3",
@@ -2350,7 +2349,6 @@ dependencies = [
  "chrono",
  "dashmap",
  "futures-util",
- "hex",
  "iroh",
  "jni 0.21.1",
  "protocol",
@@ -2618,12 +2616,10 @@ dependencies = [
 
 [[package]]
 name = "protocol"
-version = "0.1.0"
+version = "0.1.6"
 dependencies = [
  "chrono",
  "serde",
- "serde_json",
- "uuid",
 ]
 
 [[package]]

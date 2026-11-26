@@ -51,7 +51,11 @@ fn to_c_json<T: Serialize>(res: Result<T, String>) -> *mut c_char {
     let s = serde_json::to_string(&payload).unwrap_or_else(|_| {
         r#"{"ok":false,"data":null,"error":"serialization error"}"#.to_string()
     });
-    CString::new(s).unwrap().into_raw()
+    CString::new(s)
+        .unwrap_or_else(|_| {
+            c"{\"ok\":false,\"data\":null,\"error\":\"invalid native response\"}".to_owned()
+        })
+        .into_raw()
 }
 
 unsafe fn parse_c_str(ptr: *const c_char) -> Result<String, String> {
@@ -72,6 +76,9 @@ fn current_node() -> Result<Arc<P2pNode>, String> {
         .ok_or_else(|| "P2P node is not started".to_string())
 }
 
+/// # Safety
+/// A non-null `config_json` must point to a readable NUL-terminated string
+/// for the duration of this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dropdrawer_p2p_start(config_json: *const c_char) -> *mut c_char {
     let res = (|| -> Result<_, String> {
@@ -109,6 +116,9 @@ struct RegisterFileReq {
     path: String,
 }
 
+/// # Safety
+/// A non-null `req_json` must point to a readable NUL-terminated string
+/// for the duration of this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dropdrawer_p2p_register_file(req_json: *const c_char) -> *mut c_char {
     let res = (|| -> Result<_, String> {
@@ -140,18 +150,29 @@ struct AuthorizeTokenReq {
     requester_node_id: Option<String>,
 }
 
+/// # Safety
+/// A non-null `req_json` must point to a readable NUL-terminated string
+/// for the duration of this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dropdrawer_p2p_authorize_token(req_json: *const c_char) -> *mut c_char {
     let res = (|| -> Result<_, String> {
         let node = current_node()?;
         let raw = unsafe { parse_c_str(req_json)? };
         let req: AuthorizeTokenReq = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
-        node.authorize_token_for(req.item_id, req.token, req.expires_at, req.requester_node_id);
+        node.authorize_token_for(
+            req.item_id,
+            req.token,
+            req.expires_at,
+            req.requester_node_id,
+        );
         Ok(true)
     })();
     to_c_json(res)
 }
 
+/// # Safety
+/// A non-null `item_id` must point to a readable NUL-terminated string
+/// for the duration of this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dropdrawer_p2p_unregister_file(item_id: *const c_char) -> *mut c_char {
     let res = (|| -> Result<_, String> {
@@ -163,6 +184,9 @@ pub unsafe extern "C" fn dropdrawer_p2p_unregister_file(item_id: *const c_char) 
     to_c_json(res)
 }
 
+/// # Safety
+/// A non-null `req_json` must point to a readable NUL-terminated string
+/// for the duration of this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dropdrawer_p2p_download_file(req_json: *const c_char) -> *mut c_char {
     let res = (|| -> Result<_, String> {
@@ -179,6 +203,9 @@ pub unsafe extern "C" fn dropdrawer_p2p_download_file(req_json: *const c_char) -
     to_c_json(res)
 }
 
+/// # Safety
+/// A non-null `transfer_id` must point to a readable NUL-terminated string
+/// for the duration of this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dropdrawer_p2p_cancel_transfer(transfer_id: *const c_char) -> *mut c_char {
     let res = (|| -> Result<_, String> {
@@ -211,6 +238,9 @@ pub extern "C" fn dropdrawer_p2p_shutdown() -> *mut c_char {
     to_c_json(res)
 }
 
+/// # Safety
+/// A non-null `ptr` must be a string returned by this library that has not
+/// already been freed or modified.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dropdrawer_p2p_free_string(ptr: *mut c_char) {
     if !ptr.is_null() {

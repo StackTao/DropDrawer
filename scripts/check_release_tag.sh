@@ -20,6 +20,11 @@ if [[ ! "$tag" =~ $pattern ]]; then
   echo "       use v$version or v$version-<prerelease>, or update app/pubspec.yaml first" >&2
   exit 1
 fi
+rust_version="$(sed -n '/^\[workspace.package\]$/,/^\[/s/^version = "\([^"]*\)"$/\1/p' "$root/Cargo.toml")"
+if [[ "$rust_version" != "$version" ]]; then
+  echo "error: Cargo.toml workspace version ($rust_version) does not match app/pubspec.yaml ($version)" >&2
+  exit 1
+fi
 if [[ -f "$root/apple/project.yml" ]]; then
   apple_version="$(sed -n 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*"\{0,1\}\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"\{0,1\}.*/\1/p' "$root/apple/project.yml" | head -n 1)"
   if [[ -n "$apple_version" && "$apple_version" != "$version" ]]; then

@@ -126,6 +126,10 @@ If `DROPDRAWER_JWT_SECRET` is not set, the server generates a random secret on f
 
 To enable Google sign-in, follow the [Google sign-in setup](docs/GOOGLE_SIGN_IN.md). Use the same Google account on each device to access the same drawer.
 
+### Admin console
+
+Set `DROPDRAWER_ADMIN_TOKEN` and open `/admin` on your server to manage users, storage, sign-in, retention, and share policies. See the [server environment reference (Chinese)](docs/CONFIGURATION.md) for the admin token, SMTP, quotas, Google sign-in, and reverse proxy settings.
+
 ## Build from source
 
 Install stable Rust and Flutter. macOS and iOS builds require Xcode. For Windows and Android, you can use the GitHub Actions workflows listed above.

@@ -37,3 +37,6 @@ apple/DropDrawerCore/.swiftpm/
 .DS_Store
 .idea/
 .vscode/
+
+# Local website preview
+/website-preview/

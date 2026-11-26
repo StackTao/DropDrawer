@@ -124,6 +124,10 @@ curl -fsS http://localhost:8080/health
 
 [Google ログインの設定ガイド](docs/GOOGLE_SIGN_IN.md)に沿って Google ログインを有効にできます。各端末で同じ Google アカウントを使うと、同じドロワーにアクセスできます。
 
+### 管理コンソール
+
+`DROPDRAWER_ADMIN_TOKEN` を設定してサーバーの `/admin` を開くと、ユーザー、ストレージ、ログイン、保存期間、共有ポリシーを管理できます。管理トークン、SMTP、ストレージ容量、Google ログイン、リバースプロキシの設定は[サーバー環境変数（中国語）](docs/CONFIGURATION.md)を参照してください。
+
 ## ソースからビルド
 
 Rust と Flutter の安定版を用意してください。macOS と iOS のビルドには Xcode が必要です。Windows と Android は、上記の GitHub Actions ワークフローを利用できます。

@@ -124,6 +124,10 @@ curl -fsS http://localhost:8080/health
 
 依照 [Google 登入設定指南](docs/GOOGLE_SIGN_IN.md) 啟用 Google 登入。在各裝置使用相同 Google 帳號即可存取同一個抽屜。
 
+### 管理控制台
+
+設定 `DROPDRAWER_ADMIN_TOKEN` 後，開啟伺服器的 `/admin`，即可管理使用者、儲存空間、登入、檔案保留及分享政策。管理金鑰、SMTP、儲存配額、Google 登入和反向代理設定請見[伺服器環境變數（簡體中文）](docs/CONFIGURATION.md)。
+
 ## 從原始碼建置
 
 請準備穩定版 Rust 和 Flutter。建置 macOS 和 iOS 版本需要 Xcode。Windows 和 Android 可使用上表的 GitHub Actions 工作流程。

@@ -126,6 +126,10 @@ curl -fsS http://localhost:8080/health
 
 按 [Google 登录配置指南](docs/GOOGLE_SIGN_IN.md) 启用 Google 登录。在各设备使用同一 Google 账号即可访问同一个抽屉。
 
+### 管理控制台
+
+设置 `DROPDRAWER_ADMIN_TOKEN` 后访问服务器的 `/admin`，即可管理用户、存储、登录、文件保留和分享策略。管理员密钥、SMTP、存储配额、Google 登录和反向代理配置见[服务端环境变量](docs/CONFIGURATION.md)。
+
 ## 从源码构建
 
 准备 Rust stable 和 Flutter stable。macOS 与 iOS 需要 Xcode，Windows 和 Android 可以使用上表中的 GitHub Actions 工作流。

@@ -124,6 +124,10 @@ curl -fsS http://localhost:8080/health
 
 [Google 로그인 설정 가이드](docs/GOOGLE_SIGN_IN.md)에 따라 Google 로그인을 활성화할 수 있습니다. 모든 기기에서 같은 Google 계정으로 로그인하면 같은 서랍에 접근할 수 있습니다.
 
+### 관리 콘솔
+
+`DROPDRAWER_ADMIN_TOKEN`을 설정한 뒤 서버의 `/admin`을 열면 사용자, 저장소, 로그인, 보존 기간, 공유 정책을 관리할 수 있습니다. 관리자 토큰, SMTP, 저장소 할당량, Google 로그인 및 리버스 프록시 설정은 [서버 환경 변수(중국어)](docs/CONFIGURATION.md)에서 확인하세요.
+
 ## 소스에서 빌드
 
 Rust와 Flutter의 안정 버전을 설치하세요. macOS와 iOS를 빌드하려면 Xcode가 필요합니다. Windows와 Android는 위에 있는 GitHub Actions 워크플로를 사용할 수 있습니다.
