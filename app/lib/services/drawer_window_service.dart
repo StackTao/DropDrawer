@@ -279,6 +279,21 @@ class DrawerWindowService {
     }
   }
 
+  /// Opens a local file in the system viewer: Quick Look on iOS, the default
+  /// app for its type on Android. False when nothing can show it.
+  Future<bool> openFileNative(String path) async {
+    if (!isMobile || path.isEmpty) return false;
+    try {
+      final ok = await _mobileChannel.invokeMethod<bool>(
+        'openFile',
+        {'path': path},
+      );
+      return ok ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<bool> shareTextNative(String text) async {
     if (!isMobile || text.trim().isEmpty) return false;
     try {

@@ -12,6 +12,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class _FakeWindowService extends DrawerWindowService {
   final bool mobile;
@@ -147,8 +148,9 @@ void main() {
           ],
         );
         expect(tester.takeException(), isNull);
-        // Add actions live in the bottom bar; the desktop footer is gone.
-        expect(find.text('选文件'), findsOneWidget);
+        // Adding sits behind "+" (iOS) or the floating button (Android); the
+        // desktop footer is gone.
+        expect(find.byTooltip('添加'), findsOneWidget);
         expect(find.textContaining('iroh P2P'), findsNothing);
         // Meta leads with origin and time; text items preview their content.
         expect(find.textContaining('来自 Studio MacBook Pro'), findsWidgets);
@@ -168,7 +170,8 @@ void main() {
       await _pumpPhone(tester, items: [_item('a', cloud: true), _item('b', cloud: true)]);
       await tester.longPress(find.text(_item('a').name));
       await tester.pump();
-      expect(find.text('已选 1 项'), findsOneWidget);
+      // The large app bar becomes a selection bar.
+      expect(find.text('已选 1 项'), findsWidgets);
       expect(find.text('删除(1)'), findsOneWidget);
     });
 
@@ -232,6 +235,7 @@ void main() {
     });
 
     testWidgets('preferences page fits a phone and offers the drop policy', (tester) async {
+      SharedPreferences.setMockInitialValues({});
       tester.view.physicalSize = const Size(390 * 3, 844 * 3);
       tester.view.devicePixelRatio = 3;
       addTearDown(tester.view.reset);
@@ -248,7 +252,11 @@ void main() {
                   size: Size(390, 844),
                   textScaler: TextScaler.linear(1.15),
                 ),
-                child: PreferencesView(controller: ctrl, onBack: () {}),
+                // Pushed pages rebuild with the controller.
+                child: ListenableBuilder(
+                  listenable: ctrl,
+                  builder: (_, _) => PreferencesView(controller: ctrl, onBack: () {}),
+                ),
               ),
             ),
           ),
@@ -257,9 +265,13 @@ void main() {
       await tester.pump();
       expect(tester.takeException(), isNull);
       expect(find.text('新文件传输策略'), findsOneWidget);
+      // Each choice opens its own list (a dialog on Android).
+      await tester.tap(find.text('新文件传输策略'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('纯 P2P'));
-      await tester.pump();
+      await tester.pumpAndSettle();
       expect(ctrl.defaultDropPolicy, 'p2p_only');
+      expect(find.text('纯 P2P'), findsOneWidget); // the row's value
     });
   });
 
@@ -389,12 +401,23 @@ void main() {
     testWidgets('phone screen uses the light palette and fits', (tester) async {
       expect(MacPalette.use(Brightness.light), isTrue);
       expect(MacPalette.use(Brightness.light), isFalse);
-      final ctrl = await _pumpPhone(tester, items: [_item('a', cloud: true)]);
+      // iOS: white grouped rows on the grey grouped background.
+      final ctrl = await _pumpPhone(
+        tester,
+        items: [_item('a', cloud: true)],
+        platform: TargetPlatform.iOS,
+      );
       expect(tester.takeException(), isNull);
-      final surfaces = tester
-          .widgetList<AnimatedContainer>(find.byType(AnimatedContainer))
-          .map((w) => (w.decoration as BoxDecoration?)?.color)
-          .toList();
+      final surfaces = [
+        ...tester
+            .widgetList<AnimatedContainer>(find.byType(AnimatedContainer))
+            .map((w) => (w.decoration as BoxDecoration?)?.color),
+        ...tester
+            .widgetList<DecoratedBox>(find.byType(DecoratedBox))
+            .map((w) => w.decoration)
+            .whereType<BoxDecoration>()
+            .map((d) => d.color),
+      ];
       expect(surfaces, contains(const Color(0xFFF2F2F7)));
       expect(surfaces, contains(const Color(0xFFFFFFFF)));
       expect(ctrl.items, hasLength(1));
@@ -430,11 +453,11 @@ void main() {
     await tester.binding.handlePopRoute();
     await tester.pumpAndSettle();
     expect(find.text('新文件传输策略'), findsNothing);
-    expect(find.text('选文件'), findsOneWidget);
+    expect(find.byTooltip('添加'), findsOneWidget);
 
     await tester.longPress(find.text(_item('a').name));
     await tester.pump();
-    expect(find.text('已选 1 项'), findsOneWidget);
+    expect(find.text('已选 1 项'), findsWidgets);
     await tester.binding.handlePopRoute();
     await tester.pump();
     expect(find.text('已选 1 项'), findsNothing);
@@ -497,6 +520,98 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('设备与 P2P'), findsNothing);
       expect(find.text('signed out'), findsOneWidget);
+    });
+
+    testWidgets('iOS adds from the + menu and keeps menus working once collapsed', (tester) async {
+      await _pumpPhone(
+        tester,
+        items: [for (var i = 0; i < 12; i++) _item('i$i', cloud: true)],
+        platform: TargetPlatform.iOS,
+      );
+      await tester.tap(find.byTooltip('添加'));
+      await tester.pumpAndSettle();
+      expect(find.text('选取文件'), findsOneWidget);
+      expect(find.text('照片图库'), findsOneWidget);
+      expect(find.text('粘贴'), findsOneWidget);
+      await tester.tapAt(const Offset(20, 600)); // outside: dismiss
+      await tester.pumpAndSettle();
+      expect(find.text('选取文件'), findsNothing);
+
+      // Collapse the large title, then open the other menu.
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, -400));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('更多'));
+      await tester.pumpAndSettle();
+      expect(find.text('偏好设置'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('iOS swipe reveals 移出, which removes the item', (tester) async {
+      final ctrl = await _pumpPhone(
+        tester,
+        items: [_item('a', cloud: true), _item('b', cloud: true)],
+        platform: TargetPlatform.iOS,
+      );
+      await tester.drag(find.text(_item('a').name), const Offset(-120, 0));
+      await tester.pumpAndSettle();
+      expect(find.text('移出'), findsOneWidget);
+      await tester.tap(find.text('移出'));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 50)); // deletion timer
+      expect(find.text(_item('a').name), findsNothing);
+      expect(ctrl.deleted, ['a']);
+      // No undo bar on iOS.
+      expect(find.text('撤销'), findsNothing);
+    });
+
+    testWidgets('iOS long press shows the item menu', (tester) async {
+      await _pumpPhone(
+        tester,
+        items: [_item('a', cloud: true)],
+        platform: TargetPlatform.iOS,
+      );
+      final gesture =
+          await tester.startGesture(tester.getCenter(find.text(_item('a').name)));
+      await tester.pump(const Duration(milliseconds: 900));
+      await tester.pumpAndSettle();
+      expect(find.text('创建外链'), findsOneWidget);
+      expect(find.text('移出抽屉'), findsOneWidget);
+      await gesture.up();
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('选择'));
+      await tester.pumpAndSettle();
+      // Selecting: the bar offers select-all and 完成.
+      expect(find.text('已选 1 项'), findsWidgets);
+      // The only item is selected, so the leading button deselects all.
+      expect(find.text('取消全选'), findsOneWidget);
+      await tester.tap(find.text('完成'));
+      await tester.pumpAndSettle();
+      expect(find.text('已选 1 项'), findsNothing);
+    });
+
+    testWidgets('iOS shows status messages as a capsule, not a snack bar', (tester) async {
+      final ctrl = await _pumpPhone(
+        tester,
+        items: [_item('a', cloud: true)],
+        platform: TargetPlatform.iOS,
+      );
+      ctrl.setBanner('已复制到剪贴板');
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('已复制到剪贴板'), findsOneWidget);
+      expect(find.byType(SnackBar), findsNothing);
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+      expect(find.text('已复制到剪贴板'), findsNothing);
+    });
+
+    test('iOS dark uses a black background with raised rows', () {
+      addTearDown(() => MacPalette.use(Brightness.dark));
+      MacPalette.use(Brightness.dark, trueBlack: true);
+      expect(MacPalette.background, const Color(0xFF000000));
+      expect(MacPalette.group(0.22), MacPalette.cardBg);
+      MacPalette.use(Brightness.dark);
+      expect(MacPalette.background, const Color(0xFF141417));
     });
 
     test('phone type ramp maps desktop sizes onto the system scale', () {

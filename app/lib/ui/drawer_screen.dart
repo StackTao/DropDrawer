@@ -63,6 +63,12 @@ class _DrawerScreenState extends State<DrawerScreen> {
     _shownBannerSerial = widget.controller.bannerSerial;
     _searchFocusNode.addListener(_syncMainDrawerShortcutState);
     if (widget.controller.windowService.isMobile) {
+      // Focusing the phone search field enters search (system back leaves it).
+      _searchFocusNode.addListener(() {
+        if (_searchFocusNode.hasFocus && !_searchOpen && mounted) {
+          setState(() => _searchOpen = true);
+        }
+      });
       _mobileLifecycle = AppLifecycleListener(
         onResume: () => unawaited(widget.controller.refreshOnResume()),
       );
@@ -104,6 +110,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
     _closeWindowsMoreMenu(widget.controller);
     _mobileLifecycle?.dispose();
     _mobileLifecycle = null;
+    _hideCapsule();
     widget.controller.windowService.onPasteShortcut = null;
     widget.controller.windowService.setMainDrawerActive(false);
     _shortcutFocusNode.dispose();
@@ -420,6 +427,19 @@ class _DrawerScreenState extends State<DrawerScreen> {
             touch: isMobile,
             child: Scaffold(
               backgroundColor: isMobile ? MacPalette.background : Colors.transparent,
+              floatingActionButton: isMobile &&
+                      usesMaterialChrome(context) &&
+                      _page == _DrawerPage.drawer &&
+                      !_selectionMode
+                  ? FloatingActionButton.extended(
+                      tooltip: '添加',
+                      onPressed: _showAddSheet,
+                      backgroundColor: MacPalette.accent,
+                      foregroundColor: MacPalette.onAccent,
+                      icon: const Icon(Icons.add),
+                      label: const Text('添加'),
+                    )
+                  : null,
               body: AnimatedContainer(
                 duration: const Duration(milliseconds: 140),
                 decoration: BoxDecoration(
@@ -780,41 +800,195 @@ class _DrawerScreenState extends State<DrawerScreen> {
     );
   }
 
+  List<PhoneMenuEntry> _phoneAddEntries() => [
+        PhoneMenuEntry(
+          label: '选取文件',
+          icon: CupertinoIcons.doc,
+          materialIcon: Icons.insert_drive_file_outlined,
+          onSelected: _pickFiles,
+        ),
+        PhoneMenuEntry(
+          label: '照片图库',
+          icon: CupertinoIcons.photo_on_rectangle,
+          materialIcon: Icons.photo_library_outlined,
+          onSelected: _pickMedia,
+        ),
+        PhoneMenuEntry(
+          label: '粘贴',
+          icon: CupertinoIcons.doc_on_clipboard,
+          materialIcon: Icons.content_paste,
+          onSelected: _pasteFromClipboard,
+        ),
+      ];
+
+  List<PhoneMenuEntry> _phoneMoreEntries(
+    DropDrawerController c,
+    List<DrawerItem> visibleItems,
+  ) =>
+      [
+        if (c.items.isNotEmpty) ...[
+          PhoneMenuEntry(
+            label: '选择',
+            icon: CupertinoIcons.checkmark_circle,
+            materialIcon: Icons.checklist,
+            onSelected: () => _enterSelectionMode(),
+          ),
+          PhoneMenuEntry(
+            label: '全部下载',
+            icon: CupertinoIcons.arrow_down_circle,
+            materialIcon: Icons.download_outlined,
+            onSelected: () => c.batchDownloadItems(visibleItems),
+          ),
+        ],
+        PhoneMenuEntry(
+          label: '云盘与存储',
+          icon: CupertinoIcons.cloud,
+          materialIcon: Icons.cloud_outlined,
+          startsGroup: true,
+          onSelected: () => _switchPage(_DrawerPage.storage),
+        ),
+        PhoneMenuEntry(
+          label: '外链管理',
+          icon: CupertinoIcons.link,
+          materialIcon: Icons.link,
+          onSelected: () => _switchPage(_DrawerPage.share),
+        ),
+        PhoneMenuEntry(
+          label: '设备与 P2P',
+          icon: CupertinoIcons.device_laptop,
+          materialIcon: Icons.devices_outlined,
+          onSelected: () => _switchPage(_DrawerPage.devices),
+        ),
+        PhoneMenuEntry(
+          label: '偏好设置',
+          icon: CupertinoIcons.gear,
+          materialIcon: Icons.settings_outlined,
+          onSelected: () => _switchPage(_DrawerPage.preferences),
+        ),
+        if (c.items.isNotEmpty)
+          PhoneMenuEntry(
+            label: '清空抽屉',
+            icon: CupertinoIcons.trash,
+            materialIcon: Icons.delete_sweep_outlined,
+            destructive: true,
+            startsGroup: true,
+            onSelected: () => _confirmAndClearDrawer(c),
+          ),
+        PhoneMenuEntry(
+          label: '退出登录',
+          icon: CupertinoIcons.square_arrow_right,
+          materialIcon: Icons.logout,
+          destructive: true,
+          startsGroup: c.items.isEmpty,
+          onSelected: c.logout,
+        ),
+      ];
+
+  Widget _navTextButton(String label, VoidCallback onPressed, {bool bold = false}) {
+    return CupertinoButton(
+      padding: EdgeInsets.zero,
+      minimumSize: const Size(44, 44),
+      onPressed: onPressed,
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 17,
+          fontWeight: bold ? FontWeight.w600 : FontWeight.w400,
+          color: MacPalette.accent,
+        ),
+      ),
+    );
+  }
+
   /// Phone home: a large-title navigation bar (iOS) or large top app bar
-  /// (Android) over the drawer list, with the add actions at the bottom.
+  /// (Android) over the drawer list. Adding sits behind "+" on iOS and the
+  /// floating button on Android; selecting turns the bar into a selection bar.
   Widget _buildPhoneHome(
     BuildContext context,
     DropDrawerController c,
     List<DrawerItem> visibleItems,
   ) {
     final material = usesMaterialChrome(context);
-    final actions = [
-      PhoneBarButton(
-        action: PageAction(
-          icon: material ? Icons.cloud_outlined : CupertinoIcons.cloud,
-          tooltip: '多云盘与中转存储',
-          onPressed: () => _switchPage(_DrawerPage.storage),
-        ),
-      ),
-      _buildPhoneMoreMenu(
-        c,
-        child: material
-            ? const Padding(
-                padding: EdgeInsets.all(12),
-                child: Icon(Icons.more_vert, size: 22),
+    final selecting = _selectionMode;
+    final visibleIds = visibleItems.map((e) => e.id).toSet();
+    final existingIds = c.items.map((e) => e.id).toSet();
+    _selectedIds.removeWhere((id) => !existingIds.contains(id));
+    final allSelected =
+        visibleItems.isNotEmpty && visibleIds.every(_selectedIds.contains);
+    void toggleAll() => setState(() {
+          if (allSelected) {
+            _selectedIds.removeAll(visibleIds);
+          } else {
+            _selectedIds.addAll(visibleIds);
+          }
+        });
+    void finish() => setState(() {
+          _selectionMode = false;
+          _selectedIds.clear();
+        });
+    final title = Text(selecting ? '已选 ${_selectedIds.length} 项' : '抽屉');
+    final more = PhoneMenuButton(
+      icon: CupertinoIcons.ellipsis_circle,
+      materialIcon: Icons.more_vert,
+      tooltip: '更多',
+      entries: _phoneMoreEntries(c, visibleItems),
+    );
+
+    final Widget navBar;
+    if (material) {
+      navBar = SliverAppBar.large(
+        leading: selecting
+            ? IconButton(
+                tooltip: '完成',
+                icon: const Icon(Icons.close),
+                onPressed: finish,
               )
-            : SizedBox(
-                width: 44,
-                height: 44,
-                child: Icon(
-                  CupertinoIcons.ellipsis_circle,
-                  size: 23,
-                  color: MacPalette.accent,
+            : null,
+        title: title,
+        actions: selecting
+            ? [
+                IconButton(
+                  tooltip: allSelected ? '取消全选' : '全选',
+                  icon: Icon(allSelected ? Icons.deselect : Icons.select_all),
+                  onPressed: toggleAll,
                 ),
-              ),
-      ),
-    ];
-    const title = Text('抽屉');
+              ]
+            : [more, const SizedBox(width: 4)],
+      );
+    } else {
+      navBar = CupertinoSliverNavigationBar(
+        largeTitle: title,
+        backgroundColor: MacPalette.background,
+        // iOS shows no hairline under an expanded large title.
+        border: null,
+        leading: selecting
+            ? Material(
+                type: MaterialType.transparency,
+                child: _navTextButton(allSelected ? '取消全选' : '全选', toggleAll),
+              )
+            : null,
+        // The bar flies over the page transition outside the Scaffold; its
+        // buttons need a Material ancestor there too.
+        trailing: Material(
+          type: MaterialType.transparency,
+          child: selecting
+              ? _navTextButton('完成', finish, bold: true)
+              : Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    PhoneMenuButton(
+                      icon: CupertinoIcons.plus,
+                      materialIcon: Icons.add,
+                      tooltip: '添加',
+                      entries: _phoneAddEntries(),
+                    ),
+                    more,
+                  ],
+                ),
+        ),
+      );
+    }
+
     final scroll = CustomScrollView(
       physics: AlwaysScrollableScrollPhysics(
         parent: material
@@ -822,30 +996,15 @@ class _DrawerScreenState extends State<DrawerScreen> {
             : const BouncingScrollPhysics(),
       ),
       slivers: [
-        if (material)
-          SliverAppBar.large(
-            title: title,
-            actions: [...actions, const SizedBox(width: 4)],
-          )
-        else ...[
-          CupertinoSliverNavigationBar(
-            largeTitle: title,
-            backgroundColor: MacPalette.background,
-            // iOS shows no hairline under an expanded large title.
-            border: null,
-            // The bar flies over the page transition outside the Scaffold;
-            // the menu button needs a Material ancestor there too.
-            trailing: Material(
-              type: MaterialType.transparency,
-              child: Row(mainAxisSize: MainAxisSize.min, children: actions),
-            ),
-          ),
-          CupertinoSliverRefreshControl(onRefresh: c.manualRefresh),
-        ],
-        SliverToBoxAdapter(child: _buildPhoneSubheader(c, visibleItems)),
-        if (c.items.isNotEmpty && _searchOpen)
-          SliverToBoxAdapter(child: _buildSearchFilterBar(true)),
+        navBar,
+        if (!material) CupertinoSliverRefreshControl(onRefresh: c.manualRefresh),
+        if (!selecting) SliverToBoxAdapter(child: _buildPhoneStatus(c, visibleItems)),
+        if (c.items.isNotEmpty && !selecting)
+          SliverToBoxAdapter(child: _buildPhoneSearch(material)),
         _buildItemSliver(context, c, visibleItems),
+        // Keep the last row clear of the floating add button.
+        if (material && !selecting)
+          const SliverToBoxAdapter(child: SizedBox(height: 88)),
       ],
     );
     return Column(
@@ -859,88 +1018,349 @@ class _DrawerScreenState extends State<DrawerScreen> {
                 )
               : scroll,
         ),
-        if (_selectionMode)
+        if (selecting)
           _buildBatchFooter(c)
-        else ...[
+        else
           UpdateBanner(updates: c.updates, mobile: true),
-          _buildMobileActionBar(),
-        ],
       ],
     );
   }
 
+  /// Android: the add choices as a Material 3 bottom sheet.
+  Future<void> _showAddSheet() async {
+    final entries = _phoneAddEntries();
+    final chosen = await showModalBottomSheet<PhoneMenuEntry>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: MacPalette.elevatedBg,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final entry in entries)
+              ListTile(
+                leading: Icon(entry.materialIcon),
+                title: Text(entry.label),
+                onTap: () => Navigator.of(context).pop(entry),
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    chosen?.onSelected();
+  }
+
   /// Under the phone title: connection state and online devices (opens the
-  /// device page), list search and actions; select-all while selecting.
-  Widget _buildPhoneSubheader(
+  /// device page) and the item count.
+  Widget _buildPhoneStatus(
     DropDrawerController c,
     List<DrawerItem> visibleItems,
   ) {
-    if (_selectionMode) return _buildBatchActionStrip(c, visibleItems);
     final isFiltering =
         _filterKind != 'all' || _searchCtrl.text.trim().isNotEmpty;
     final status = !c.wsConnected
         ? '正在连接…'
         : '${c.onlineDeviceCount} 台设备在线';
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 2, 8, 2),
-      child: Row(
-        children: [
-          Expanded(
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: GestureDetector(
-              onTap: () => _switchPage(_DrawerPage.devices),
-              behavior: HitTestBehavior.opaque,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 2),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: GestureDetector(
+          onTap: () => _switchPage(_DrawerPage.devices),
+          behavior: HitTestBehavior.opaque,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: c.wsConnected
+                        ? (c.p2pReady ? MacPalette.green : MacPalette.accent)
+                        : MacPalette.red,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    isFiltering
+                        ? '$status · 筛选 ${visibleItems.length}/${c.items.length}'
+                        : (c.items.isEmpty
+                            ? status
+                            : '$status · ${c.items.length} 项'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 15,
+                      color: MacPalette.textSecondary,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 2),
+                Icon(
+                  CupertinoIcons.chevron_right,
+                  size: 14,
+                  color: MacPalette.textTertiary,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// The system search field: iOS search field with a scope bar and 取消,
+  /// or a Material 3 search bar with filter chips.
+  Widget _buildPhoneSearch(bool material) {
+    final active = _searchOpen || _searchCtrl.text.isNotEmpty;
+    const scopes = [('all', '全部'), ('file', '文件'), ('text', '文本')];
+    if (material) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SearchBar(
+              controller: _searchCtrl,
+              focusNode: _searchFocusNode,
+              hintText: '搜索抽屉',
+              elevation: const WidgetStatePropertyAll(0),
+              backgroundColor: WidgetStatePropertyAll(MacPalette.fill(0.07)),
+              leading: const Padding(
+                padding: EdgeInsets.only(left: 4),
+                child: Icon(Icons.search),
+              ),
+              trailing: [
+                if (active)
+                  IconButton(
+                    tooltip: '关闭搜索',
+                    icon: const Icon(Icons.close),
+                    onPressed: _closeSearch,
+                  ),
+              ],
+              onTap: () => setState(() => _searchOpen = true),
+              onChanged: (_) => setState(() {}),
+            ),
+            if (active)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Wrap(
+                  spacing: 8,
                   children: [
-                    Container(
-                      width: 8,
-                      height: 8,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: c.wsConnected
-                            ? (c.p2pReady ? MacPalette.green : MacPalette.accent)
-                            : MacPalette.red,
+                    for (final (kind, label) in scopes)
+                      ChoiceChip(
+                        label: Text(label),
+                        selected: _filterKind == kind,
+                        onSelected: (_) => setState(() => _filterKind = kind),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: Text(
-                        isFiltering
-                            ? '$status · 筛选 ${visibleItems.length}/${c.items.length}'
-                            : (c.items.isEmpty
-                                ? status
-                                : '$status · ${c.items.length} 项'),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 15,
-                          color: MacPalette.textSecondary,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 2),
-                    Icon(
-                      CupertinoIcons.chevron_right,
-                      size: 14,
-                      color: MacPalette.textTertiary,
-                    ),
                   ],
                 ),
               ),
-            ),
-            ),
-          ),
-          if (c.items.isNotEmpty) ...[
-            _buildSearchToggle(isMobile: true, active: _searchOpen || isFiltering),
-            _buildMobileListMenu(c, visibleItems),
           ],
+        ),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 2, 16, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: CupertinoSearchTextField(
+                  controller: _searchCtrl,
+                  focusNode: _searchFocusNode,
+                  placeholder: '搜索',
+                  style: TextStyle(color: MacPalette.textPrimary),
+                  onTap: () => setState(() => _searchOpen = true),
+                  onChanged: (_) => setState(() {}),
+                  onSuffixTap: () => setState(_searchCtrl.clear),
+                ),
+              ),
+              if (active)
+                CupertinoButton(
+                  padding: const EdgeInsets.only(left: 12),
+                  minimumSize: const Size(0, 36),
+                  onPressed: _closeSearch,
+                  child: Text(
+                    '取消',
+                    style: TextStyle(fontSize: 17, color: MacPalette.accent),
+                  ),
+                ),
+            ],
+          ),
+          if (active)
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: CupertinoSlidingSegmentedControl<String>(
+                groupValue: _filterKind,
+                children: {
+                  for (final (kind, label) in scopes)
+                    kind: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 3),
+                      child: Text(label, style: const TextStyle(fontSize: 14)),
+                    ),
+                },
+                onValueChanged: (kind) =>
+                    setState(() => _filterKind = kind ?? 'all'),
+              ),
+            ),
         ],
       ),
     );
+  }
+
+  void _closeSearch() {
+    setState(() {
+      _searchOpen = false;
+      _searchCtrl.clear();
+      _filterKind = 'all';
+      _searchFocusNode.unfocus();
+    });
+    _syncMainDrawerShortcutState();
+  }
+
+  /// A phone list row: an iOS inset grouped row (rounded group, inset
+  /// separators, swipe to remove, long-press menu) or a Material 3 list item
+  /// (swipe to remove with undo, long press selects).
+  Widget _buildPhoneEntry(
+    BuildContext context,
+    DropDrawerController c,
+    List<DrawerItem> visibleItems,
+    int index,
+  ) {
+    final material = usesMaterialChrome(context);
+    final pending = c.pendingDrops;
+    final last = index == _listEntryCount(c, visibleItems) - 1;
+    final radius = material
+        ? BorderRadius.zero
+        : BorderRadius.vertical(
+            top: Radius.circular(index == 0 ? 10 : 0),
+            bottom: Radius.circular(last ? 10 : 0),
+          );
+    Widget frame(Widget child, {bool selected = false}) => _PhoneRowFrame(
+          material: material,
+          radius: radius,
+          separator: !last && !material,
+          selected: selected,
+          child: child,
+        );
+    if (index < pending.length) {
+      return frame(_PendingDropTile(drop: pending[index], isMobile: true, framed: true));
+    }
+    final item = visibleItems[index - pending.length];
+    final selected = _selectedIds.contains(item.id);
+    void toggle() => setState(() {
+          if (!_selectedIds.remove(item.id)) _selectedIds.add(item.id);
+        });
+    final row = frame(
+      _PhoneItemRow(
+        controller: c,
+        item: item,
+        localPath: c.localFilePaths[item.id],
+        material: material,
+        selectionMode: _selectionMode,
+        selected: selected,
+        onTap: _selectionMode
+            ? toggle
+            : () => _switchPage(_DrawerPage.preview, previewItemId: item.id),
+        onLongPress: material && !_selectionMode
+            ? () {
+                HapticFeedback.mediumImpact();
+                _enterSelectionMode(item.id);
+              }
+            : null,
+      ),
+      selected: selected,
+    );
+    if (_selectionMode) return row;
+    if (material) {
+      return Dismissible(
+        key: ValueKey('mobile_item_${item.id}'),
+        direction: DismissDirection.endToStart,
+        background: Container(
+          alignment: Alignment.centerRight,
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          color: MacPalette.red,
+          child: Icon(Icons.delete_outline, color: MacPalette.onAccent),
+        ),
+        onDismissed: (_) => _deleteWithUndo(c, item),
+        child: row,
+      );
+    }
+    return PhoneSwipeToDelete(
+      key: ValueKey('mobile_item_${item.id}'),
+      borderRadius: radius,
+      onDelete: () => _deleteNow(c, item),
+      // The menu previews the row in an unbounded box; give it its width.
+      child: LayoutBuilder(
+        builder: (context, constraints) => CupertinoContextMenu(
+          actions: _itemContextActions(c, item),
+          child: SizedBox(width: constraints.maxWidth, child: row),
+        ),
+      ),
+    );
+  }
+
+  /// iOS long-press menu for an item.
+  List<Widget> _itemContextActions(DropDrawerController c, DrawerItem item) {
+    final localPath = c.localFilePaths[item.id];
+    final isMine = item.ownerDeviceId == c.deviceId;
+    Widget action(
+      String label,
+      IconData icon,
+      VoidCallback onPressed, {
+      bool destructive = false,
+    }) =>
+        CupertinoContextMenuAction(
+          trailingIcon: icon,
+          isDestructiveAction: destructive,
+          onPressed: () {
+            Navigator.of(context).pop();
+            onPressed();
+          },
+          child: Text(label),
+        );
+    return [
+      if (item.kind == 'text')
+        action('复制文本', CupertinoIcons.doc_on_doc, () {
+          Clipboard.setData(ClipboardData(text: item.textContent ?? item.name));
+          c.setBanner('已复制到剪贴板');
+        })
+      else if (localPath != null)
+        action('分享…', CupertinoIcons.share, () async {
+          final ok = await c.windowService.shareFilesNative([localPath]);
+          if (!ok) c.setBanner('打开系统分享失败');
+        })
+      else
+        action('下载', CupertinoIcons.arrow_down_circle, () => c.downloadItem(item)),
+      action('创建外链', CupertinoIcons.link,
+          () => _switchPage(_DrawerPage.share, shareItems: [item])),
+      if (item.kind == 'file' && isMine && !item.cloudReady && localPath != null)
+        action('存到云盘', CupertinoIcons.cloud_upload,
+            () => c.cacheItemToCloud(item.id, localPath)),
+      action('选择', CupertinoIcons.checkmark_circle,
+          () => _enterSelectionMode(item.id)),
+      action('移出抽屉', CupertinoIcons.trash, () => _deleteNow(c, item),
+          destructive: true),
+    ];
+  }
+
+  /// Removes an item without an undo window (iOS asks for an explicit swipe
+  /// or menu choice first).
+  void _deleteNow(DropDrawerController c, DrawerItem item) {
+    setState(() {
+      _pendingDeletes[item.id] = Timer(
+        Duration.zero,
+        () => unawaited(_commitDelete(c, item.id)),
+      );
+    });
   }
 
   void _toggleSearch() {
@@ -1474,11 +1894,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
               isMobile: isMobile,
               active: _searchOpen || isFiltering,
             ),
-            if (isMobile)
-              // Long-press an item also starts selecting; less frequent list
-              // actions sit in a menu rather than a row of small text buttons.
-              _buildMobileListMenu(c, visibleItems)
-            else ...[
+            if (!isMobile) ...[
               const SizedBox(width: 8),
               _miniTextAction(
                 label: '多选',
@@ -1635,137 +2051,6 @@ class _DrawerScreenState extends State<DrawerScreen> {
     );
   }
 
-  Widget _mobileQuickActionBtn({
-    required IconData icon,
-    required String label,
-    required VoidCallback onTap,
-  }) {
-    return Material(
-      color: MacPalette.fill(0.07),
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        onTap: () {
-          HapticFeedback.selectionClick();
-          onTap();
-        },
-        borderRadius: BorderRadius.circular(12),
-        // The app theme turns splashes off for the desktop look; phones need
-        // visible press feedback.
-        splashFactory: InkRipple.splashFactory,
-        splashColor: MacPalette.fill(0.08),
-        highlightColor: MacPalette.fill(0.10),
-        child: Container(
-          height: 50,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: MacPalette.hairline, width: 0.7),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, size: 18, color: MacPalette.textPrimary),
-              const SizedBox(width: 7),
-              Flexible(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w500,
-                    color: MacPalette.textPrimary,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMobileActionBar() {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-      decoration: BoxDecoration(
-        border: Border(top: BorderSide(color: MacPalette.hairline, width: 0.5)),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: _mobileQuickActionBtn(
-              icon: CupertinoIcons.doc_fill,
-              label: '选文件',
-              onTap: _pickFiles,
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: _mobileQuickActionBtn(
-              icon: CupertinoIcons.photo_fill,
-              label: '选相册',
-              onTap: _pickMedia,
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: _mobileQuickActionBtn(
-              icon: CupertinoIcons.doc_on_clipboard_fill,
-              label: '粘贴',
-              onTap: _pasteFromClipboard,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMobileListMenu(
-    DropDrawerController c,
-    List<DrawerItem> visibleItems,
-  ) {
-    PopupMenuItem<String> entry(String value, IconData icon, String label) =>
-        PopupMenuItem(
-          value: value,
-          height: 46,
-          child: Row(
-            children: [
-              Icon(icon, size: 18, color: MacPalette.textSecondary),
-              const SizedBox(width: 12),
-              Text(label, style: const TextStyle(fontSize: 15)),
-            ],
-          ),
-        );
-    return PopupMenuButton<String>(
-      tooltip: '更多操作',
-      padding: EdgeInsets.zero,
-      offset: const Offset(0, 44),
-      color: MacPalette.elevatedBg,
-      elevation: 10,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: MacPalette.strongHairline, width: 0.8),
-      ),
-      onSelected: (value) {
-        if (value == 'select') _enterSelectionMode();
-        if (value == 'download_all') c.batchDownloadItems(visibleItems);
-      },
-      itemBuilder: (_) => [
-        entry('select', CupertinoIcons.checkmark_circle, '多选'),
-        entry('download_all', CupertinoIcons.arrow_down_circle, '全部下载'),
-      ],
-      child: SizedBox(
-        width: 44,
-        height: 40,
-        child: Icon(
-          CupertinoIcons.ellipsis_circle,
-          size: 21,
-          color: MacPalette.textSecondary,
-        ),
-      ),
-    );
-  }
-
   void _enterSelectionMode([String? firstId]) {
     setState(() {
       _selectionMode = true;
@@ -1790,6 +2075,11 @@ class _DrawerScreenState extends State<DrawerScreen> {
     SnackBarAction? action,
     Duration duration = const Duration(milliseconds: 2600),
   }) {
+    if (!usesMaterialChrome(context)) {
+      // iOS has no snack bars: a brief capsule under the status bar.
+      _showCapsule(message, duration);
+      return;
+    }
     final messenger = ScaffoldMessenger.maybeOf(context);
     if (messenger == null) return;
     messenger.hideCurrentSnackBar();
@@ -1805,12 +2095,30 @@ class _DrawerScreenState extends State<DrawerScreen> {
         duration: duration,
         behavior: SnackBarBehavior.floating,
         backgroundColor: MacPalette.toastBackground,
-        // Sit above the bottom action bar.
-        margin: const EdgeInsets.fromLTRB(16, 0, 16, 78),
         elevation: 6,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
     );
+  }
+
+  OverlayEntry? _capsule;
+  Timer? _capsuleTimer;
+
+  void _showCapsule(String message, Duration duration) {
+    _hideCapsule();
+    final overlay = Overlay.maybeOf(context, rootOverlay: true);
+    if (overlay == null) return;
+    final entry = OverlayEntry(builder: (_) => _ToastCapsule(message: message));
+    overlay.insert(entry);
+    _capsule = entry;
+    _capsuleTimer = Timer(duration, _hideCapsule);
+  }
+
+  void _hideCapsule() {
+    _capsuleTimer?.cancel();
+    _capsuleTimer = null;
+    _capsule?.remove();
+    _capsule = null;
   }
 
   /// Hides a swiped item at once and deletes it after the undo window.
@@ -1990,8 +2298,11 @@ class _DrawerScreenState extends State<DrawerScreen> {
     bool isMobile = false,
     Color? color,
   }) {
+    final tint = isMobile && !usesMaterialChrome(context)
+        ? MacPalette.accent // iOS toolbars tint their buttons.
+        : MacPalette.textPrimary;
     final effectiveColor =
-        enabled ? (color ?? MacPalette.textPrimary) : MacPalette.textTertiary;
+        enabled ? (color ?? tint) : MacPalette.textTertiary;
     if (isMobile) {
       // Icon over label, like an iOS toolbar, with a full-height tap target.
       return Expanded(
@@ -2081,7 +2392,9 @@ class _DrawerScreenState extends State<DrawerScreen> {
               SizedBox(height: isMobile ? 8 : 5),
               Text(
                 isMobile
-                    ? '点击下方「选文件」「选相册」或「粘贴」\n也可在其他 App 中点「分享 → DropDrawer」直接发送'
+                    ? (usesMaterialChrome(context)
+                        ? '点右下角「添加」选取文件、照片或粘贴内容\n也可在其他 App 中点「分享 → DropDrawer」直接发送'
+                        : '点右上角「+」选取文件、照片或粘贴内容\n也可在其他 App 中点「分享 → DropDrawer」直接发送')
                     : '拖起文件或文本靠近悬浮引导条\n点击边缘手柄展开 · 拖动可调整上下或左右停靠',
                 textAlign: TextAlign.center,
                 style: TextStyle(
@@ -2121,6 +2434,7 @@ class _DrawerScreenState extends State<DrawerScreen> {
     int index,
   ) {
     final isMobile = c.windowService.isMobile;
+    if (isMobile) return _buildPhoneEntry(context, c, visibleItems, index);
     final pending = c.pendingDrops;
     if (index < pending.length) {
       return _PendingDropTile(drop: pending[index], isMobile: isMobile);
@@ -2153,38 +2467,6 @@ class _DrawerScreenState extends State<DrawerScreen> {
         });
       },
     );
-
-    if (isMobile && !_selectionMode) {
-      return Dismissible(
-        key: ValueKey('mobile_item_${item.id}'),
-        direction: DismissDirection.endToStart,
-        background: Container(
-          alignment: Alignment.centerRight,
-          padding: const EdgeInsets.symmetric(horizontal: 18),
-          decoration: BoxDecoration(
-            color: MacPalette.red.withValues(alpha: 0.85),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: const Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(CupertinoIcons.trash, size: 16, color: Colors.white),
-              SizedBox(width: 6),
-              Text(
-                '移出抽屉',
-                style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white,
-                ),
-              ),
-            ],
-          ),
-        ),
-        onDismissed: (_) => _deleteWithUndo(c, item),
-        child: tile,
-      );
-    }
 
     if (!isMobile &&
         !_selectionMode &&
@@ -2238,13 +2520,87 @@ class _DrawerScreenState extends State<DrawerScreen> {
       return SliverFillRemaining(hasScrollBody: false, child: placeholder);
     }
     return SliverPadding(
-      padding: _listPadding(true),
-      sliver: SliverList.separated(
+      // iOS: an inset grouped list. Android: full-width list items.
+      padding: usesMaterialChrome(context)
+          ? const EdgeInsets.only(top: 4, bottom: 8)
+          : const EdgeInsets.fromLTRB(16, 4, 16, 24),
+      sliver: SliverList.builder(
         itemCount: _listEntryCount(c, visibleItems),
-        separatorBuilder: (_, _) => const SizedBox(height: 8),
         itemBuilder: (context, index) =>
             _buildListEntry(context, c, visibleItems, index),
       ),
+    );
+  }
+
+
+  /// Phones: the local P2P node and the account's devices as grouped rows.
+  Widget _buildPhoneDevicesBody(
+    DropDrawerController c,
+    List<DeviceInfo> primary,
+    List<DeviceInfo> sameNameOffline,
+  ) {
+    final material = usesMaterialChrome(context);
+    Widget deviceRow(DeviceInfo device) => PhoneRow(
+          title: '${device.name}${device.id == c.deviceId ? '（本机）' : ''}',
+          subtitle: '${device.platform} · ${device.online ? '在线' : '离线'}',
+          trailing: Container(
+            width: 9,
+            height: 9,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: device.online ? MacPalette.green : MacPalette.textTertiary,
+            ),
+          ),
+        );
+    final nodeId = c.localNodeInfo?.nodeId;
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
+      children: [
+        PhoneSection(
+          header: '本机 P2P 节点',
+          footer: c.p2pReady
+              ? 'iroh QUIC 节点运行中：局域网与公网直连优先，必要时经加密中继。'
+              : 'P2P 引擎未加载，传输只能经过服务器和云盘。',
+          children: [
+            PhoneRow(
+              title: c.p2pReady ? '运行中' : '未加载',
+              trailing: Container(
+                width: 9,
+                height: 9,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: c.p2pReady ? MacPalette.green : MacPalette.amber,
+                ),
+              ),
+            ),
+            if (nodeId != null)
+              PhoneRow(
+                title: 'Node ID',
+                subtitle: nodeId,
+                chevron: false,
+                trailing: Icon(
+                  material ? Icons.content_copy : CupertinoIcons.doc_on_doc,
+                  size: 18,
+                  color: MacPalette.accent,
+                ),
+                onTap: () {
+                  Clipboard.setData(ClipboardData(text: nodeId));
+                  c.setBanner('已复制 Node ID');
+                },
+              ),
+          ],
+        ),
+        PhoneSection(
+          header: '同账号设备',
+          children: [for (final device in primary) deviceRow(device)],
+        ),
+        if (sameNameOffline.isNotEmpty)
+          PhoneSection(
+            header: '同名离线设备（${sameNameOffline.length}）',
+            footer: '同一台设备重装或重新登录后留下的旧记录。',
+            children: [for (final device in sameNameOffline) deviceRow(device)],
+          ),
+      ],
     );
   }
 
@@ -2266,6 +2622,13 @@ class _DrawerScreenState extends State<DrawerScreen> {
       } else {
         primary.add(device);
       }
+    }
+    // This screen's own context sits above its UiDensity.
+    if (c.windowService.isMobile) {
+      return PhonePage(
+        title: '设备与 P2P',
+        body: _buildPhoneDevicesBody(c, primary, sameNameOffline),
+      );
     }
     return AdaptivePage(
       title: '设备与 P2P',
@@ -2735,7 +3098,7 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
             // the tile rebuilds for them.
             ListenableBuilder(
               listenable: c.transferTicks,
-              builder: (context, _) => _buildTransferSection(c, item, isMobile),
+              builder: (context, _) => _transferSection(c, item, isMobile),
             ),
             ],
           ),
@@ -2744,127 +3107,129 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
     );
   }
 
-  Widget _buildTransferSection(
-    DropDrawerController c,
-    DrawerItem item,
-    bool isMobile,
-  ) {
-    final progress = c.activeTransfers[item.id];
-    final isTransferring = progress != null && !progress.finished;
-    final hasTransferError =
-        progress != null && progress.finished && progress.error != null;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (isTransferring) ...[
-          const SizedBox(height: 7),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(2),
-            child: LinearProgressIndicator(
-              value: progress.fraction > 0 ? progress.fraction : null,
-              minHeight: 2.5,
-              backgroundColor: MacPalette.fill(0.1),
-              valueColor: AlwaysStoppedAnimation<Color>(
-                MacPalette.textPrimary,
-              ),
+}
+
+/// Transfer progress, outgoing sends and errors under an item.
+Widget _transferSection(
+  DropDrawerController c,
+  DrawerItem item,
+  bool isMobile,
+) {
+  final progress = c.activeTransfers[item.id];
+  final isTransferring = progress != null && !progress.finished;
+  final hasTransferError =
+      progress != null && progress.finished && progress.error != null;
+  return Column(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      if (isTransferring) ...[
+        const SizedBox(height: 7),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(2),
+          child: LinearProgressIndicator(
+            value: progress.fraction > 0 ? progress.fraction : null,
+            minHeight: 2.5,
+            backgroundColor: MacPalette.fill(0.1),
+            valueColor: AlwaysStoppedAnimation<Color>(
+              MacPalette.textPrimary,
             ),
           ),
-          const SizedBox(height: 3),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                switch (progress.channel) {
-                  'preparing' => '正在准备下载',
-                  'upload' => '正在上传到云盘',
-                  'p2p_connecting' => '正在建立 P2P 连接',
-                  'p2p_replica' => 'P2P 局域网副本',
-                  'p2p_direct' => 'P2P 端到端直连',
-                  'p2p_relay' => 'P2P 加密中继',
-                  _ => '云端高速下载',
-                },
-                style: TextStyle(
-                  fontSize: isMobile ? 12 : 10,
-                  color: MacPalette.textTertiary,
-                ),
+        ),
+        const SizedBox(height: 3),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              switch (progress.channel) {
+                'preparing' => '正在准备下载',
+                'upload' => '正在上传到云盘',
+                'p2p_connecting' => '正在建立 P2P 连接',
+                'p2p_replica' => 'P2P 局域网副本',
+                'p2p_direct' => 'P2P 端到端直连',
+                'p2p_relay' => 'P2P 加密中继',
+                _ => '云端高速下载',
+              },
+              style: TextStyle(
+                fontSize: isMobile ? 12 : 10,
+                color: MacPalette.textTertiary,
               ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    '${(progress.fraction * 100).toStringAsFixed(0)}%'
-                    '${progress.speedBps > 0 ? ' · ${formatBytes(progress.speedBps)}/s' : ''}',
-                    style: TextStyle(
-                      fontSize: isMobile ? 12 : 10,
-                      color: MacPalette.textSecondary,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  CupertinoButton(
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    minimumSize: const Size(0, 24),
-                    onPressed: c.isCancelling(item.id) ? null : () => c.cancelTransfer(item.id),
-                    child: Text(
-                      c.isCancelling(item.id) ? '正在取消' : (progress.channel == 'upload' ? '取消上传' : '取消下载'),
-                      style: TextStyle(fontSize: isMobile ? 12 : 10, color: MacPalette.red),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ],
-        for (final entry in c.outgoingTransfers.entries.where((e) => e.value.itemId == item.id))
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  '正在发送给 ${c.recipientName(entry.value.sendingTo!)} · ${(entry.value.fraction * 100).floor()}%',
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: isMobile ? 12 : 10, color: MacPalette.textSecondary),
-                ),
-              ),
-              CupertinoButton(
-                minimumSize: const Size(0, 24),
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                onPressed: c.isCancellingSend(entry.key) ? null : () => c.cancelOutgoingTransfer(entry.key),
-                child: Text(c.isCancellingSend(entry.key) ? '正在取消' : '取消发送', style: TextStyle(fontSize: isMobile ? 12 : 10, color: MacPalette.red)),
-              ),
-            ],
-          ),
-        if (hasTransferError) ...[
-          const SizedBox(height: 6),
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  '传输失败：${progress.error}',
+            ),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '${(progress.fraction * 100).toStringAsFixed(0)}%'
+                  '${progress.speedBps > 0 ? ' · ${formatBytes(progress.speedBps)}/s' : ''}',
                   style: TextStyle(
                     fontSize: isMobile ? 12 : 10,
-                    color: MacPalette.red,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              const SizedBox(width: 8),
-              GestureDetector(
-                onTap: () => c.retryTransfer(item),
-                child: Text(
-                  '重试',
-                  style: TextStyle(
-                    fontSize: 10.5,
-                    fontWeight: FontWeight.w500,
-                    color: MacPalette.accent,
+                    color: MacPalette.textSecondary,
                   ),
                 ),
-              ),
-            ],
-          ),
-        ],
+                const SizedBox(width: 6),
+                CupertinoButton(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  minimumSize: const Size(0, 24),
+                  onPressed: c.isCancelling(item.id) ? null : () => c.cancelTransfer(item.id),
+                  child: Text(
+                    c.isCancelling(item.id) ? '正在取消' : (progress.channel == 'upload' ? '取消上传' : '取消下载'),
+                    style: TextStyle(fontSize: isMobile ? 12 : 10, color: MacPalette.red),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ],
-    );
-  }
+      for (final entry in c.outgoingTransfers.entries.where((e) => e.value.itemId == item.id))
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                '正在发送给 ${c.recipientName(entry.value.sendingTo!)} · ${(entry.value.fraction * 100).floor()}%',
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: isMobile ? 12 : 10, color: MacPalette.textSecondary),
+              ),
+            ),
+            CupertinoButton(
+              minimumSize: const Size(0, 24),
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              onPressed: c.isCancellingSend(entry.key) ? null : () => c.cancelOutgoingTransfer(entry.key),
+              child: Text(c.isCancellingSend(entry.key) ? '正在取消' : '取消发送', style: TextStyle(fontSize: isMobile ? 12 : 10, color: MacPalette.red)),
+            ),
+          ],
+        ),
+      if (hasTransferError) ...[
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                '传输失败：${progress.error}',
+                style: TextStyle(
+                  fontSize: isMobile ? 12 : 10,
+                  color: MacPalette.red,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 8),
+            GestureDetector(
+              onTap: () => c.retryTransfer(item),
+              child: Text(
+                '重试',
+                style: TextStyle(
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w500,
+                  color: MacPalette.accent,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    ],
+  );
 }
 
 class _FileIconBox extends StatelessWidget {
@@ -3033,24 +3398,333 @@ class _FileIconBox extends StatelessWidget {
 
 
 /// Placeholder for a dropped file that is still being added to the drawer.
+/// Background, corners and separator of a phone list row. Opaque, so swipe
+/// actions behind it stay hidden until revealed.
+class _PhoneRowFrame extends StatelessWidget {
+  final bool material;
+  final BorderRadius radius;
+  final bool separator;
+  final bool selected;
+  final Widget child;
+
+  const _PhoneRowFrame({
+    required this.material,
+    required this.radius,
+    required this.separator,
+    required this.selected,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final base = material ? MacPalette.background : MacPalette.cardBg;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: selected
+            ? Color.alphaBlend(MacPalette.accent.withValues(alpha: 0.14), base)
+            : base,
+        borderRadius: radius,
+      ),
+      child: Material(
+        type: MaterialType.transparency,
+        borderRadius: radius,
+        clipBehavior: radius == BorderRadius.zero ? Clip.none : Clip.antiAlias,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            child,
+            // iOS separators start under the text, after the thumbnail.
+            if (separator)
+              Padding(
+                padding: const EdgeInsets.only(left: 72),
+                child: Divider(
+                  height: 0.5,
+                  thickness: 0.5,
+                  color: MacPalette.hairline,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A drawer item as a phone list row: thumbnail, name, where and when it came
+/// from, a text preview, and one trailing action (copy, share or download).
+/// Other actions live in the long-press menu (iOS) or the item page.
+class _PhoneItemRow extends StatelessWidget {
+  final DropDrawerController controller;
+  final DrawerItem item;
+  final String? localPath;
+  final bool material;
+  final bool selectionMode;
+  final bool selected;
+  final VoidCallback onTap;
+  final VoidCallback? onLongPress;
+
+  const _PhoneItemRow({
+    required this.controller,
+    required this.item,
+    required this.localPath,
+    required this.material,
+    required this.selectionMode,
+    required this.selected,
+    required this.onTap,
+    this.onLongPress,
+  });
+
+  Widget? _trailingAction() {
+    final c = controller;
+    final path = localPath;
+    final (IconData icon, IconData materialIcon, String tooltip, VoidCallback onPressed) =
+        item.kind == 'text'
+            ? (
+                CupertinoIcons.doc_on_doc,
+                Icons.content_copy,
+                '复制文本',
+                () {
+                  Clipboard.setData(
+                    ClipboardData(text: item.textContent ?? item.name),
+                  );
+                  c.setBanner('已复制到剪贴板');
+                },
+              )
+            : path != null
+                ? (
+                    CupertinoIcons.share,
+                    Icons.share_outlined,
+                    '系统分享 / 其他应用打开',
+                    () async {
+                      final ok = await c.windowService.shareFilesNative([path]);
+                      if (!ok) c.setBanner('打开系统分享失败');
+                    },
+                  )
+                : (
+                    CupertinoIcons.arrow_down_circle,
+                    Icons.download_outlined,
+                    c.canDownloadP2p(item) ? 'P2P 优先下载' : '从云端下载',
+                    () => c.downloadItem(item),
+                  );
+    return PhoneBarButton(
+      action: PageAction(
+        icon: material ? materialIcon : icon,
+        tooltip: tooltip,
+        onPressed: onPressed,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = controller;
+    final device = item.ownerDeviceName
+        ?.replaceAll(RegExp(r'\.local$', caseSensitive: false), '')
+        .trim();
+    final meta = <String>[
+      formatBytes(item.size),
+      relativeTimeLabel(item.createdAt),
+      if (device != null && device.isNotEmpty) '来自 $device',
+      // Text lives on the server, so it never depends on the source device.
+      if (item.kind == 'file' && !c.canDownloadP2p(item) && !item.cloudReady)
+        '来源离线',
+    ];
+    final textPreview =
+        item.kind == 'text' ? (item.textContent ?? '').trim() : '';
+    final action = selectionMode ? null : _trailingAction();
+    final leadInset = selectionMode ? 34.0 : 0.0;
+    return InkWell(
+      onTap: onTap,
+      onLongPress: onLongPress,
+      splashFactory:
+          material ? InkRipple.splashFactory : NoSplash.splashFactory,
+      highlightColor: MacPalette.fill(0.10),
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(16, 10, action == null ? 16 : 6, 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                if (selectionMode) ...[
+                  Icon(
+                    selected
+                        ? (material
+                            ? Icons.check_circle
+                            : CupertinoIcons.checkmark_circle_fill)
+                        : (material
+                            ? Icons.radio_button_unchecked
+                            : CupertinoIcons.circle),
+                    size: 24,
+                    color: selected ? MacPalette.accent : MacPalette.textTertiary,
+                  ),
+                  const SizedBox(width: 10),
+                ],
+                _FileIconBox(
+                  item: item,
+                  localPath: localPath,
+                  draggable: false,
+                  size: 44,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        item.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: material ? 16 : 17,
+                          color: MacPalette.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          Container(
+                            width: 7,
+                            height: 7,
+                            margin: const EdgeInsets.only(right: 6),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: c.canDownloadP2p(item)
+                                  ? MacPalette.green
+                                  : (item.cloudReady
+                                      ? MacPalette.accent
+                                      : MacPalette.textTertiary),
+                            ),
+                          ),
+                          Expanded(
+                            child: Text(
+                              meta.join(' · '),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: material ? 14 : 13,
+                                color: MacPalette.textSecondary,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (textPreview.isNotEmpty && textPreview != item.name)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 3),
+                          child: Text(
+                            textPreview,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: material ? 14 : 15,
+                              height: 1.3,
+                              color: MacPalette.textSecondary,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                if (action != null) ...[const SizedBox(width: 4), action],
+              ],
+            ),
+            // Progress changes arrive on their own notifier; only this part
+            // of the row rebuilds for them.
+            Padding(
+              padding: EdgeInsets.only(left: 56 + leadInset),
+              child: ListenableBuilder(
+                listenable: c.transferTicks,
+                builder: (context, _) => _transferSection(c, item, true),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// iOS status message: a capsule that drops in under the status bar.
+class _ToastCapsule extends StatelessWidget {
+  final String message;
+
+  const _ToastCapsule({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    final top = MediaQuery.paddingOf(context).top + 6;
+    return Positioned(
+      top: top,
+      left: 24,
+      right: 24,
+      child: IgnorePointer(
+        child: Center(
+          child: TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0, end: 1),
+            duration: const Duration(milliseconds: 260),
+            curve: Curves.easeOutCubic,
+            builder: (context, t, child) => Opacity(
+              opacity: t,
+              child: Transform.translate(
+                offset: Offset(0, (1 - t) * -16),
+                child: child,
+              ),
+            ),
+            child: Material(
+              color: MacPalette.toastBackground,
+              elevation: 8,
+              shadowColor: MacPalette.shade(0.5),
+              borderRadius: BorderRadius.circular(22),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
+                child: Text(
+                  message,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 15, color: MacPalette.toastText),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _PendingDropTile extends StatelessWidget {
   final PendingDrop drop;
   final bool isMobile;
 
-  const _PendingDropTile({required this.drop, required this.isMobile});
+  /// Inside a phone row frame, which draws the background.
+  final bool framed;
+
+  const _PendingDropTile({
+    required this.drop,
+    required this.isMobile,
+    this.framed = false,
+  });
 
   @override
   Widget build(BuildContext context) {
     final box = isMobile ? 44.0 : 34.0;
     return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: isMobile ? 12 : 10,
-        vertical: isMobile ? 11 : 9,
-      ),
-      decoration: BoxDecoration(
-        color: MacPalette.cardBg,
-        borderRadius: BorderRadius.circular(isMobile ? 12 : 10),
-      ),
+      padding: framed
+          ? const EdgeInsets.symmetric(horizontal: 16, vertical: 10)
+          : EdgeInsets.symmetric(
+              horizontal: isMobile ? 12 : 10,
+              vertical: isMobile ? 11 : 9,
+            ),
+      decoration: framed
+          ? null
+          : BoxDecoration(
+              color: MacPalette.cardBg,
+              borderRadius: BorderRadius.circular(isMobile ? 12 : 10),
+            ),
       child: Row(
         children: [
           Container(

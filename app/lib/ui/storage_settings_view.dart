@@ -618,6 +618,13 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
         ),
         if (_selectedKind == 'google_drive') ...[
           const SizedBox(height: 6),
+          if (UiDensity.isTouch(context))
+            PhoneButton(
+              icon: CupertinoIcons.globe,
+              label: '浏览器一键授权 Google Drive',
+              onPressed: _saving ? null : _launchGoogleOAuth,
+            )
+          else
           SizedBox(
             height: 36,
             child: ElevatedButton.icon(
@@ -664,6 +671,12 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
           ),
         ] else ...[
           const SizedBox(height: 10),
+          if (UiDensity.isTouch(context))
+            PhoneButton(
+              label: _saving ? '正在保存…' : '保存原生云盘配置',
+              onPressed: _saving ? null : _addBackend,
+            )
+          else
           SizedBox(
             height: 36,
             child: ElevatedButton(

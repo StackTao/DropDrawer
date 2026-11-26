@@ -15,9 +15,13 @@ class MacPalette {
   static bool get isLight => _active.brightness == Brightness.light;
 
   /// Selects the light or dark colors. Returns whether anything changed.
-  static bool use(Brightness brightness) {
-    final next =
-        brightness == Brightness.light ? _Palette.light : _Palette.dark;
+  ///
+  /// [trueBlack] picks the iOS dark appearance (black background, #1C1C1E
+  /// grouped rows) instead of the desktop's dark grey.
+  static bool use(Brightness brightness, {bool trueBlack = false}) {
+    final next = brightness == Brightness.light
+        ? _Palette.light
+        : (trueBlack ? _Palette.trueBlack : _Palette.dark);
     if (identical(next, _active)) return false;
     _active = next;
     return true;
@@ -45,6 +49,9 @@ class MacPalette {
   /// Text on a [textPrimary]-filled (inverted) button.
   static Color get onTextPrimary => _active.onTextPrimary;
 
+  /// Text and icons on an [accent] or [red] fill.
+  static Color get onAccent => const Color(0xFFFFFFFF);
+
   static Color get toastBackground => _active.toastBackground;
   static Color get toastText => _active.toastText;
 
@@ -55,13 +62,19 @@ class MacPalette {
 
   /// A grouped panel (settings groups, forms): recessed on dark, a white card
   /// on the light grouped background, like iOS.
-  static Color group(double alpha) =>
-      isLight ? _active.cardBg : Colors.black.withValues(alpha: alpha);
+  static Color group(double alpha) => isLight || _isTrueBlack
+      ? _active.cardBg
+      : Colors.black.withValues(alpha: alpha);
 
   /// A recessed area (input fields, bars): dark on dark, faint grey on light.
   static Color shade(double alpha) => isLight
       ? Colors.black.withValues(alpha: alpha * 0.18)
-      : Colors.black.withValues(alpha: alpha);
+      : (_isTrueBlack
+          // iOS tertiary fill; black would vanish on the black background.
+          ? const Color(0xFF767680).withValues(alpha: alpha * 0.85)
+          : Colors.black.withValues(alpha: alpha));
+
+  static bool get _isTrueBlack => identical(_active, _Palette.trueBlack);
 }
 
 class _Palette {
@@ -123,6 +136,28 @@ class _Palette {
     background: Color(0xFF141417),
     onTextPrimary: Color(0xFF111113),
     toastBackground: Color(0xFF2C2C30),
+    toastText: Color(0xFFF5F5F7),
+  );
+
+  // iOS dark system colors: black background, elevated grouped rows.
+  static const trueBlack = _Palette(
+    brightness: Brightness.dark,
+    surfaceTint: Color(0x99161618),
+    cardBg: Color(0xFF1C1C1E),
+    cardHoverBg: Color(0xFF2C2C2E),
+    elevatedBg: Color(0xFF2C2C2E),
+    hairline: Color(0xA6545458),
+    strongHairline: Color(0xCC545458),
+    textPrimary: Color(0xFFF5F5F7),
+    textSecondary: Color(0x99EBEBF5),
+    textTertiary: Color(0x5CEBEBF5),
+    accent: Color(0xFF0A84FF),
+    green: Color(0xFF30D158),
+    amber: Color(0xFFFFD60A),
+    red: Color(0xFFFF453A),
+    background: Color(0xFF000000),
+    onTextPrimary: Color(0xFF111113),
+    toastBackground: Color(0xFF2C2C2E),
     toastText: Color(0xFFF5F5F7),
   );
 

@@ -434,37 +434,47 @@ class _ShareViewState extends State<ShareView> {
             ),
           ],
           const SizedBox(height: 12),
-          SizedBox(
-            height: 34,
-            child: FilledButton(
+          if (UiDensity.isTouch(context))
+            PhoneButton(
+              label: _creating
+                  ? '正在生成…'
+                  : (pendingUploadCount > 0
+                ? '自动上云并生成外链'
+                : (isBundle ? '生成合集外链并复制' : '生成外链并复制')),
               onPressed: _creating ? null : _createShare,
-              style: FilledButton.styleFrom(
-                backgroundColor: MacPalette.textPrimary,
-                foregroundColor: MacPalette.onTextPrimary,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
+            )
+          else
+            SizedBox(
+              height: 34,
+              child: FilledButton(
+                onPressed: _creating ? null : _createShare,
+                style: FilledButton.styleFrom(
+                  backgroundColor: MacPalette.textPrimary,
+                  foregroundColor: MacPalette.onTextPrimary,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                 ),
+                child: _creating
+                    ? SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 1.8,
+                          color: MacPalette.onTextPrimary,
+                        ),
+                      )
+                    : Text(
+                        pendingUploadCount > 0
+                            ? '自动上云并生成外链'
+                            : (isBundle ? '生成合集外链并复制' : '生成外链并复制'),
+                        style: const TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
               ),
-              child: _creating
-                  ? SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 1.8,
-                        color: MacPalette.onTextPrimary,
-                      ),
-                    )
-                  : Text(
-                      pendingUploadCount > 0
-                          ? '自动上云并生成外链'
-                          : (isBundle ? '生成合集外链并复制' : '生成外链并复制'),
-                      style: const TextStyle(
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
             ),
-          ),
           if (_justCreated != null) ...[
             const SizedBox(height: 10),
             Container(

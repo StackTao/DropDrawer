@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/app_update_service.dart';
 import '../state/app_update_controller.dart';
+import 'phone_page.dart';
 import 'theme.dart';
 
 /// "关于与更新" in Preferences: version, automatic checks and manual actions.
@@ -18,6 +19,7 @@ class UpdateSettings extends StatelessWidget {
       builder: (context, _) {
         final installed = updates.installed;
         final version = installed?.version;
+        if (mobile) return _buildPhone(version?.toString());
         final titleSize = mobile ? 14.0 : 12.0;
         final noteSize = mobile ? 12.5 : 10.5;
         final buttonHeight = mobile ? 44.0 : 30.0;
@@ -105,6 +107,64 @@ class UpdateSettings extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+
+  /// Phones: a settings group with the version, the automatic-check switch
+  /// and action rows; the status reads as the group's footer.
+  Widget _buildPhone(String? version) {
+    final busy = updates.busy;
+    return PhoneSection(
+      header: '关于与更新',
+      footer: _status(),
+      children: [
+        PhoneRow(title: 'DropDrawer', value: version ?? '—'),
+        if (updates.canUpdate)
+          PhoneRow(
+            title: '自动检查更新',
+            trailing: AdaptiveSwitch(
+              value: updates.autoCheck,
+              onChanged: updates.setAutoCheck,
+            ),
+          ),
+        if (updates.phase == UpdatePhase.checking ||
+            updates.phase == UpdatePhase.downloading)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(2),
+              child: LinearProgressIndicator(
+                value: updates.progress,
+                minHeight: 3,
+                backgroundColor: MacPalette.fill(0.1),
+                color: MacPalette.accent,
+              ),
+            ),
+          ),
+        if (updates.update != null && updates.manualPackage == null)
+          PhoneRow(
+            title: _installLabel(updates.update!),
+            action: true,
+            onTap: busy ? null : updates.install,
+          ),
+        if (updates.manualPackage != null)
+          PhoneRow(
+            title: '打开安装包',
+            action: true,
+            onTap: updates.openManualPackage,
+          ),
+        if (updates.canUpdate)
+          PhoneRow(
+            title: '检查更新',
+            action: true,
+            onTap: busy ? null : () => updates.check(),
+          ),
+        PhoneRow(
+          title: updates.update == null ? '发布页' : '更新说明',
+          action: true,
+          onTap: updates.openReleasePage,
+        ),
+      ],
     );
   }
 

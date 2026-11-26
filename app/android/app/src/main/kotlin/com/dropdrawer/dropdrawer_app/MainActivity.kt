@@ -85,6 +85,10 @@ class MainActivity : FlutterActivity() {
                 val text = call.argument<String>("text") ?: ""
                 result.success(shareText(text))
             }
+            "openFile" -> {
+                val path = call.argument<String>("path") ?: ""
+                result.success(openFile(path))
+            }
             "saveToGallery" -> {
                 val path = call.argument<String>("path") ?: ""
                 result.success(saveToGallery(path))
@@ -366,6 +370,26 @@ class MainActivity : FlutterActivity() {
             }
             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             startActivity(Intent.createChooser(intent, "分享文件"))
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** Opens a file in the default app for its type; false if there is none. */
+    private fun openFile(path: String): Boolean {
+        val file = File(path)
+        if (!file.exists() || !file.isFile) return false
+        val mime = guessMimeType(file)
+        if (mime == "*/*") return false
+        return try {
+            val uri = toShareableUri(file)
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, mime)
+                clipData = ClipData.newRawUri("DropDrawer", uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(intent)
             true
         } catch (_: Exception) {
             false

@@ -1,6 +1,23 @@
 import Flutter
 import Photos
+import QuickLook
 import UIKit
+
+final class QuickLookSource: NSObject, QLPreviewControllerDataSource {
+  let url: URL
+
+  init(url: URL) {
+    self.url = url
+  }
+
+  func numberOfPreviewItems(in controller: QLPreviewController) -> Int {
+    1
+  }
+
+  func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem {
+    url as NSURL
+  }
+}
 
 final class DropDrawerMobileBridge {
   static let shared = DropDrawerMobileBridge()
@@ -9,6 +26,8 @@ final class DropDrawerMobileBridge {
   private var channel: FlutterMethodChannel?
   private var pendingFiles: [String] = []
   private var pendingTexts: [String] = []
+  // QLPreviewController holds its data source weakly.
+  private var quickLookSource: QuickLookSource?
 
   private init() {}
 
@@ -63,6 +82,10 @@ final class DropDrawerMobileBridge {
         return
       }
       presentShareSheet(items: [text], result: result)
+
+    case "openFile":
+      let path = args["path"] as? String ?? ""
+      openFile(path: path, result: result)
 
     case "saveToGallery":
       let path = args["path"] as? String ?? ""
@@ -205,6 +228,31 @@ final class DropDrawerMobileBridge {
         popover.permittedArrowDirections = []
       }
       presenter.present(activity, animated: true) {
+        result(true)
+      }
+    }
+  }
+
+  /// Shows a file with Quick Look (PDF, Office, images, video, audio, text...).
+  /// Returns false when Quick Look cannot show the type, so Dart can offer the
+  /// share sheet instead.
+  private func openFile(path: String, result: @escaping FlutterResult) {
+    let url = URL(fileURLWithPath: path)
+    guard FileManager.default.fileExists(atPath: path),
+          QLPreviewController.canPreview(url as NSURL) else {
+      result(false)
+      return
+    }
+    DispatchQueue.main.async {
+      guard let presenter = self.topViewController() else {
+        result(false)
+        return
+      }
+      let source = QuickLookSource(url: url)
+      self.quickLookSource = source
+      let preview = QLPreviewController()
+      preview.dataSource = source
+      presenter.present(preview, animated: true) {
         result(true)
       }
     }

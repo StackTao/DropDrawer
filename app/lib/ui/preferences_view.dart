@@ -112,11 +112,130 @@ class _PreferencesViewState extends State<PreferencesView> {
     }
   }
 
+  static const _policies = [
+    ('smart', '智能'),
+    ('p2p_only', '纯 P2P'),
+    ('cloud_cached', '存云盘'),
+  ];
+  static const _ttls = [
+    (0, '永不过期'),
+    (24, '24 小时'),
+    (168, '7 天'),
+    (720, '30 天'),
+  ];
+  static const _thresholds = [
+    (10, '10 MB'),
+    (20, '20 MB'),
+    (50, '50 MB'),
+    (100, '100 MB'),
+  ];
+
+  static String _label<T>(List<(T, String)> options, T value) =>
+      options.where((o) => o.$1 == value).firstOrNull?.$2 ?? '$value';
+
+  Future<void> _choose<T>(
+    String title,
+    List<(T, String)> options,
+    T selected,
+    ValueChanged<T> onChanged, {
+    String? footer,
+  }) async {
+    final value = await showPhoneChoice<T>(
+      context,
+      title: title,
+      options: options,
+      selected: selected,
+      footer: footer,
+      previousTitle: '偏好设置',
+    );
+    if (value != null && value != selected) onChanged(value);
+  }
+
+  /// Phones: iOS Settings / Material 3 settings rows; each choice opens its
+  /// own list, and explanations sit under the groups.
+  Widget _buildPhoneBody(DropDrawerController c) {
+    final thresholdMb = c.autoCloudThresholdBytes ~/ (1024 * 1024);
+    final threshold = [10, 20, 50, 100].contains(thresholdMb) ? thresholdMb : 20;
+    const policyFooter =
+        '智能：小文件同时存云盘、大文件只走 P2P。纯 P2P：不经过服务器。存云盘：来源设备离线也能下载。';
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
+      children: [
+        PhoneSection(
+          header: '传输',
+          footer: policyFooter,
+          children: [
+            PhoneRow(
+              title: '新文件传输策略',
+              value: _label(_policies, c.defaultDropPolicy),
+              onTap: () => _choose(
+                '传输策略',
+                _policies,
+                c.defaultDropPolicy,
+                c.setDropPolicy,
+                footer: policyFooter,
+              ),
+            ),
+            PhoneRow(
+              title: '智能模式上云阈值',
+              value: _label(_thresholds, threshold),
+              onTap: () => _choose(
+                '上云阈值',
+                _thresholds,
+                threshold,
+                c.setAutoCloudThresholdMb,
+                footer: '智能模式下，小于该体积的文件同时缓存到云盘，更大的只走 P2P 直连。',
+              ),
+            ),
+          ],
+        ),
+        PhoneSection(
+          header: '自动清理',
+          footer: '新加入的文件和文本到期后，自动清理云端缓存与抽屉记录。',
+          children: [
+            PhoneRow(
+              title: '默认过期时间',
+              value: _label(_ttls, c.defaultTtlHours),
+              onTap: () => _choose(
+                '过期时间',
+                _ttls,
+                c.defaultTtlHours,
+                c.setDefaultTtlHours,
+              ),
+            ),
+          ],
+        ),
+        PhoneSection(
+          header: '下载',
+          children: [
+            PhoneRow(
+              title: '保存位置',
+              subtitle: _effectiveDir.isEmpty ? '加载中…' : _effectiveDir,
+            ),
+            if (c.customDownloadDir != null)
+              PhoneRow(
+                title: '恢复默认位置',
+                action: true,
+                onTap: () async {
+                  await c.setCustomDownloadDir(null);
+                  await _loadDir();
+                },
+              ),
+          ],
+        ),
+        UpdateSettings(updates: c.updates, mobile: true),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = widget.controller;
     final isWindows = c.windowService.isWindows;
     final thresholdMb = c.autoCloudThresholdBytes ~/ (1024 * 1024);
+    if (UiDensity.isTouch(context)) {
+      return PhonePage(title: '偏好设置', body: _buildPhoneBody(c));
+    }
 
     return AdaptivePage(
       title: '偏好设置',

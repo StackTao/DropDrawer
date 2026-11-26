@@ -429,11 +429,86 @@ class ItemPreviewView extends StatelessWidget {
     );
   }
 
+  /// Phones: stacked full-width buttons. Sharing links and removing live in
+  /// the navigation bar.
+  Widget _buildPhoneActions(
+    DropDrawerController c,
+    String? localPath,
+    bool isMine,
+  ) {
+    final ios = c.windowService.isIOS;
+    final buttons = <Widget>[
+      if (item.kind == 'text')
+        PhoneButton(
+          icon: CupertinoIcons.doc_on_doc,
+          label: '复制全部文本',
+          onPressed: () {
+            Clipboard.setData(ClipboardData(text: item.textContent ?? item.name));
+            c.setBanner('已复制全部文本');
+          },
+        )
+      else if (localPath != null) ...[
+        PhoneButton(
+          icon: ios ? CupertinoIcons.eye : Icons.open_in_new,
+          // Quick Look on iOS, the default app for the type on Android.
+          label: ios ? '快速查看' : '打开',
+          onPressed: () async {
+            if (await c.windowService.openFileNative(localPath)) return;
+            // Nothing can show this type: offer other apps instead.
+            final ok = await c.windowService.shareFilesNative([localPath]);
+            if (!ok) c.setBanner('没有可以打开这个文件的应用');
+          },
+        ),
+        PhoneButton(
+          kind: PhoneButtonKind.secondary,
+          icon: ios ? CupertinoIcons.share : Icons.share_outlined,
+          label: '分享…',
+          onPressed: () async {
+            final ok = await c.windowService.shareFilesNative([localPath]);
+            if (!ok) c.setBanner('打开系统分享失败');
+          },
+        ),
+        if (_canSaveToGallery)
+          PhoneButton(
+            kind: PhoneButtonKind.secondary,
+            icon: ios ? CupertinoIcons.photo_on_rectangle : Icons.photo_library_outlined,
+            label: '存到相册',
+            onPressed: () async {
+              final ok = await c.windowService.saveToGalleryNative(localPath);
+              c.setBanner(ok ? '已保存到系统相册' : '保存相册失败（请检查相册权限）');
+            },
+          ),
+      ] else
+        PhoneButton(
+          icon: ios ? CupertinoIcons.arrow_down_circle : Icons.download_outlined,
+          label: c.canDownloadP2p(item) ? 'P2P 优先下载' : '从云端下载',
+          onPressed: () => c.downloadItem(item),
+        ),
+      if (item.kind == 'file' && isMine && !item.cloudReady && localPath != null)
+        PhoneButton(
+          kind: PhoneButtonKind.secondary,
+          icon: ios ? CupertinoIcons.cloud_upload : Icons.cloud_upload_outlined,
+          label: '存到云盘（来源离线也能下载）',
+          onPressed: () => c.cacheItemToCloud(item.id, localPath),
+        ),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final (index, button) in buttons.indexed) ...[
+          if (index > 0) const SizedBox(height: 10),
+          button,
+        ],
+      ],
+    );
+  }
+
   Widget _buildActionsRow(
     DropDrawerController c,
     String? localPath,
     bool isMine,
   ) {
+    if (c.windowService.isMobile) return _buildPhoneActions(c, localPath, isMine);
     if (item.kind == 'text') {
       return Row(
         children: [

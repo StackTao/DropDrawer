@@ -145,10 +145,13 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('选文件'), findsOneWidget);
-    expect(find.text('选相册'), findsOneWidget);
-    expect(find.text('粘贴'), findsOneWidget);
     expect(find.textContaining('分享 → DropDrawer'), findsOneWidget);
+    // Android: the floating add button opens a sheet with the add choices.
+    await tester.tap(find.byTooltip('添加'));
+    await tester.pumpAndSettle();
+    expect(find.text('选取文件'), findsOneWidget);
+    expect(find.text('照片图库'), findsOneWidget);
+    expect(find.text('粘贴'), findsOneWidget);
     ctrl.dispose();
   });
 }

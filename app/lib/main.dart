@@ -15,7 +15,10 @@ void main() {
   WidgetsFlutterBinding.ensureInitialized();
   if (_isMobile) {
     // Phones follow the system appearance; the desktop drawer is always dark.
-    MacPalette.use(ui.PlatformDispatcher.instance.platformBrightness);
+    MacPalette.use(
+      ui.PlatformDispatcher.instance.platformBrightness,
+      trueBlack: Platform.isIOS,
+    );
     _applySystemBars();
   }
   runApp(const DropDrawerApp());
@@ -64,7 +67,10 @@ class _DropDrawerAppState extends State<DropDrawerApp>
   @override
   void didChangePlatformBrightness() {
     if (!_isMobile) return;
-    if (!MacPalette.use(ui.PlatformDispatcher.instance.platformBrightness)) {
+    if (!MacPalette.use(
+      ui.PlatformDispatcher.instance.platformBrightness,
+      trueBlack: Platform.isIOS,
+    )) {
       return;
     }
     _applySystemBars();
