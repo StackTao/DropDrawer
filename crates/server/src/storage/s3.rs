@@ -82,7 +82,7 @@ impl S3Provider {
         let credential_scope = format!("{date_stamp}/{}/s3/aws4_request", self.cfg.region);
         let credential = format!("{}/{credential_scope}", self.cfg.access_key_id);
 
-        let mut query_params = vec![
+        let mut query_params = [
             ("X-Amz-Algorithm", "AWS4-HMAC-SHA256".to_string()),
             ("X-Amz-Credential", credential),
             ("X-Amz-Date", amz_date.clone()),

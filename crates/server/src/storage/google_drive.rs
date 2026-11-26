@@ -97,10 +97,10 @@ impl GoogleDriveProvider {
 
     async fn access_token(&self) -> anyhow::Result<String> {
         let mut guard = self.token_cache.lock().await;
-        if let Some(cached) = guard.as_ref() {
-            if cached.expires_at > Instant::now() + Duration::from_secs(60) {
-                return Ok(cached.access_token.clone());
-            }
+        if let Some(cached) = guard.as_ref()
+            && cached.expires_at > Instant::now() + Duration::from_secs(60)
+        {
+            return Ok(cached.access_token.clone());
         }
 
         let resp = self

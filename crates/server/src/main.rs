@@ -42,7 +42,7 @@ async fn main() -> anyhow::Result<()> {
     let cleanup_secs: u64 = get("DROPDRAWER_TTL_CLEANUP_SECS")
         .and_then(|v| v.parse().ok())
         .unwrap_or(300);
-    let google_config = GoogleLoginConfig::from_settings(&get)?;
+    let google_config = GoogleLoginConfig::from_settings(get)?;
     let allow_registration = get("DROPDRAWER_ALLOW_REGISTRATION")
         .map(|v| {
             !matches!(

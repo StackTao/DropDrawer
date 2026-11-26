@@ -108,8 +108,12 @@ fn validate(state: &AppState, next: &RuntimeSettings) -> Result<(), (StatusCode,
             .to_google_config()
             .map_err(|e| bad_request(format!("Google 配置无效: {e}")))?;
     }
-    next.smtp.validate().map_err(|e| bad_request(e.to_string()))?;
-    if next.email_verification_required && !next.smtp.is_usable() && !state.has_custom_email_sender()
+    next.smtp
+        .validate()
+        .map_err(|e| bad_request(e.to_string()))?;
+    if next.email_verification_required
+        && !next.smtp.is_usable()
+        && !state.has_custom_email_sender()
     {
         return Err(bad_request(
             "启用「注册必须验证邮箱」前，请先启用并填写完整的 SMTP 发信配置",
@@ -120,10 +124,10 @@ fn validate(state: &AppState, next: &RuntimeSettings) -> Result<(), (StatusCode,
             "至少保留一种登录方式（账号密码登录或 Google 登录）",
         ));
     }
-    if let Some(min) = next.client_policy.min_version.as_deref() {
-        if crate::settings::parse_version(min).is_none() {
-            return Err(bad_request("最低客户端版本格式应为 1.2.3"));
-        }
+    if let Some(min) = next.client_policy.min_version.as_deref()
+        && crate::settings::parse_version(min).is_none()
+    {
+        return Err(bad_request("最低客户端版本格式应为 1.2.3"));
     }
     if next.announcement.enabled
         && next.announcement.title.is_empty()
@@ -134,10 +138,9 @@ fn validate(state: &AppState, next: &RuntimeSettings) -> Result<(), (StatusCode,
     if let (Some(default), Some(max)) = (
         next.limits.default_item_ttl_hours,
         next.limits.max_item_ttl_hours,
-    ) {
-        if default > max {
-            return Err(bad_request("条目默认保留时长不能超过最长保留时长"));
-        }
+    ) && default > max
+    {
+        return Err(bad_request("条目默认保留时长不能超过最长保留时长"));
     }
     Ok(())
 }

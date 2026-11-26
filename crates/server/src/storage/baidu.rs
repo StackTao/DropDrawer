@@ -138,10 +138,10 @@ impl BaiduNetdiskProvider {
         }
 
         let mut guard = self.token_cache.lock().await;
-        if let Some(cached) = guard.as_ref() {
-            if cached.expires_at > Instant::now() + Duration::from_secs(300) {
-                return Ok(cached.access_token.clone());
-            }
+        if let Some(cached) = guard.as_ref()
+            && cached.expires_at > Instant::now() + Duration::from_secs(300)
+        {
+            return Ok(cached.access_token.clone());
         }
 
         let resp = self

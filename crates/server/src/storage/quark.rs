@@ -251,7 +251,10 @@ impl QuarkProvider {
 
         // Step 1: Pre-upload
         let pre_resp = self
-            .apply_headers(self.http.post(self.endpoint("/1/clouddrive/file/upload/pre")))
+            .apply_headers(
+                self.http
+                    .post(self.endpoint("/1/clouddrive/file/upload/pre")),
+            )
             .json(&json!({
                 "ccp_hash_update": true,
                 "parallel_upload": true,
@@ -267,16 +270,20 @@ impl QuarkProvider {
             .await?;
         let pre_env: QuarkResp<QuarkPreData> = pre_resp.json().await?;
         if pre_env.code != 0 {
-            anyhow::bail!("Quark pre-upload failed ({}): {}", pre_env.code, pre_env.message);
+            anyhow::bail!(
+                "Quark pre-upload failed ({}): {}",
+                pre_env.code,
+                pre_env.message
+            );
         }
         let pre = pre_env
             .data
             .ok_or_else(|| anyhow::anyhow!("Quark pre-upload missing data"))?;
 
-        if pre.finish {
-            if let Some(fid) = pre.fid {
-                return Ok(fid);
-            }
+        if pre.finish
+            && let Some(fid) = pre.fid
+        {
+            return Ok(fid);
         }
 
         // Step 2: Update hash (triggers rapid/instant upload if cloud already has this file)
@@ -293,14 +300,12 @@ impl QuarkProvider {
             .send()
             .await?;
         let hash_env: QuarkResp<QuarkHashData> = hash_resp.json().await?;
-        if hash_env.code == 0 {
-            if let Some(hd) = hash_env.data {
-                if hd.finish {
-                    if let Some(fid) = hd.fid.or(pre.fid.clone()) {
-                        return Ok(fid);
-                    }
-                }
-            }
+        if hash_env.code == 0
+            && let Some(hd) = hash_env.data
+            && hd.finish
+            && let Some(fid) = hd.fid.or(pre.fid.clone())
+        {
+            return Ok(fid);
         }
 
         // Step 3: Multipart upload chunks to Alibaba OSS using Quark-signed auth_key
@@ -398,13 +403,16 @@ impl QuarkProvider {
                 .encode(serde_json::to_vec(c).unwrap_or_default())
         });
         let date_str = Utc::now().format("%a, %d %b %Y %H:%M:%S GMT").to_string();
-        let canonical_resource = format!("/{}/{}?uploadId={}", pre.bucket, pre.obj_key, pre.upload_id);
+        let canonical_resource =
+            format!("/{}/{}?uploadId={}", pre.bucket, pre.obj_key, pre.upload_id);
         let mut oss_headers = String::new();
         if let Some(ref cb) = cb_b64 {
             oss_headers.push_str(&format!("x-oss-callback:{cb}\n"));
         }
         oss_headers.push_str(&format!("x-oss-date:{date_str}\n"));
-        oss_headers.push_str("x-oss-user-agent:aliyun-sdk-js/6.6.1 Chrome 120.0.0.0 on Windows 10 64-bit\n");
+        oss_headers.push_str(
+            "x-oss-user-agent:aliyun-sdk-js/6.6.1 Chrome 120.0.0.0 on Windows 10 64-bit\n",
+        );
 
         let commit_meta = format!(
             "POST\n{xml_md5}\napplication/xml\n{date_str}\n{oss_headers}{canonical_resource}"

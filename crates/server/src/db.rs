@@ -3,7 +3,8 @@ use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Utc};
 use protocol::{
-    DeviceInfo, DevicePlatform, DrawerItem, DrawerItemKind, StorageBackendConfig,
+    DeviceInfo, DevicePlatform, DrawerItem, DrawerItemKind, RegisterDeviceRequest,
+    StorageBackendConfig,
     StorageBackendSummary, TransferMode, UserProfile,
 };
 use rusqlite::{params, Connection, OptionalExtension};
@@ -83,10 +84,10 @@ pub struct ShareLinkRow {
 
 impl Database {
     pub fn open(path: impl AsRef<Path>) -> anyhow::Result<Self> {
-        if let Some(parent) = path.as_ref().parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent)?;
-            }
+        if let Some(parent) = path.as_ref().parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent)?;
         }
         let conn = Connection::open(path)?;
         conn.execute_batch(
@@ -217,7 +218,10 @@ impl Database {
         )?;
         // Idempotent migrations for databases created before newer columns were added.
         let _ = conn.execute("ALTER TABLE share_links ADD COLUMN title TEXT", []);
-        let _ = conn.execute("ALTER TABLE drawer_items ADD COLUMN content_sha256 TEXT", []);
+        let _ = conn.execute(
+            "ALTER TABLE drawer_items ADD COLUMN content_sha256 TEXT",
+            [],
+        );
         let _ = conn.execute("ALTER TABLE users ADD COLUMN email TEXT", []);
         let _ = conn.execute(
             "ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0",
@@ -593,22 +597,20 @@ impl Database {
 
     pub fn upsert_device(
         &self,
-        requested_id: Option<&str>,
         user_id: &str,
-        name: &str,
-        platform: DevicePlatform,
-        iroh_node_id: Option<&str>,
-        iroh_relay_url: Option<&str>,
-        direct_addrs: &[String],
-        app_version: Option<&str>,
+        device: &RegisterDeviceRequest,
     ) -> anyhow::Result<DeviceInfo> {
         let now = Utc::now();
-        let app_version = app_version.map(str::trim).filter(|v| !v.is_empty());
-        let platform_str = serde_json::to_string(&platform)?;
-        let addrs_json = serde_json::to_string(direct_addrs)?;
+        let app_version = device
+            .app_version
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty());
+        let platform_str = serde_json::to_string(&device.platform)?;
+        let addrs_json = serde_json::to_string(&device.direct_addrs)?;
         let conn = self.lock_conn();
-        let requested_id = requested_id.filter(|id| !id.is_empty());
-        let iroh_node_id = iroh_node_id.filter(|id| !id.is_empty());
+        let requested_id = device.device_id.as_deref().filter(|id| !id.is_empty());
+        let iroh_node_id = device.iroh_node_id.as_deref().filter(|id| !id.is_empty());
         let requested_owner: Option<String> = if let Some(id) = requested_id {
             conn.query_row("SELECT user_id FROM devices WHERE id = ?1", [id], |row| {
                 row.get(0)
@@ -617,7 +619,9 @@ impl Database {
         } else {
             None
         };
-        let id = if let Some(id) = requested_id.filter(|_| requested_owner.as_deref() == Some(user_id)) {
+        let id = if let Some(id) =
+            requested_id.filter(|_| requested_owner.as_deref() == Some(user_id))
+        {
             id.to_owned()
         } else {
             let matching_device: Option<String> = if let Some(node_id) = iroh_node_id {
@@ -632,7 +636,11 @@ impl Database {
                 None
             };
             matching_device
-                .or_else(|| requested_id.filter(|_| requested_owner.is_none()).map(str::to_owned))
+                .or_else(|| {
+                    requested_id
+                        .filter(|_| requested_owner.is_none())
+                        .map(str::to_owned)
+                })
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
         };
         conn.execute(
@@ -650,10 +658,10 @@ impl Database {
             params![
                 id,
                 user_id,
-                name,
+                device.name,
                 platform_str,
                 iroh_node_id,
-                iroh_relay_url,
+                device.iroh_relay_url,
                 addrs_json,
                 now.to_rfc3339(),
                 app_version

@@ -539,16 +539,7 @@ async fn register_device(
     )?;
     let mut device = state
         .db
-        .upsert_device(
-            req.device_id.as_deref(),
-            &auth.user_id,
-            &req.name,
-            req.platform,
-            req.iroh_node_id.as_deref(),
-            req.iroh_relay_url.as_deref(),
-            &req.direct_addrs,
-            req.app_version.as_deref(),
-        )
+        .upsert_device(&auth.user_id, &req)
         .map_err(internal_err)?;
     let _ = state.db.clear_device_removal(
         &auth.user_id,
@@ -706,13 +697,13 @@ async fn update_storage_backend(
     let mut patch = serde_json::Map::new();
     for (key, value) in req.config {
         if key == "max_bytes" && matches!(&backend.config, StorageBackendConfig::Local { .. }) {
-            if !value.is_null() && !value.as_u64().is_some_and(|bytes| bytes > 0) {
+            if !value.is_null() && value.as_u64().is_none_or(|bytes| bytes == 0) {
                 return Err((StatusCode::BAD_REQUEST, "容量上限必须为正整数".to_string()));
             }
         } else if credential_fields.contains(&key.as_str()) {
-            let credential = value.as_str().ok_or_else(|| {
-                (StatusCode::BAD_REQUEST, "凭据必须为字符串".to_string())
-            })?;
+            let credential = value
+                .as_str()
+                .ok_or_else(|| (StatusCode::BAD_REQUEST, "凭据必须为字符串".to_string()))?;
             if credential.trim().is_empty() {
                 continue;
             }
@@ -968,8 +959,8 @@ async fn request_upload_plan(
 
     // Telegram-style instant deduplication: strictly scoped to the same user
     // and same storage backend, verified against physical storage before reuse.
-    if let Some(content_sha256) = normalize_sha256(req.content_sha256.as_deref()) {
-        if let Some(reused_path) = state
+    if let Some(content_sha256) = normalize_sha256(req.content_sha256.as_deref())
+        && let Some(reused_path) = state
             .db
             .find_reusable_cloud_object(
                 &auth.user_id,
@@ -979,40 +970,34 @@ async fn request_upload_plan(
                 &item.id,
             )
             .map_err(internal_err)?
-        {
-            let _storage_lock = state.lock_storage_object(&backend.id, &reused_path).await;
-            let still_referenced = state
+    {
+        let _storage_lock = state.lock_storage_object(&backend.id, &reused_path).await;
+        let still_referenced = state
+            .db
+            .count_other_storage_refs(&auth.user_id, &backend.id, &reused_path, &item.id)
+            .map_err(internal_err)?
+            > 0;
+        if still_referenced && provider.object_exists(&reused_path).await.unwrap_or(false) {
+            state
                 .db
-                .count_other_storage_refs(&auth.user_id, &backend.id, &reused_path, &item.id)
+                .mark_item_cloud_ready_with_sha256(
+                    &item.id,
+                    &auth.user_id,
+                    &backend.id,
+                    &reused_path,
+                    Some(expected_size),
+                    None,
+                    Some(&content_sha256),
+                )
+                .map_err(internal_err)?;
+            let hydrated = state
+                .hydrate_single_item(&auth.user_id, &item.id)
                 .map_err(internal_err)?
-                > 0;
-            if still_referenced
-                && provider
-                    .object_exists(&reused_path)
-                    .await
-                    .unwrap_or(false)
-            {
-                state
-                    .db
-                    .mark_item_cloud_ready_with_sha256(
-                        &item.id,
-                        &auth.user_id,
-                        &backend.id,
-                        &reused_path,
-                        Some(expected_size),
-                        None,
-                        Some(&content_sha256),
-                    )
-                    .map_err(internal_err)?;
-                let hydrated = state
-                    .hydrate_single_item(&auth.user_id, &item.id)
-                    .map_err(internal_err)?
-                    .ok_or_else(|| (StatusCode::NOT_FOUND, "item vanished".to_string()))?;
-                state.broadcast_user(&auth.user_id, WsEvent::ItemUpdated(hydrated.clone()));
-                return Ok(Json(UploadPlan::AlreadyCached {
-                    item: Box::new(hydrated),
-                }));
-            }
+                .ok_or_else(|| (StatusCode::NOT_FOUND, "item vanished".to_string()))?;
+            state.broadcast_user(&auth.user_id, WsEvent::ItemUpdated(hydrated.clone()));
+            return Ok(Json(UploadPlan::AlreadyCached {
+                item: Box::new(hydrated),
+            }));
         }
     }
 
@@ -1265,27 +1250,26 @@ async fn get_download_plan(
             .iter()
             .find(|d| Some(&d.id) == query.requester_device_id.as_ref());
         let mut candidates = Vec::new();
-        if query.prefer_replica {
-            if let (Some(rx), Some(hash)) = (
+        if query.prefer_replica
+            && let (Some(rx), Some(hash)) = (
                 requester.filter(|d| d.iroh_node_id.is_some()),
                 item.blake3_hash.as_deref(),
-            ) {
-                for d in devices
-                    .iter()
-                    .filter(|d| d.online && d.id != rx.id && d.id != item.owner_device_id)
-                {
-                    if !state
-                        .ready_files
-                        .get(&(auth.user_id.clone(), d.id.clone()))
-                        .is_some_and(|files| files.get(&id).is_some_and(|h| h == hash))
-                    {
-                        continue;
-                    }
-                    let (same_prefix, addresses) =
-                        lan_candidates(&rx.direct_addrs, &d.direct_addrs);
-                    if !addresses.is_empty() {
-                        candidates.push((!same_prefix, d, addresses, Some(hash.to_owned())));
-                    }
+            )
+        {
+            for d in devices
+                .iter()
+                .filter(|d| d.online && d.id != rx.id && d.id != item.owner_device_id)
+            {
+                let has_replica = state
+                    .ready_files
+                    .get(&(auth.user_id.clone(), d.id.clone()))
+                    .is_some_and(|files| files.get(&id).is_some_and(|h| h == hash));
+                if !has_replica {
+                    continue;
+                }
+                let (same_prefix, addresses) = lan_candidates(&rx.direct_addrs, &d.direct_addrs);
+                if !addresses.is_empty() {
+                    candidates.push((!same_prefix, d, addresses, Some(hash.to_owned())));
                 }
             }
         }
@@ -1328,43 +1312,49 @@ async fn get_download_plan(
         }
     }
 
-
     let mut cloud = None;
-    if item.cloud_ready {
-        if let (Some(backend_id), Some(storage_path)) =
-            (item.storage_backend_id.as_deref(), item.storage_path.as_deref())
-        {
-            let settings = state.runtime_settings();
-            let backend = state
-                .db
-                .get_storage_backend(backend_id, &auth.user_id)
+    if item.cloud_ready
+        && let (Some(backend_id), Some(storage_path)) = (
+            item.storage_backend_id.as_deref(),
+            item.storage_path.as_deref(),
+        )
+    {
+        let settings = state.runtime_settings();
+        let backend = state
+            .db
+            .get_storage_backend(backend_id, &auth.user_id)
+            .map_err(internal_err)?;
+        let backend = match backend {
+            Some(b)
+                if policy::ensure_endpoints_allowed(&settings, &b.config)
+                    .await
+                    .is_ok() =>
+            {
+                Some(b)
+            }
+            _ => None,
+        };
+        if let Some(backend) = backend {
+            let provider = state
+                .build_storage_provider(&backend)
                 .map_err(internal_err)?;
-            let backend = match backend {
-                Some(b) if policy::ensure_endpoints_allowed(&settings, &b.config).await.is_ok() => {
-                    Some(b)
+            match provider.resolve_download(storage_path).await {
+                Ok(DownloadResolution::DirectUrl(url)) => {
+                    cloud = Some(CloudDownloadInfo {
+                        url,
+                        is_direct_url: true,
+                        backend_name: backend.name,
+                    });
                 }
-                _ => None,
-            };
-            if let Some(backend) = backend {
-                let provider = state.build_storage_provider(&backend).map_err(internal_err)?;
-                match provider.resolve_download(storage_path).await {
-                    Ok(DownloadResolution::DirectUrl(url)) => {
-                        cloud = Some(CloudDownloadInfo {
-                            url,
-                            is_direct_url: true,
-                            backend_name: backend.name,
-                        });
-                    }
-                    Ok(DownloadResolution::Stream { .. }) => {
-                        cloud = Some(CloudDownloadInfo {
-                            url: format!("/api/drawer/items/{}/download", item.id),
-                            is_direct_url: false,
-                            backend_name: backend.name,
-                        });
-                    }
-                    Err(err) => {
-                        tracing::warn!("cloud download resolution failed for {}: {err}", item.id);
-                    }
+                Ok(DownloadResolution::Stream { .. }) => {
+                    cloud = Some(CloudDownloadInfo {
+                        url: format!("/api/drawer/items/{}/download", item.id),
+                        is_direct_url: false,
+                        backend_name: backend.name,
+                    });
+                }
+                Err(err) => {
+                    tracing::warn!("cloud download resolution failed for {}: {err}", item.id);
                 }
             }
         }
@@ -1696,15 +1686,15 @@ async fn validate_share_access(
     share: &crate::db::ShareLinkRow,
     passcode: Option<&str>,
 ) -> Result<(), (StatusCode, String)> {
-    if let Some(exp) = share.expires_at {
-        if exp <= Utc::now() {
-            return Err((StatusCode::GONE, "该分享链接已过期".to_string()));
-        }
+    if let Some(exp) = share.expires_at
+        && exp <= Utc::now()
+    {
+        return Err((StatusCode::GONE, "该分享链接已过期".to_string()));
     }
-    if let Some(max) = share.max_downloads {
-        if share.download_count >= max {
-            return Err((StatusCode::GONE, "该分享链接已达到下载次数上限".to_string()));
-        }
+    if let Some(max) = share.max_downloads
+        && share.download_count >= max
+    {
+        return Err((StatusCode::GONE, "该分享链接已达到下载次数上限".to_string()));
     }
     if !share_unlocked(state, share, passcode).await? {
         return Err((StatusCode::FORBIDDEN, "需要正确的提取码".to_string()));
@@ -1721,15 +1711,15 @@ async fn public_share_meta(
     let share = lookup_public_share(&state, &ip, &code)?;
     policy::ensure_share_access(&state, &share.user_id)?;
 
-    if let Some(exp) = share.expires_at {
-        if exp <= Utc::now() {
-            return Err((StatusCode::GONE, "该分享链接已过期".to_string()));
-        }
+    if let Some(exp) = share.expires_at
+        && exp <= Utc::now()
+    {
+        return Err((StatusCode::GONE, "该分享链接已过期".to_string()));
     }
-    if let Some(max) = share.max_downloads {
-        if share.download_count >= max {
-            return Err((StatusCode::GONE, "该分享链接已达到下载次数上限".to_string()));
-        }
+    if let Some(max) = share.max_downloads
+        && share.download_count >= max
+    {
+        return Err((StatusCode::GONE, "该分享链接已达到下载次数上限".to_string()));
     }
 
     let items = state

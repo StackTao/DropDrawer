@@ -639,7 +639,8 @@ async fn test_clear_drawer_removes_owned_files_and_retries_failed_deletions() {
 #[tokio::test]
 async fn test_native_google_drive_resumable_upload_download_delete_and_s3() {
     // In-process mock Google OAuth2 + Google Drive API v3 server.
-    let files: Arc<Mutex<HashMap<String, Vec<u8>>>> = Arc::new(Mutex::new(HashMap::new()));
+    type MockDriveFiles = Arc<Mutex<HashMap<String, Vec<u8>>>>;
+    let files: MockDriveFiles = Arc::new(Mutex::new(HashMap::new()));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let mock_addr = listener.local_addr().unwrap();
     let mock_base = format!("http://{mock_addr}");
@@ -690,7 +691,7 @@ async fn test_native_google_drive_resumable_upload_download_delete_and_s3() {
         .route(
             "/upload/session/{id}",
             put(
-                |State(store): State<Arc<Mutex<HashMap<String, Vec<u8>>>>>,
+                |State(store): State<MockDriveFiles>,
                  AxumPath(id): AxumPath<String>,
                  body: bytes::Bytes| async move {
                     let len = body.len();
@@ -702,13 +703,13 @@ async fn test_native_google_drive_resumable_upload_download_delete_and_s3() {
         .route(
             "/drive/v3/files/{id}",
             get(
-                |State(store): State<Arc<Mutex<HashMap<String, Vec<u8>>>>>,
+                |State(store): State<MockDriveFiles>,
                  AxumPath(id): AxumPath<String>| async move {
                     store.lock().unwrap().get(&id).cloned().unwrap_or_default()
                 },
             )
             .delete(
-                |State(store): State<Arc<Mutex<HashMap<String, Vec<u8>>>>>,
+                |State(store): State<MockDriveFiles>,
                  AxumPath(id): AxumPath<String>| async move {
                     store.lock().unwrap().remove(&id);
                     StatusCode::NO_CONTENT

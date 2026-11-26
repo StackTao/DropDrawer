@@ -483,10 +483,10 @@ impl P2pNode {
         let endpoint_id: EndpointId = req.remote_node_id.parse()?;
         let dest_path = req.dest_path;
         let mut transport_addrs = Vec::new();
-        if let Some(r) = req.remote_relay_url.filter(|s| !s.is_empty()) {
-            if let Ok(relay_url) = r.parse::<RelayUrl>() {
-                transport_addrs.push(TransportAddr::Relay(relay_url));
-            }
+        if let Some(r) = req.remote_relay_url.filter(|s| !s.is_empty())
+            && let Ok(relay_url) = r.parse::<RelayUrl>()
+        {
+            transport_addrs.push(TransportAddr::Relay(relay_url));
         }
         for s in &req.remote_direct_addrs {
             if let Ok(sock) = s.parse::<SocketAddr>() {
@@ -753,7 +753,12 @@ async fn handle_incoming_connection(
     if source.require_auth_token {
         let remote = conn.remote_id().to_string();
         if !source.redeem_token(&req.token, &req.item_id, &remote).await {
-            return reject_pull(&conn, &mut send, "unauthorized or expired P2P transfer token").await;
+            return reject_pull(
+                &conn,
+                &mut send,
+                "unauthorized or expired P2P transfer token",
+            )
+            .await;
         }
     }
 
@@ -788,22 +793,24 @@ async fn handle_incoming_connection(
             0
         };
         let mut resumed_legacy = false;
-        if let Some(prefix) = req.legacy_prefix {
-            if req.offset == 0 && prefix.size > 0 && prefix.size <= entry_size {
-                let mut reader = (&mut file).take(prefix.size);
-                let mut hasher = blake3::Hasher::new();
-                let mut buf = vec![0; CHUNK_SIZE];
-                loop {
-                    let n = reader.read(&mut buf).await?;
-                    if n == 0 {
-                        break;
-                    }
-                    hasher.update(&buf[..n]);
+        if let Some(prefix) = req.legacy_prefix
+            && req.offset == 0
+            && prefix.size > 0
+            && prefix.size <= entry_size
+        {
+            let mut reader = (&mut file).take(prefix.size);
+            let mut hasher = blake3::Hasher::new();
+            let mut buf = vec![0; CHUNK_SIZE];
+            loop {
+                let n = reader.read(&mut buf).await?;
+                if n == 0 {
+                    break;
                 }
-                resumed_legacy = hasher.finalize().to_hex().as_str() == prefix.hash;
-                if resumed_legacy {
-                    start_offset = prefix.size;
-                }
+                hasher.update(&buf[..n]);
+            }
+            resumed_legacy = hasher.finalize().to_hex().as_str() == prefix.hash;
+            if resumed_legacy {
+                start_offset = prefix.size;
             }
         }
         file.seek(std::io::SeekFrom::Start(start_offset)).await?;
