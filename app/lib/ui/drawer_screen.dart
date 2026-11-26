@@ -440,8 +440,6 @@ class _DrawerScreenState extends State<DrawerScreen> {
                   ? FloatingActionButton.extended(
                       tooltip: '添加',
                       onPressed: _showAddSheet,
-                      backgroundColor: MacPalette.accent,
-                      foregroundColor: MacPalette.onAccent,
                       icon: const Icon(Icons.add),
                       label: const Text('添加'),
                     )
@@ -916,6 +914,16 @@ class _DrawerScreenState extends State<DrawerScreen> {
           _selectionMode = false;
           _selectedIds.clear();
         });
+    if (material) {
+      return _buildMaterialHome(
+        context,
+        c,
+        visibleItems,
+        allSelected: allSelected,
+        toggleAll: toggleAll,
+        finish: finish,
+      );
+    }
     final title = Text(selecting ? '已选 ${_selectedIds.length} 项' : 'DropDrawer');
     final more = PhoneMenuButton(
       icon: CupertinoIcons.ellipsis,
@@ -924,78 +932,55 @@ class _DrawerScreenState extends State<DrawerScreen> {
       entries: _phoneMoreEntries(c, visibleItems),
     );
 
-    final Widget navBar;
-    if (material) {
-      navBar = SliverAppBar.large(
-        leading: selecting
-            ? IconButton(
-                tooltip: '完成',
-                icon: const Icon(Icons.close),
-                onPressed: finish,
-              )
-            : null,
-        title: title,
-        actions: selecting
-            ? [
-                IconButton(
-                  tooltip: allSelected ? '取消全选' : '全选',
-                  icon: Icon(allSelected ? Icons.deselect : Icons.select_all),
-                  onPressed: toggleAll,
-                ),
-              ]
-            : [more, const SizedBox(width: 4)],
-      );
-    } else {
-      navBar = CupertinoSliverNavigationBar(
-        largeTitle: title,
-        backgroundColor: MacPalette.background.withValues(alpha: 0.85),
-        stretch: true,
-        // iOS shows no hairline under an expanded large title.
-        border: null,
-        leading: selecting
-            ? Material(
-                type: MaterialType.transparency,
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: LiquidGlassButton(
-                    height: 36,
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
-                    onPressed: toggleAll,
-                    child: Text(
-                      allSelected ? '取消全选' : '全选',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w500,
-                        color: MacPalette.textPrimary,
-                      ),
-                    ),
-                  ),
-                ),
-              )
-            : null,
-        // The bar flies over the page transition outside the Scaffold; its
-        // buttons need a Material ancestor there too.
-        trailing: Material(
-          type: MaterialType.transparency,
-          child: selecting
-              ? LiquidGlassButton(
+    final navBar = CupertinoSliverNavigationBar(
+      largeTitle: title,
+      backgroundColor: MacPalette.background.withValues(alpha: 0.85),
+      stretch: true,
+      // iOS shows no hairline under an expanded large title.
+      border: null,
+      leading: selecting
+          ? Material(
+              type: MaterialType.transparency,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: LiquidGlassButton(
                   height: 36,
-                  tinted: true,
                   padding: const EdgeInsets.symmetric(horizontal: 14),
-                  onPressed: finish,
+                  onPressed: toggleAll,
                   child: Text(
-                    '完成',
+                    allSelected ? '取消全选' : '全选',
                     style: TextStyle(
                       fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      color: MacPalette.accent,
+                      fontWeight: FontWeight.w500,
+                      color: MacPalette.textPrimary,
                     ),
                   ),
-                )
-              : more,
-        ),
-      );
-    }
+                ),
+              ),
+            )
+          : null,
+      // The bar flies over the page transition outside the Scaffold; its
+      // buttons need a Material ancestor there too.
+      trailing: Material(
+        type: MaterialType.transparency,
+        child: selecting
+            ? LiquidGlassButton(
+                height: 36,
+                tinted: true,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                onPressed: finish,
+                child: Text(
+                  '完成',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: MacPalette.accent,
+                  ),
+                ),
+              )
+            : more,
+      ),
+    );
 
     final searchingIos =
         !material && !selecting && c.items.isNotEmpty &&
@@ -1017,31 +1002,12 @@ class _DrawerScreenState extends State<DrawerScreen> {
           ),
         if (searchingIos)
           SliverToBoxAdapter(child: _buildIosScopeBar()),
-        if (material && c.items.isNotEmpty && !selecting)
-          SliverToBoxAdapter(child: _buildPhoneSearch(true)),
         _buildItemSliver(context, c, visibleItems),
         // Keep the last row clear of the floating add button / iOS 26 glass dock.
         if (!selecting)
-          SliverToBoxAdapter(child: SizedBox(height: material ? 88 : 112)),
+          const SliverToBoxAdapter(child: SizedBox(height: 112)),
       ],
     );
-    if (material) {
-      return Column(
-        children: [
-          Expanded(
-            child: RefreshIndicator(
-              onRefresh: c.manualRefresh,
-              edgeOffset: MediaQuery.paddingOf(context).top + kToolbarHeight,
-              child: scroll,
-            ),
-          ),
-          if (selecting)
-            _buildBatchFooter(c)
-          else
-            UpdateBanner(updates: c.updates, mobile: true),
-        ],
-      );
-    }
     return Column(
       children: [
         Expanded(
@@ -1069,6 +1035,230 @@ class _DrawerScreenState extends State<DrawerScreen> {
         else
           UpdateBanner(updates: c.updates, mobile: true),
       ],
+    );
+  }
+
+  /// Android home, after Files by Google / Gmail: a floating search bar is
+  /// the top app bar (with the overflow menu inside it), a status chip and
+  /// the item count below, full-width list items, and the add button. In
+  /// multi-select a contextual top app bar replaces the search bar.
+  Widget _buildMaterialHome(
+    BuildContext context,
+    DropDrawerController c,
+    List<DrawerItem> visibleItems, {
+    required bool allSelected,
+    required VoidCallback toggleAll,
+    required VoidCallback finish,
+  }) {
+    final selecting = _selectionMode;
+    final searching = _searchOpen ||
+        _searchCtrl.text.isNotEmpty ||
+        _filterKind != 'all';
+    const barHeight = 72.0;
+
+    final Widget appBar;
+    if (selecting) {
+      appBar = SliverAppBar(
+        pinned: true,
+        backgroundColor: MacPalette.cardBg,
+        surfaceTintColor: Colors.transparent,
+        leading: IconButton(
+          tooltip: '完成',
+          icon: const Icon(Icons.close),
+          onPressed: finish,
+        ),
+        title: Text('已选 ${_selectedIds.length} 项'),
+        actions: [
+          IconButton(
+            tooltip: allSelected ? '取消全选' : '全选',
+            icon: Icon(allSelected ? Icons.deselect : Icons.select_all),
+            onPressed: toggleAll,
+          ),
+          const SizedBox(width: 4),
+        ],
+      );
+    } else {
+      appBar = SliverAppBar(
+        floating: true,
+        snap: true,
+        automaticallyImplyLeading: false,
+        toolbarHeight: barHeight,
+        titleSpacing: 16,
+        backgroundColor: MacPalette.background,
+        surfaceTintColor: Colors.transparent,
+        scrolledUnderElevation: 0,
+        title: _buildMaterialSearchBar(c, visibleItems, searching),
+      );
+    }
+
+    final scroll = CustomScrollView(
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      physics: const AlwaysScrollableScrollPhysics(
+        parent: ClampingScrollPhysics(),
+      ),
+      slivers: [
+        appBar,
+        if (!selecting)
+          SliverToBoxAdapter(
+            child: searching && c.items.isNotEmpty
+                ? _buildMaterialFilterChips(c, visibleItems)
+                : _buildMaterialStatus(c),
+          ),
+        _buildItemSliver(context, c, visibleItems),
+        // Keep the last row clear of the floating add button.
+        if (!selecting) const SliverToBoxAdapter(child: SizedBox(height: 96)),
+      ],
+    );
+    return Column(
+      children: [
+        Expanded(
+          child: RefreshIndicator(
+            onRefresh: c.manualRefresh,
+            edgeOffset: MediaQuery.paddingOf(context).top + barHeight,
+            child: scroll,
+          ),
+        ),
+        if (selecting)
+          _buildBatchFooter(c)
+        else
+          UpdateBanner(updates: c.updates, mobile: true),
+      ],
+    );
+  }
+
+  /// The Material 3 search bar that heads the Android home. Searching swaps
+  /// the search icon for a back arrow and the overflow menu for clear.
+  Widget _buildMaterialSearchBar(
+    DropDrawerController c,
+    List<DrawerItem> visibleItems,
+    bool searching,
+  ) {
+    return SearchBar(
+      controller: _searchCtrl,
+      focusNode: _searchFocusNode,
+      hintText: '在 DropDrawer 中搜索',
+      constraints: const BoxConstraints(minHeight: 56, maxHeight: 56),
+      elevation: const WidgetStatePropertyAll(0),
+      backgroundColor: WidgetStatePropertyAll(MacPalette.elevatedBg),
+      padding: const WidgetStatePropertyAll(
+        EdgeInsets.symmetric(horizontal: 4),
+      ),
+      textStyle: WidgetStatePropertyAll(
+        TextStyle(fontSize: 16, color: MacPalette.textPrimary),
+      ),
+      hintStyle: WidgetStatePropertyAll(
+        TextStyle(fontSize: 16, color: MacPalette.textSecondary),
+      ),
+      leading: searching
+          ? IconButton(
+              tooltip: '关闭搜索',
+              icon: const Icon(Icons.arrow_back),
+              onPressed: _closeSearch,
+            )
+          : const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 12),
+              child: Icon(Icons.search),
+            ),
+      trailing: [
+        if (_searchCtrl.text.isNotEmpty)
+          IconButton(
+            tooltip: '清除',
+            icon: const Icon(Icons.close),
+            onPressed: () => setState(_searchCtrl.clear),
+          )
+        else if (!searching)
+          PhoneMenuButton(
+            icon: CupertinoIcons.ellipsis,
+            materialIcon: Icons.more_vert,
+            tooltip: '更多',
+            entries: _phoneMoreEntries(c, visibleItems),
+          ),
+      ],
+      onTap: () {
+        if (!_searchOpen) setState(() => _searchOpen = true);
+      },
+      onChanged: (_) => setState(() {}),
+      onSubmitted: (_) => _searchFocusNode.unfocus(),
+    );
+  }
+
+  /// Android: connection state as an assist chip (opens the device page)
+  /// with the item count at the end of the line.
+  Widget _buildMaterialStatus(DropDrawerController c) {
+    final status = !c.wsConnected
+        ? '正在连接…'
+        : '${c.onlineDeviceCount} 台设备在线';
+    final dotColor = c.wsConnected
+        ? (c.p2pReady ? MacPalette.green : MacPalette.accent)
+        : MacPalette.red;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 20, 4),
+      child: Row(
+        children: [
+          ActionChip(
+            avatar: Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: dotColor,
+              ),
+            ),
+            label: Text(status),
+            labelStyle: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: MacPalette.textPrimary,
+            ),
+            side: BorderSide(color: MacPalette.hairline),
+            backgroundColor: MacPalette.background,
+            onPressed: () => _switchPage(_DrawerPage.devices),
+          ),
+          const Spacer(),
+          if (c.items.isNotEmpty)
+            Text(
+              '${c.items.length} 项',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: MacPalette.textSecondary,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Android search filters: Material 3 filter chips and the match count.
+  Widget _buildMaterialFilterChips(
+    DropDrawerController c,
+    List<DrawerItem> visibleItems,
+  ) {
+    const scopes = [('all', '全部'), ('file', '文件'), ('text', '文本')];
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 20, 4),
+      child: Row(
+        children: [
+          for (final (kind, label) in scopes) ...[
+            FilterChip(
+              label: Text(label),
+              selected: _filterKind == kind,
+              showCheckmark: false,
+              onSelected: (_) => setState(() => _filterKind = kind),
+            ),
+            const SizedBox(width: 8),
+          ],
+          const Spacer(),
+          Text(
+            '${visibleItems.length}/${c.items.length}',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: MacPalette.textSecondary,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1307,108 +1497,6 @@ class _DrawerScreenState extends State<DrawerScreen> {
             ),
           ),
         ),
-      ),
-    );
-  }
-
-  /// The system search field: iOS search field with a scope bar and 取消,
-  /// or a Material 3 search bar with filter chips.
-  Widget _buildPhoneSearch(bool material) {
-    final active = _searchOpen || _searchCtrl.text.isNotEmpty;
-    const scopes = [('all', '全部'), ('file', '文件'), ('text', '文本')];
-    if (material) {
-      return Padding(
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SearchBar(
-              controller: _searchCtrl,
-              focusNode: _searchFocusNode,
-              hintText: '搜索',
-              elevation: const WidgetStatePropertyAll(0),
-              backgroundColor: WidgetStatePropertyAll(MacPalette.fill(0.07)),
-              leading: const Padding(
-                padding: EdgeInsets.only(left: 4),
-                child: Icon(Icons.search),
-              ),
-              trailing: [
-                if (active)
-                  IconButton(
-                    tooltip: '关闭搜索',
-                    icon: const Icon(Icons.close),
-                    onPressed: _closeSearch,
-                  ),
-              ],
-              onTap: () => setState(() => _searchOpen = true),
-              onChanged: (_) => setState(() {}),
-            ),
-            if (active)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Wrap(
-                  spacing: 8,
-                  children: [
-                    for (final (kind, label) in scopes)
-                      ChoiceChip(
-                        label: Text(label),
-                        selected: _filterKind == kind,
-                        onSelected: (_) => setState(() => _filterKind = kind),
-                      ),
-                  ],
-                ),
-              ),
-          ],
-        ),
-      );
-    }
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 2, 16, 10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: CupertinoSearchTextField(
-                  controller: _searchCtrl,
-                  focusNode: _searchFocusNode,
-                  placeholder: '搜索',
-                  style: TextStyle(color: MacPalette.textPrimary),
-                  onTap: () => setState(() => _searchOpen = true),
-                  onChanged: (_) => setState(() {}),
-                  onSuffixTap: () => setState(_searchCtrl.clear),
-                ),
-              ),
-              if (active)
-                CupertinoButton(
-                  padding: const EdgeInsets.only(left: 12),
-                  minimumSize: const Size(0, 36),
-                  onPressed: _closeSearch,
-                  child: Text(
-                    '取消',
-                    style: TextStyle(fontSize: 17, color: MacPalette.accent),
-                  ),
-                ),
-            ],
-          ),
-          if (active)
-            Padding(
-              padding: const EdgeInsets.only(top: 10),
-              child: CupertinoSlidingSegmentedControl<String>(
-                groupValue: _filterKind,
-                children: {
-                  for (final (kind, label) in scopes)
-                    kind: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 3),
-                      child: Text(label, style: const TextStyle(fontSize: 14)),
-                    ),
-                },
-                onValueChanged: (kind) =>
-                    setState(() => _filterKind = kind ?? 'all'),
-              ),
-            ),
-        ],
       ),
     );
   }
@@ -3513,8 +3601,13 @@ class _FileIconBox extends StatelessWidget {
         lower.endsWith('.gif');
   }
 
-  Widget _buildContent() {
-    final radius = BorderRadius.circular(size * 0.22);
+  Widget _buildContent(bool material) {
+    final radius = BorderRadius.circular(size * (material ? 0.25 : 0.22));
+    final icon = Icon(
+      material ? _resolveMaterialIcon() : _resolveIcon(),
+      size: material ? size * 0.5 : 17,
+      color: material ? MacPalette.onTonal : MacPalette.textPrimary,
+    );
     final thumbnail = _thumbnailFor(item);
     if (thumbnail != null) {
       return ClipRRect(
@@ -3537,16 +3630,18 @@ class _FileIconBox extends StatelessWidget {
           height: size,
           cacheWidth: 128,
           fit: BoxFit.cover,
-          errorBuilder: (_, _, _) =>
-              Icon(_resolveIcon(), size: 17, color: MacPalette.textPrimary),
+          errorBuilder: (_, _, _) => icon,
         ),
       );
     }
-    return Icon(_resolveIcon(), size: 17, color: MacPalette.textPrimary);
+    return icon;
   }
 
   @override
   Widget build(BuildContext context) {
+    // Android: a borderless tonal plate (secondary container), like Material 3
+    // list item avatars.
+    final material = usesMaterialChrome(context);
     return Stack(
       clipBehavior: Clip.none,
       children: [
@@ -3554,14 +3649,17 @@ class _FileIconBox extends StatelessWidget {
           width: size,
           height: size,
           decoration: BoxDecoration(
-            color: MacPalette.fill(0.08),
-            borderRadius: BorderRadius.circular(size * 0.235),
-            border: Border.all(
-              color: MacPalette.fill(0.1),
-              width: 0.5,
-            ),
+            color: MacPalette.tonal,
+            borderRadius:
+                BorderRadius.circular(size * (material ? 0.25 : 0.235)),
+            border: material
+                ? null
+                : Border.all(
+                    color: MacPalette.fill(0.1),
+                    width: 0.5,
+                  ),
           ),
-          child: _buildContent(),
+          child: _buildContent(material),
         ),
         if (draggable)
           Positioned(
@@ -3622,6 +3720,35 @@ class _FileIconBox extends StatelessWidget {
     }
     return CupertinoIcons.doc;
   }
+
+  IconData _resolveMaterialIcon() {
+    if (item.kind == 'text') return Icons.notes;
+    final mime = (item.mimeType ?? '').toLowerCase();
+    final lower = item.name.toLowerCase();
+    bool ends(List<String> exts) => exts.any(lower.endsWith);
+    if (mime.startsWith('image/') ||
+        ends(['.png', '.jpg', '.jpeg', '.webp', '.heic', '.gif'])) {
+      return Icons.image_outlined;
+    }
+    if (mime.startsWith('video/') || ends(['.mp4', '.mov', '.mkv'])) {
+      return Icons.movie_outlined;
+    }
+    if (mime.startsWith('audio/') || ends(['.mp3', '.wav', '.m4a', '.flac'])) {
+      return Icons.audio_file_outlined;
+    }
+    if (ends(['.zip', '.tar', '.gz', '.rar', '.7z'])) {
+      return Icons.folder_zip_outlined;
+    }
+    if (ends(['.pdf'])) return Icons.picture_as_pdf_outlined;
+    if (ends(['.apk'])) return Icons.android;
+    if (ends(['.exe', '.msi', '.dmg', '.pkg', '.app'])) {
+      return Icons.install_desktop_outlined;
+    }
+    if (ends(['.doc', '.docx', '.md', '.txt', '.rtf'])) {
+      return Icons.description_outlined;
+    }
+    return Icons.insert_drive_file_outlined;
+  }
 }
 
 
@@ -3649,7 +3776,9 @@ class _PhoneRowFrame extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: selected
-            ? Color.alphaBlend(MacPalette.accent.withValues(alpha: 0.14), base)
+            ? (material
+                ? MacPalette.tonal
+                : Color.alphaBlend(MacPalette.accent.withValues(alpha: 0.14), base))
             : base,
         borderRadius: radius,
       ),
@@ -3772,9 +3901,9 @@ class _PhoneItemRow extends StatelessWidget {
       child: Padding(
         padding: EdgeInsets.fromLTRB(
           16,
-          material ? 10 : 12,
-          action == null ? 16 : 10,
-          material ? 10 : 12,
+          12,
+          action == null ? 16 : (material ? 4 : 10),
+          12,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3800,9 +3929,9 @@ class _PhoneItemRow extends StatelessWidget {
                   item: item,
                   localPath: localPath,
                   draggable: false,
-                  size: material ? 44 : 48,
+                  size: 48,
                 ),
-                const SizedBox(width: 12),
+                SizedBox(width: material ? 16 : 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -3821,8 +3950,8 @@ class _PhoneItemRow extends StatelessWidget {
                       Row(
                         children: [
                           Container(
-                            width: 7,
-                            height: 7,
+                            width: material ? 6 : 7,
+                            height: material ? 6 : 7,
                             margin: const EdgeInsets.only(right: 6),
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
@@ -3869,7 +3998,7 @@ class _PhoneItemRow extends StatelessWidget {
             // Progress changes arrive on their own notifier; only this part
             // of the row rebuilds for them.
             Padding(
-              padding: EdgeInsets.only(left: 56 + leadInset),
+              padding: EdgeInsets.only(left: (material ? 64 : 56) + leadInset),
               child: ListenableBuilder(
                 listenable: c.transferTicks,
                 builder: (context, _) => _transferSection(c, item, true),

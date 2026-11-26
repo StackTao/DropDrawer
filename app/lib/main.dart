@@ -18,6 +18,7 @@ void main() {
     MacPalette.use(
       ui.PlatformDispatcher.instance.platformBrightness,
       trueBlack: Platform.isIOS,
+      material: Platform.isAndroid,
     );
     _applySystemBars();
   }
@@ -70,6 +71,7 @@ class _DropDrawerAppState extends State<DropDrawerApp>
     if (!MacPalette.use(
       ui.PlatformDispatcher.instance.platformBrightness,
       trueBlack: Platform.isIOS,
+      material: Platform.isAndroid,
     )) {
       return;
     }

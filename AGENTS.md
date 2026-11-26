@@ -51,10 +51,11 @@
     - 若更改过项目目录路径，需先清理 `app/build/macos` 避免 Xcode stale file 报错。
 
 21. **手机端二级页面是路由，不是原地切换**：手机上偏好设置、设备、外链、预览、云盘由 `DrawerScreen._pushPhonePage` 推入（iOS `CupertinoPageRoute` 支持边缘右滑返回，Android `MaterialPageRoute`），页面用 `AdaptivePage`（`app/lib/ui/phone_page.dart`）：桌面保留原紧凑标题行，手机换成 iOS 导航栏 / Material 3 顶栏，正文套 `PhoneTypeScaler` 把桌面字号映射到系统字号阶梯。桌面端仍是 `_page` 原地切换。iOS/Android 外观按 `Theme.of(context).platform` 区分（`usesMaterialChrome`）。
-    - 手机首页：iOS 是大标题导航栏 +「+」/「…」下拉菜单、内嵌分组列表、左滑「移出」（无撤销）、长按 `CupertinoContextMenu`、顶部胶囊提示；Android 是 Large Top App Bar、悬浮「添加」按钮 + 底部面板、全宽列表项、滑动删除带撤销 Snackbar、长按进入多选。
+    - 手机首页：iOS 是大标题导航栏 +「+」/「…」下拉菜单、内嵌分组列表、左滑「移出」（无撤销）、长按 `CupertinoContextMenu`、顶部胶囊提示；Android 参照 Files by Google：浮动搜索栏充当顶栏（「更多」菜单在栏内，搜索时出现筛选 chip）、下方设备在线 `ActionChip` + 项目数、悬浮「添加」按钮 + 底部面板、全宽列表项（色调底图标）、滑动删除带撤销 Snackbar、长按进入多选（顶栏换成「已选 N 项」）。
     - iOS 下拉菜单用 `showPullDownMenu`（弹出路由），**不要换回 `CupertinoMenuAnchor`**：它的 `OverlayPortal` 在大标题导航栏收起/转场重排按钮时会触发布局断言。
     - 已按手机尺寸写的组件（`PhoneSection` / `PhoneRow` / `PhoneButton`）用 `NativeTypeScale` 退出 `PhoneTypeScaler`，避免字号被映射两次。
-    - iOS 深色用 `MacPalette.use(..., trueBlack: true)`：纯黑底 + `#1C1C1E` 分组行；桌面与 Android 深色不变。
+    - iOS 深色用 `MacPalette.use(..., trueBlack: true)`：纯黑底 + `#1C1C1E` 分组行；桌面深色不变。
+    - Android 用 `MacPalette.use(..., material: true)`：浅色/深色都取自 `materialScheme()`（蓝色种子生成的 Material 3 色调角色），`buildAppTheme` 的 `colorScheme` 也用它；Android 上不要写死 iOS 系统色，图标底板用 `MacPalette.tonal` / `onTonal`。
     - 手机文件预览走原生 `openFile`（iOS QuickLook / Android `ACTION_VIEW`），打不开时退回系统分享；改动需同步 `drawer_window_service.dart`、`AppDelegate.swift`、`MainActivity.kt`。
 
 ---

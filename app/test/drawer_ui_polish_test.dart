@@ -429,6 +429,38 @@ void main() {
       expect(ctrl.items, hasLength(1));
     });
 
+    testWidgets('Android uses Material 3 tonal colors and a search bar header', (tester) async {
+      expect(MacPalette.use(Brightness.light, material: true), isTrue);
+      final scheme = materialScheme(Brightness.light);
+      expect(MacPalette.background, scheme.surface);
+      expect(MacPalette.accent, scheme.primary);
+      expect(MacPalette.onAccent, scheme.onPrimary);
+      expect(buildAppTheme(mobile: true, android: true).colorScheme.surfaceContainer,
+          scheme.surfaceContainer);
+
+      await _pumpPhone(tester, items: [_item('a', cloud: true)]);
+      expect(tester.takeException(), isNull);
+      // The search bar heads the page and holds the overflow menu; no large title.
+      expect(find.byType(SearchBar), findsOneWidget);
+      expect(find.text('在 DropDrawer 中搜索'), findsOneWidget);
+      expect(
+        find.descendant(of: find.byType(SearchBar), matching: find.byTooltip('更多')),
+        findsOneWidget,
+      );
+      expect(find.text('DropDrawer'), findsNothing);
+      expect(find.widgetWithText(ActionChip, '正在连接…'), findsOneWidget);
+      expect(find.text('1 项'), findsOneWidget);
+
+      // Searching shows filter chips; the back arrow leaves search.
+      await tester.tap(find.byType(SearchBar));
+      await tester.pump();
+      expect(find.widgetWithText(FilterChip, '文本'), findsOneWidget);
+      await tester.tap(find.byTooltip('关闭搜索'));
+      await tester.pump();
+      expect(find.byType(FilterChip), findsNothing);
+      expect(find.byTooltip('更多'), findsOneWidget);
+    });
+
     test('theme switches brightness and keeps hairline dividers', () {
       MacPalette.use(Brightness.light);
       final light = buildAppTheme(mobile: true, android: false);

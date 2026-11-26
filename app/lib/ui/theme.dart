@@ -17,11 +17,20 @@ class MacPalette {
   /// Selects the light or dark colors. Returns whether anything changed.
   ///
   /// [trueBlack] picks the iOS dark appearance (black background, #1C1C1E
-  /// grouped rows) instead of the desktop's dark grey.
-  static bool use(Brightness brightness, {bool trueBlack = false}) {
-    final next = brightness == Brightness.light
-        ? _Palette.light
-        : (trueBlack ? _Palette.trueBlack : _Palette.dark);
+  /// grouped rows) instead of the desktop's dark grey. [material] picks the
+  /// Material 3 tonal colors Android uses (see [materialScheme]).
+  static bool use(
+    Brightness brightness, {
+    bool trueBlack = false,
+    bool material = false,
+  }) {
+    final next = material
+        ? (brightness == Brightness.light
+            ? _Palette.materialLight
+            : _Palette.materialDark)
+        : brightness == Brightness.light
+            ? _Palette.light
+            : (trueBlack ? _Palette.trueBlack : _Palette.dark);
     if (identical(next, _active)) return false;
     _active = next;
     return true;
@@ -50,24 +59,36 @@ class MacPalette {
   static Color get onTextPrimary => _active.onTextPrimary;
 
   /// Text and icons on an [accent] or [red] fill.
-  static Color get onAccent => const Color(0xFFFFFFFF);
+  static Color get onAccent => _active.onAccent;
+
+  /// A tonal plate behind an icon (file icons, avatars) and what sits on it:
+  /// a neutral fill on Apple platforms, the secondary container on Material.
+  static Color get tonal => _active.tonal ?? fill(0.08);
+  static Color get onTonal => _active.onTonal ?? _active.textPrimary;
+
+  /// Whether the Material 3 palette is active (Android phones).
+  static bool get isMaterial => _active.material;
 
   static Color get toastBackground => _active.toastBackground;
   static Color get toastText => _active.toastText;
 
   /// A neutral plate or highlight: lightens on dark, darkens on light.
-  static Color fill(double alpha) => isLight
-      ? Colors.black.withValues(alpha: alpha * 0.55)
-      : Colors.white.withValues(alpha: alpha);
+  static Color fill(double alpha) => isMaterial
+      ? _active.textPrimary.withValues(alpha: alpha * (isLight ? 0.6 : 0.9))
+      : isLight
+          ? Colors.black.withValues(alpha: alpha * 0.55)
+          : Colors.white.withValues(alpha: alpha);
 
   /// A grouped panel (settings groups, forms): recessed on dark, a white card
   /// on the light grouped background, like iOS.
-  static Color group(double alpha) => isLight || _isTrueBlack
+  static Color group(double alpha) => isLight || _isTrueBlack || isMaterial
       ? _active.cardBg
       : Colors.black.withValues(alpha: alpha);
 
   /// A recessed area (input fields, bars): dark on dark, faint grey on light.
-  static Color shade(double alpha) => isLight
+  static Color shade(double alpha) => isMaterial
+      ? _active.cardHoverBg
+      : isLight
       ? Colors.black.withValues(alpha: alpha * 0.18)
       : (_isTrueBlack
           // iOS tertiary fill; black would vanish on the black background.
@@ -96,6 +117,10 @@ class _Palette {
   final Color onTextPrimary;
   final Color toastBackground;
   final Color toastText;
+  final Color onAccent;
+  final Color? tonal;
+  final Color? onTonal;
+  final bool material;
 
   const _Palette({
     required this.brightness,
@@ -116,7 +141,47 @@ class _Palette {
     required this.onTextPrimary,
     required this.toastBackground,
     required this.toastText,
+    this.onAccent = const Color(0xFFFFFFFF),
+    this.tonal,
+    this.onTonal,
+    this.material = false,
   });
+
+  /// Android: Material 3 roles from [materialScheme]. Surfaces carry a faint
+  /// blue tint, settings groups sit on surfaceContainer, text uses onSurface
+  /// and onSurfaceVariant.
+  factory _Palette.fromScheme(ColorScheme s) {
+    final light = s.brightness == Brightness.light;
+    return _Palette(
+      brightness: s.brightness,
+      surfaceTint: s.surface,
+      cardBg: s.surfaceContainer,
+      cardHoverBg: s.surfaceContainerHighest,
+      elevatedBg: s.surfaceContainerHigh,
+      hairline: s.outlineVariant,
+      strongHairline: s.outline,
+      textPrimary: s.onSurface,
+      textSecondary: s.onSurfaceVariant,
+      textTertiary: s.outline,
+      accent: s.primary,
+      green: light ? const Color(0xFF1E8E3E) : const Color(0xFF6DD58C),
+      amber: light ? const Color(0xFFE37400) : const Color(0xFFFDD663),
+      red: s.error,
+      background: s.surface,
+      onTextPrimary: s.surface,
+      toastBackground: s.inverseSurface,
+      toastText: s.onInverseSurface,
+      onAccent: s.onPrimary,
+      tonal: s.secondaryContainer,
+      onTonal: s.onSecondaryContainer,
+      material: true,
+    );
+  }
+
+  static final materialLight =
+      _Palette.fromScheme(materialScheme(Brightness.light));
+  static final materialDark =
+      _Palette.fromScheme(materialScheme(Brightness.dark));
 
   static const dark = _Palette(
     brightness: Brightness.dark,
@@ -184,6 +249,13 @@ class _Palette {
   );
 }
 
+/// Android's Material 3 color scheme: tonal roles generated from a Google
+/// blue seed (no dynamic wallpaper color, which needs a plugin).
+ColorScheme materialScheme(Brightness brightness) => ColorScheme.fromSeed(
+      seedColor: const Color(0xFF1A73E8),
+      brightness: brightness,
+    );
+
 /// App theme. Desktop mimics macOS (no ink splashes, always dark); phones
 /// follow [MacPalette]'s brightness, and Android keeps Material ripples.
 ThemeData buildAppTheme({required bool mobile, required bool android}) {
@@ -192,7 +264,9 @@ ThemeData buildAppTheme({required bool mobile, required bool android}) {
       ? ThemeData.light(useMaterial3: true)
       : ThemeData.dark(useMaterial3: true);
   final background = mobile ? MacPalette.background : Colors.transparent;
-  final scheme = light
+  final scheme = mobile && android
+      ? materialScheme(MacPalette.brightness)
+      : light
       ? ColorScheme.light(
           primary: MacPalette.accent,
           secondary: MacPalette.accent,
