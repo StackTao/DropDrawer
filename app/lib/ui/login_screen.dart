@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../state/drawer_controller.dart';
+import 'phone_page.dart';
 import 'theme.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -104,7 +105,7 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     final isMobile = widget.controller.windowService.isMobile;
-    return Scaffold(
+    final screen = Scaffold(
       backgroundColor: isMobile ? MacPalette.background : Colors.transparent,
       body: Container(
         decoration: BoxDecoration(
@@ -132,8 +133,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   Center(
                     child: Image.asset(
                       'assets/dropdrawer-icon.png',
-                      width: 60,
-                      height: 60,
+                      width: isMobile ? 76 : 60,
+                      height: isMobile ? 76 : 60,
                       excludeFromSemantics: true,
                     ),
                   ),
@@ -142,8 +143,8 @@ class _LoginScreenState extends State<LoginScreen> {
                     'DropDrawer',
                     textAlign: TextAlign.center,
                     style: TextStyle(
-                      fontSize: 19,
-                      fontWeight: FontWeight.w600,
+                      fontSize: isMobile ? 25 : 19,
+                      fontWeight: isMobile ? FontWeight.w700 : FontWeight.w600,
                       letterSpacing: -0.3,
                       color: MacPalette.textPrimary,
                     ),
@@ -202,19 +203,22 @@ class _LoginScreenState extends State<LoginScreen> {
                   ],
                   const SizedBox(height: 18),
                   SizedBox(
-                    height: 36,
+                    height: isMobile ? 50 : 36,
                     child: ElevatedButton(
                       onPressed: _loading ? null : _submit,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: MacPalette.textPrimary,
-                        foregroundColor: MacPalette.onTextPrimary,
+                        // Phones use the system accent for the primary action.
+                        backgroundColor:
+                            isMobile ? MacPalette.accent : MacPalette.textPrimary,
+                        foregroundColor:
+                            isMobile ? Colors.white : MacPalette.onTextPrimary,
                         disabledBackgroundColor:
                             MacPalette.fill(0.25),
                         elevation: 0,
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(9),
+                          borderRadius: BorderRadius.circular(isMobile ? 12 : 9),
                         ),
-                        textStyle: const TextStyle(
+                        textStyle: Theme.of(context).textTheme.labelLarge?.copyWith(
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
                         ),
@@ -225,7 +229,9 @@ class _LoginScreenState extends State<LoginScreen> {
                               height: 15,
                               child: CircularProgressIndicator(
                                 strokeWidth: 1.8,
-                                color: MacPalette.onTextPrimary,
+                                color: isMobile
+                                    ? Colors.white
+                                    : MacPalette.onTextPrimary,
                               ),
                             )
                           : Text(_isRegister ? '创建账号并连接' : '继续'),
@@ -249,8 +255,15 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ] else
                     SizedBox(
-                      height: 36,
+                      height: isMobile ? 50 : 36,
                       child: OutlinedButton(
+                        style: isMobile
+                            ? OutlinedButton.styleFrom(
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              )
+                            : null,
                         onPressed: _loading ? null : _signInWithGoogle,
                         child: const Text('使用 Google 登录'),
                       ),
@@ -298,5 +311,8 @@ class _LoginScreenState extends State<LoginScreen> {
       ),
     ),
     );
+    if (!isMobile) return screen;
+    // Phones: touch-sized fields and the phone type ramp.
+    return UiDensity(touch: true, child: PhoneTypeScale(child: screen));
   }
 }

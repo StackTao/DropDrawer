@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../state/drawer_controller.dart';
+import 'phone_page.dart';
 import 'theme.dart';
 
 /// Full-width in-drawer subview for managing native cloud & server storage backends:
@@ -232,10 +233,16 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
   @override
   Widget build(BuildContext context) {
     final c = widget.controller;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
+    return AdaptivePage(
+      title: '云盘与存储',
+      actions: [
+        PageAction(
+          icon: CupertinoIcons.refresh,
+          tooltip: '刷新存储列表',
+          onPressed: () => c.refreshStorageBackends(),
+        ),
+      ],
+      desktopHeader: Padding(
           padding: c.windowService.needsMacTrafficLightPadding
               ? const EdgeInsets.fromLTRB(78, 1, 10, 3)
               : const EdgeInsets.fromLTRB(10, 10, 12, 9),
@@ -267,7 +274,9 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
             ),
           ),
         ),
-        const Divider(height: 0.5, thickness: 0.5),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
           child: MacSegmentedControl<int>(
@@ -295,7 +304,8 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
             child: _tab == 0 ? _buildBackendList() : _buildAddBackendForm(),
           ),
         ),
-      ],
+        ],
+      ),
     );
   }
 

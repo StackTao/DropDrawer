@@ -195,6 +195,24 @@ ThemeData buildAppTheme({required bool mobile, required bool android}) {
       backgroundColor: MacPalette.elevatedBg,
       surfaceTintColor: Colors.transparent,
     ),
+    // Phone navigation bars: iOS tints bar buttons with the system blue (the
+    // dark scheme's primary is white); Android app bars tint when content
+    // scrolls under them.
+    cupertinoOverrideTheme: mobile
+        ? CupertinoThemeData(
+            primaryColor: MacPalette.accent,
+            scaffoldBackgroundColor: MacPalette.background,
+            barBackgroundColor: MacPalette.background,
+          )
+        : null,
+    appBarTheme: mobile
+        ? AppBarTheme(
+            backgroundColor: MacPalette.background,
+            foregroundColor: MacPalette.textPrimary,
+            surfaceTintColor: MacPalette.accent,
+            scrolledUnderElevation: 3,
+          )
+        : null,
   );
 }
 

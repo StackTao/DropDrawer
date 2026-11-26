@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../models/models.dart';
 import '../state/drawer_controller.dart';
+import 'phone_page.dart';
 import 'theme.dart';
 
 class ShareView extends StatefulWidget {
@@ -119,10 +120,21 @@ class _ShareViewState extends State<ShareView> {
     final hasTargets = widget.targetItems.isNotEmpty;
     final isBundle = widget.targetItems.length > 1;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
+    final title = !hasTargets
+        ? '外链分享管理'
+        : (isBundle
+            ? '打包创建外链 (${widget.targetItems.length} 项)'
+            : '创建外链分享');
+    return AdaptivePage(
+      title: hasTargets ? (isBundle ? '打包外链 (${widget.targetItems.length})' : '创建外链') : '外链管理',
+      actions: [
+        PageAction(
+          icon: CupertinoIcons.refresh,
+          tooltip: '刷新外链列表',
+          onPressed: _loadingList ? null : _refreshList,
+        ),
+      ],
+      desktopHeader: Padding(
           padding: c.windowService.needsMacTrafficLightPadding
               ? const EdgeInsets.fromLTRB(78, 1, 10, 3)
               : const EdgeInsets.fromLTRB(10, 10, 12, 9),
@@ -139,11 +151,7 @@ class _ShareViewState extends State<ShareView> {
                 ),
                 const SizedBox(width: 4),
                 Text(
-                  !hasTargets
-                      ? '外链分享管理'
-                      : (isBundle
-                          ? '打包创建外链 (${widget.targetItems.length} 项)'
-                          : '创建外链分享'),
+                  title,
                   style: const TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
@@ -160,9 +168,7 @@ class _ShareViewState extends State<ShareView> {
             ),
           ),
         ),
-        const Divider(height: 0.5, thickness: 0.5),
-        Expanded(
-          child: ListView(
+      body: ListView(
             padding: const EdgeInsets.all(14),
             children: [
               if (hasTargets) ...[
@@ -220,8 +226,6 @@ class _ShareViewState extends State<ShareView> {
                     )),
             ],
           ),
-        ),
-      ],
     );
   }
 

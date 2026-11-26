@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 
 import '../models/models.dart';
 import '../state/drawer_controller.dart';
+import 'phone_page.dart';
 import 'theme.dart';
 
 /// Full-width macOS in-drawer quick preview for text notes, images, and files.
@@ -58,10 +59,30 @@ class ItemPreviewView extends StatelessWidget {
     final hasLocalFile = localPath != null && File(localPath).existsSync();
     final isMine = item.ownerDeviceId == c.deviceId;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
+    final title = item.kind == 'text'
+        ? '文本预览'
+        : (_isImage ? '图片预览' : '文件详情');
+    Future<void> remove() async {
+      try {
+        await c.deleteItem(item.id);
+      } catch (e) {
+        c.setBanner('移出失败：$e');
+      }
+      onBack();
+    }
+
+    return AdaptivePage(
+      title: title,
+      actions: [
+        PageAction(icon: CupertinoIcons.link, tooltip: '创建外链分享', onPressed: onShare),
+        PageAction(
+          icon: CupertinoIcons.trash,
+          tooltip: '移出抽屉',
+          destructive: true,
+          onPressed: remove,
+        ),
+      ],
+      desktopHeader: Padding(
           padding: c.windowService.needsMacTrafficLightPadding
               ? const EdgeInsets.fromLTRB(78, 1, 10, 3)
               : const EdgeInsets.fromLTRB(10, 10, 12, 9),
@@ -79,9 +100,7 @@ class ItemPreviewView extends StatelessWidget {
                 const SizedBox(width: 4),
                 Expanded(
                   child: Text(
-                    item.kind == 'text'
-                        ? '文本预览'
-                        : (_isImage ? '图片预览' : '文件详情'),
+                    title,
                     style: const TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
@@ -101,22 +120,13 @@ class ItemPreviewView extends StatelessWidget {
                   tooltip: '移出抽屉',
                   size: 14,
                   color: MacPalette.red,
-                  onPressed: () async {
-                    try {
-                      await c.deleteItem(item.id);
-                    } catch (e) {
-                      c.setBanner('移出失败：$e');
-                    }
-                    onBack();
-                  },
+                  onPressed: remove,
                 ),
               ],
             ),
           ),
         ),
-        const Divider(height: 0.5, thickness: 0.5),
-        Expanded(
-          child: ListView(
+      body: ListView(
             padding: const EdgeInsets.all(14),
             children: [
               if (item.kind == 'text')
@@ -132,8 +142,6 @@ class ItemPreviewView extends StatelessWidget {
               _buildActionsRow(c, hasLocalFile ? localPath : null, isMine),
             ],
           ),
-        ),
-      ],
     );
   }
 

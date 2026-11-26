@@ -5,6 +5,7 @@ import 'package:dropdrawer_app/models/models.dart';
 import 'package:dropdrawer_app/services/drawer_window_service.dart';
 import 'package:dropdrawer_app/state/drawer_controller.dart';
 import 'package:dropdrawer_app/ui/drawer_screen.dart';
+import 'package:dropdrawer_app/ui/phone_page.dart';
 import 'package:dropdrawer_app/ui/preferences_view.dart';
 import 'package:dropdrawer_app/ui/theme.dart';
 import 'package:flutter/cupertino.dart';
@@ -88,6 +89,7 @@ Future<_TestController> _pumpPhone(
   WidgetTester tester, {
   List<DrawerItem> items = const [],
   double textScale = 1.0,
+  TargetPlatform platform = TargetPlatform.android,
 }) async {
   tester.view.physicalSize = const Size(390 * 3, 844 * 3);
   tester.view.devicePixelRatio = 3;
@@ -98,7 +100,10 @@ Future<_TestController> _pumpPhone(
   ctrl.items.addAll(items);
   await tester.pumpWidget(
     MaterialApp(
-      theme: ThemeData.dark(useMaterial3: true),
+      theme: buildAppTheme(
+        mobile: true,
+        android: platform == TargetPlatform.android,
+      ).copyWith(platform: platform),
       builder: (context, child) => MediaQuery(
         data: MediaQuery.of(context).copyWith(
           textScaler: TextScaler.linear(textScale),
@@ -107,7 +112,9 @@ Future<_TestController> _pumpPhone(
       ),
       home: AnimatedBuilder(
         animation: ctrl,
-        builder: (_, _) => DrawerScreen(controller: ctrl),
+        builder: (_, _) => ctrl.isLoggedIn
+            ? DrawerScreen(controller: ctrl)
+            : const Text('signed out'),
       ),
     ),
   );
@@ -120,12 +127,18 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('phone layout', () {
-    for (final scale in [1.0, 1.3]) {
-      testWidgets('lays out without overflow at text scale $scale', (tester) async {
+    for (final (platform, scale) in [
+      (TargetPlatform.android, 1.0),
+      (TargetPlatform.android, 1.3),
+      (TargetPlatform.iOS, 1.0),
+      (TargetPlatform.iOS, 1.3),
+    ]) {
+      testWidgets('lays out without overflow on ${platform.name} at text scale $scale', (tester) async {
         final thumb = await tester.runAsync(_pngBase64);
         final ctrl = await _pumpPhone(
           tester,
           textScale: scale,
+          platform: platform,
           items: [
             _item('img', name: 'Design preview.png', thumbnail: thumb, cloud: true),
             _item('note', kind: 'text', name: 'Meeting notes',
@@ -405,11 +418,14 @@ void main() {
 
   testWidgets('Android back leaves settings and selection before the app', (tester) async {
     await _pumpPhone(tester, items: [_item('a', cloud: true)]);
-    await tester.tap(find.byIcon(CupertinoIcons.ellipsis));
+    await tester.tap(find.byTooltip('更多'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('偏好设置'));
     await tester.pumpAndSettle();
     expect(find.text('新文件传输策略'), findsOneWidget);
+    // A Material 3 top app bar with a back button.
+    expect(find.widgetWithText(AppBar, '偏好设置'), findsOneWidget);
+    expect(find.byType(BackButton), findsOneWidget);
 
     await tester.binding.handlePopRoute();
     await tester.pumpAndSettle();
@@ -422,6 +438,76 @@ void main() {
     await tester.binding.handlePopRoute();
     await tester.pump();
     expect(find.text('已选 1 项'), findsNothing);
+  });
+
+  group('phone navigation', () {
+    testWidgets('iOS uses a large title and pushes pages with a back button', (tester) async {
+      await _pumpPhone(
+        tester,
+        items: [_item('a', cloud: true)],
+        platform: TargetPlatform.iOS,
+      );
+      expect(find.byType(CupertinoSliverNavigationBar), findsOneWidget);
+      expect(find.textContaining('正在连接'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('更多'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('偏好设置'));
+      await tester.pumpAndSettle();
+      expect(find.byType(CupertinoNavigationBar), findsOneWidget);
+      expect(find.text('新文件传输策略'), findsOneWidget);
+      // The back button is titled after the previous page.
+      expect(find.widgetWithText(CupertinoNavigationBarBackButton, '抽屉'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(find.byType(CupertinoNavigationBarBackButton));
+      await tester.pumpAndSettle();
+      expect(find.text('新文件传输策略'), findsNothing);
+      expect(find.byType(CupertinoSliverNavigationBar), findsOneWidget);
+    });
+
+    testWidgets('opening an item pushes its preview, which closes once removed', (tester) async {
+      final ctrl = await _pumpPhone(
+        tester,
+        items: [_item('a', cloud: true)],
+        platform: TargetPlatform.iOS,
+      );
+      await tester.tap(find.text(_item('a').name));
+      await tester.pumpAndSettle();
+      expect(find.text('文件详情'), findsOneWidget);
+
+      ctrl.items.clear();
+      ctrl.notifyListeners();
+      await tester.pumpAndSettle();
+      expect(find.text('文件详情'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('signing out closes pushed pages', (tester) async {
+      final ctrl = await _pumpPhone(tester, items: [_item('a', cloud: true)]);
+      ctrl.wsConnected = true;
+      ctrl.notifyListeners();
+      await tester.pump();
+      await tester.tap(find.textContaining('台设备在线'));
+      await tester.pumpAndSettle();
+      expect(find.text('设备与 P2P'), findsOneWidget);
+
+      ctrl.user = null;
+      ctrl.notifyListeners();
+      await tester.pumpAndSettle();
+      expect(find.text('设备与 P2P'), findsNothing);
+      expect(find.text('signed out'), findsOneWidget);
+    });
+
+    test('phone type ramp maps desktop sizes onto the system scale', () {
+      const ios = PhoneTypeScaler(TextScaler.noScaling, material: false);
+      expect(ios.scale(10.5), 13);
+      expect(ios.scale(12), 16);
+      expect(ios.scale(13), 17);
+      const android = PhoneTypeScaler(TextScaler.linear(2), material: true);
+      expect(android.scale(10.5), 24);
+      expect(android.scale(12), 30);
+    });
   });
 
   for (final platform in [TargetPlatform.android, TargetPlatform.iOS]) {

@@ -50,6 +50,8 @@
     - 使用 `./scripts/build_macos_release.sh`（已处理 `ARCHS=arm64`、`super_native_extensions` 预编译 `CARGO_PROFILE_RELEASE_LTO=false CARGO_PROFILE_RELEASE_PANIC=unwind` 与 Apple Development 证书签名，避免 TCC 辅助功能权限重建后失效）。
     - 若更改过项目目录路径，需先清理 `app/build/macos` 避免 Xcode stale file 报错。
 
+21. **手机端二级页面是路由，不是原地切换**：手机上偏好设置、设备、外链、预览、云盘由 `DrawerScreen._pushPhonePage` 推入（iOS `CupertinoPageRoute` 支持边缘右滑返回，Android `MaterialPageRoute`），页面用 `AdaptivePage`（`app/lib/ui/phone_page.dart`）：桌面保留原紧凑标题行，手机换成 iOS 导航栏 / Material 3 顶栏，正文套 `PhoneTypeScaler` 把桌面字号映射到系统字号阶梯。桌面端仍是 `_page` 原地切换。iOS/Android 外观按 `Theme.of(context).platform` 区分（`usesMaterialChrome`）。
+
 ---
 
 ## 3. 验证与测试要求

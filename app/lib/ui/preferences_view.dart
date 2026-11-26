@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../state/drawer_controller.dart';
+import 'phone_page.dart';
 import 'theme.dart';
 import 'update_settings.dart';
 
@@ -117,10 +118,9 @@ class _PreferencesViewState extends State<PreferencesView> {
     final isWindows = c.windowService.isWindows;
     final thresholdMb = c.autoCloudThresholdBytes ~/ (1024 * 1024);
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
+    return AdaptivePage(
+      title: '偏好设置',
+      desktopHeader: Padding(
           padding: c.windowService.needsMacTrafficLightPadding
               ? const EdgeInsets.fromLTRB(78, 1, 10, 3)
               : const EdgeInsets.fromLTRB(10, 10, 12, 9),
@@ -144,9 +144,7 @@ class _PreferencesViewState extends State<PreferencesView> {
             ),
           ),
         ),
-        const Divider(height: 0.5, thickness: 0.5),
-        Expanded(
-          child: ListView(
+      body: ListView(
             padding: const EdgeInsets.all(14),
             children: [
               const _SectionLabel('传输与自动清理'),
@@ -725,8 +723,6 @@ class _PreferencesViewState extends State<PreferencesView> {
               ),
             ],
           ),
-        ),
-      ],
     );
   }
 
