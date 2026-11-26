@@ -3443,7 +3443,7 @@ Widget _transferSection(
         ClipRRect(
           borderRadius: BorderRadius.circular(2),
           child: LinearProgressIndicator(
-            value: progress.fraction > 0 ? progress.fraction : null,
+            value: progress.indicatorValue,
             minHeight: 2.5,
             backgroundColor: MacPalette.fill(0.1),
             valueColor: AlwaysStoppedAnimation<Color>(
@@ -3458,7 +3458,7 @@ Widget _transferSection(
             Text(
               switch (progress.channel) {
                 'preparing' => '正在准备下载',
-                'upload' => '正在上传到云盘',
+                'upload' => progress.uploadLabel,
                 'p2p_connecting' => '正在建立 P2P 连接',
                 'p2p_replica' => 'P2P 局域网副本',
                 'p2p_direct' => 'P2P 端到端直连',
@@ -3473,14 +3473,14 @@ Widget _transferSection(
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(
-                  '${(progress.fraction * 100).toStringAsFixed(0)}%'
-                  '${progress.speedBps > 0 ? ' · ${formatBytes(progress.speedBps)}/s' : ''}',
-                  style: TextStyle(
-                    fontSize: isMobile ? 12 : 10,
-                    color: MacPalette.textSecondary,
+                if (progress.progressText case final text?)
+                  Text(
+                    text,
+                    style: TextStyle(
+                      fontSize: isMobile ? 12 : 10,
+                      color: MacPalette.textSecondary,
+                    ),
                   ),
-                ),
                 const SizedBox(width: 6),
                 CupertinoButton(
                   padding: const EdgeInsets.symmetric(horizontal: 4),

@@ -243,6 +243,7 @@ class ApiClient {
     required File file,
     String? storageBackendId,
     void Function(int sent, int total)? onProgress,
+    void Function()? onAwaitingConfirmation,
     TransferCancelToken? cancelToken,
   }) async {
     final planResp = await http.post(
@@ -268,6 +269,7 @@ class ApiClient {
         extraHeaders,
         total,
         onProgress,
+        onAwaitingConfirmation,
         cancelToken,
       );
 
@@ -295,6 +297,7 @@ class ApiClient {
         },
         total,
         onProgress,
+        onAwaitingConfirmation,
         cancelToken,
       );
       return DrawerItem.fromJson(jsonDecode(bodyStr) as Map<String, dynamic>);
@@ -318,6 +321,7 @@ class ApiClient {
     Map<String, String> headers,
     int total,
     void Function(int sent, int total)? onProgress,
+    void Function()? onAwaitingConfirmation,
     TransferCancelToken? cancelToken,
   ) async {
     final client = _createHttpClient();
@@ -331,14 +335,19 @@ class ApiClient {
       req.contentLength = total;
 
       var sent = 0;
-      await for (final chunk in file.openRead()) {
+      await req.addStream(file.openRead().map((chunk) {
         if (cancelToken?.isCancelled ?? false) {
           throw TransferCancelledException();
         }
-        req.add(chunk);
         sent += chunk.length;
-        onProgress?.call(sent, total);
+        if (sent < total) onProgress?.call(sent, total);
+        return chunk;
+      }));
+      await req.flush();
+      if (cancelToken?.isCancelled ?? false) {
+        throw TransferCancelledException();
       }
+      onAwaitingConfirmation?.call();
       final resp = await req.close();
       final body = await resp.transform(utf8.decoder).join();
       if (resp.statusCode < 200 || resp.statusCode >= 300) {

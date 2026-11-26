@@ -495,12 +495,12 @@ struct HomeItemRow: View {
 
                 if let progress = store.activeTransfers[item.id], !progress.finished {
                     VStack(alignment: .leading, spacing: 3) {
-                        ProgressView(value: progress.fraction > 0 ? progress.fraction : nil)
+                        ProgressView(value: progress.indicatorValue)
                             .tint(.accentColor)
                         HStack {
                             Text(progress.channelLabel)
                             Spacer()
-                            if progress.total > 0 {
+                            if progress.total > 0 && !progress.awaitingUploadConfirmation {
                                 Text("\(Int(progress.fraction * 100))%")
                             }
                         }

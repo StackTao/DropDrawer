@@ -754,7 +754,7 @@ public final class DropDrawerStore {
     }
 
     public func cacheItemToCloud(itemId: String, fileURL: URL) async {
-        guard let api else { return }
+        guard let api, activeCancelTokens[itemId] == nil else { return }
         let cancelToken = TransferCancelToken()
         activeCancelTokens[itemId] = cancelToken
         activeTransfers[itemId] = TransferProgress(
@@ -771,13 +771,32 @@ public final class DropDrawerStore {
                 fileURL: fileURL,
                 onProgress: { [weak self] sent, total in
                     Task { @MainActor in
-                        self?.activeTransfers[itemId] = TransferProgress(
+                        guard let self, self.activeCancelTokens[itemId] === cancelToken,
+                              !cancelToken.isCancelled, let current = self.activeTransfers[itemId],
+                              !current.awaitingUploadConfirmation, sent >= current.transferred else { return }
+                        self.activeTransfers[itemId] = TransferProgress(
                             itemId: itemId,
                             transferred: sent,
                             total: total,
                             speedBps: 0,
                             channel: "upload",
                             finished: false
+                        )
+                    }
+                },
+                onAwaitingConfirmation: { [weak self] total in
+                    Task { @MainActor in
+                        guard let self, self.activeCancelTokens[itemId] === cancelToken,
+                              !cancelToken.isCancelled, let current = self.activeTransfers[itemId],
+                              !current.awaitingUploadConfirmation else { return }
+                        self.activeTransfers[itemId] = TransferProgress(
+                            itemId: itemId,
+                            transferred: total,
+                            total: total,
+                            speedBps: 0,
+                            channel: "upload",
+                            finished: false,
+                            awaitingUploadConfirmation: true
                         )
                     }
                 },
@@ -899,7 +918,8 @@ public final class DropDrawerStore {
                 total: cur.total,
                 speedBps: 0,
                 channel: "cancelling",
-                finished: false
+                finished: false,
+                awaitingUploadConfirmation: cur.awaitingUploadConfirmation
             )
         }
         // Keep p2pDownloadIds[itemId] until native reports terminal event (`AGENTS.md` #6).

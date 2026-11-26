@@ -368,6 +368,7 @@ public final class APIClient: @unchecked Sendable {
         fileURL: URL,
         storageBackendId: String? = nil,
         onProgress: (@Sendable (Int64, Int64) -> Void)? = nil,
+        onAwaitingConfirmation: (@Sendable (Int64) -> Void)? = nil,
         cancelToken: TransferCancelToken? = nil
     ) async throws -> DrawerItem {
         if cancelToken?.isCancelled == true { throw TransferCancelledError() }
@@ -387,6 +388,15 @@ public final class APIClient: @unchecked Sendable {
         let attrs = try FileManager.default.attributesOfItem(atPath: fileURL.path)
         let total = (attrs[.size] as? NSNumber)?.int64Value ?? 0
 
+        let reportSent: @Sendable (Int64, Int64) -> Void = { sent, _ in
+            if sent >= total {
+                onAwaitingConfirmation?(total)
+            } else {
+                onProgress?(sent, total)
+            }
+        }
+        if total == 0 { onAwaitingConfirmation?(total) }
+
         if strategy == "direct_presigned_put" {
             guard let putURL = URL(string: urlStr) else { throw APIError.invalidURL(urlStr) }
             var req = URLRequest(url: putURL)
@@ -399,9 +409,10 @@ public final class APIClient: @unchecked Sendable {
             _ = try await streamUpload(
                 request: req,
                 fileURL: fileURL,
-                onProgress: onProgress,
+                onProgress: reportSent,
                 cancelToken: cancelToken
             )
+            onAwaitingConfirmation?(total)
             let confirmReq = try makeRequest(
                 "/api/drawer/items/\(itemId)/confirm-upload",
                 method: "POST",
@@ -419,7 +430,7 @@ public final class APIClient: @unchecked Sendable {
             let body = try await streamUpload(
                 request: req,
                 fileURL: fileURL,
-                onProgress: onProgress,
+                onProgress: reportSent,
                 cancelToken: cancelToken
             )
             return try JSONDecoder().decode(DrawerItem.self, from: body)

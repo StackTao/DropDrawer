@@ -160,11 +160,11 @@ struct ItemDetailView: View {
     private func transferSection(_ progress: TransferProgress) -> some View {
         Section("传输进度") {
             VStack(alignment: .leading, spacing: 8) {
-                ProgressView(value: progress.fraction > 0 ? progress.fraction : nil)
+                ProgressView(value: progress.indicatorValue)
                 HStack {
                     Text(progress.channelLabel)
                     Spacer()
-                    if progress.total > 0 {
+                    if progress.total > 0 && !progress.awaitingUploadConfirmation {
                         Text("\(formatBytes(progress.transferred)) / \(formatBytes(progress.total))")
                     }
                 }

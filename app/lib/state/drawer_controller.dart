@@ -966,6 +966,18 @@ class DropDrawerController extends ChangeNotifier {
           );
           _tickTransfers();
         },
+        onAwaitingConfirmation: () {
+          activeTransfers[itemId] = TransferProgress(
+            itemId: itemId,
+            transferred: total,
+            total: total,
+            speedBps: 0,
+            channel: 'upload',
+            finished: false,
+            awaitingUploadConfirmation: true,
+          );
+          _tickTransfers();
+        },
       );
       activeTransfers[itemId] = TransferProgress(
         itemId: itemId,

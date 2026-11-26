@@ -283,6 +283,7 @@ class TransferProgress {
   final int speedBps;
   final String channel; // 'p2p_connecting' | 'p2p_direct' | 'p2p_relay' | 'cloud' | 'upload'
   final bool finished;
+  final bool awaitingUploadConfirmation;
   final String? savedPath;
   final String? sendingTo;
   final String? error;
@@ -294,12 +295,28 @@ class TransferProgress {
     required this.speedBps,
     required this.channel,
     required this.finished,
+    this.awaitingUploadConfirmation = false,
     this.savedPath,
     this.sendingTo,
     this.error,
   });
 
   double get fraction => total > 0 ? (transferred / total).clamp(0.0, 1.0) : 0.0;
+
+  double? get indicatorValue =>
+      awaitingUploadConfirmation || fraction == 0 ? null : fraction;
+
+  String get uploadLabel =>
+      awaitingUploadConfirmation ? '等待存储确认…' : '正在发送文件';
+
+  String? get progressText {
+    if (awaitingUploadConfirmation) return null;
+    final percent = channel == 'upload' && !finished
+        ? (fraction * 100).floor()
+        : (fraction * 100).round();
+    return '$percent%'
+        '${speedBps > 0 ? ' · ${formatBytes(speedBps)}/s' : ''}';
+  }
 }
 
 String formatBytes(int bytes) {

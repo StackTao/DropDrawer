@@ -401,6 +401,7 @@ public struct TransferProgress: Sendable, Equatable {
     public let speedBps: Int64
     public let channel: String
     public let finished: Bool
+    public let awaitingUploadConfirmation: Bool
     public let savedPath: String?
     public let sendingTo: String?
     public let error: String?
@@ -412,6 +413,7 @@ public struct TransferProgress: Sendable, Equatable {
         speedBps: Int64,
         channel: String,
         finished: Bool,
+        awaitingUploadConfirmation: Bool = false,
         savedPath: String? = nil,
         sendingTo: String? = nil,
         error: String? = nil
@@ -422,6 +424,7 @@ public struct TransferProgress: Sendable, Equatable {
         self.speedBps = speedBps
         self.channel = channel
         self.finished = finished
+        self.awaitingUploadConfirmation = awaitingUploadConfirmation
         self.savedPath = savedPath
         self.sendingTo = sendingTo
         self.error = error
@@ -432,6 +435,10 @@ public struct TransferProgress: Sendable, Equatable {
         return min(max(Double(transferred) / Double(total), 0), 1)
     }
 
+    public var indicatorValue: Double? {
+        awaitingUploadConfirmation || fraction == 0 ? nil : fraction
+    }
+
     public var channelLabel: String {
         switch channel {
         case "preparing": "准备中"
@@ -440,7 +447,7 @@ public struct TransferProgress: Sendable, Equatable {
         case "p2p_direct": "P2P 直连"
         case "p2p_relay": "P2P 加密中继"
         case "cloud": "云端下载"
-        case "upload": "上传云盘"
+        case "upload": awaitingUploadConfirmation ? "等待存储确认…" : "正在发送文件"
         case "cancelling": "正在取消…"
         default: channel
         }

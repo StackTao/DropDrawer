@@ -321,6 +321,34 @@ void main() {
     expect(drawerBuilds, buildsBefore);
   });
 
+  testWidgets('upload row waits for storage confirmation without showing 100%', (tester) async {
+    final ctrl = await _pumpPhone(tester, items: [_item('upload')]);
+    TransferProgress progress({required bool awaiting}) => TransferProgress(
+      itemId: 'upload',
+      transferred: awaiting ? 10000 : 9999,
+      total: 10000,
+      speedBps: awaiting ? 0 : 1024,
+      channel: 'upload',
+      finished: false,
+      awaitingUploadConfirmation: awaiting,
+    );
+
+    ctrl.activeTransfers['upload'] = progress(awaiting: false);
+    ctrl.transferTicks.value++;
+    await tester.pump();
+    expect(find.text('正在发送文件'), findsOneWidget);
+    expect(find.text('99% · 1.0 KB/s'), findsOneWidget);
+
+    ctrl.activeTransfers['upload'] = progress(awaiting: true);
+    ctrl.transferTicks.value++;
+    await tester.pump();
+    expect(find.text('等待存储确认…'), findsOneWidget);
+    expect(find.text('100%'), findsNothing);
+    expect(find.textContaining('KB/s'), findsNothing);
+    expect(find.text('取消上传'), findsOneWidget);
+    expect(tester.widget<LinearProgressIndicator>(find.byType(LinearProgressIndicator)).value, isNull);
+  });
+
   testWidgets('desktop edge drawer lays out without overflow', (tester) async {
     tester.view.physicalSize = const Size(410, 645);
     tester.view.devicePixelRatio = 1;

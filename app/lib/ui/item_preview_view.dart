@@ -307,7 +307,7 @@ class ItemPreviewView extends StatelessWidget {
                 ClipRRect(
                   borderRadius: BorderRadius.circular(2),
                   child: LinearProgressIndicator(
-                    value: progress.fraction > 0 ? progress.fraction : null,
+                    value: progress.indicatorValue,
                     minHeight: 4,
                     backgroundColor: MacPalette.fill(0.1),
                     color: MacPalette.accent,
@@ -320,14 +320,14 @@ class ItemPreviewView extends StatelessWidget {
                       child: Text(
                         '${switch (progress.channel) {
                           'preparing' => '正在准备下载',
-                          'upload' => '正在上传到云盘',
+                          'upload' => progress.uploadLabel,
                           'p2p_connecting' => '正在建立 P2P 连接',
                           'p2p_replica' => 'P2P 局域网副本',
                           'p2p_direct' => 'P2P 端到端直连',
                           'p2p_relay' => 'P2P 加密中继',
                           _ => '云端下载',
-                        }} · ${(progress.fraction * 100).toStringAsFixed(0)}%'
-                        '${progress.speedBps > 0 ? ' · ${formatBytes(progress.speedBps)}/s' : ''}',
+                        }}'
+                        '${progress.progressText != null ? ' · ${progress.progressText}' : ''}',
                         style: TextStyle(fontSize: 13, color: MacPalette.textSecondary),
                       ),
                     ),
@@ -598,7 +598,7 @@ class ItemPreviewView extends StatelessWidget {
             ClipRRect(
               borderRadius: BorderRadius.circular(2),
               child: LinearProgressIndicator(
-                value: progress.fraction > 0 ? progress.fraction : null,
+                value: progress.indicatorValue,
                 minHeight: 3,
                 backgroundColor: MacPalette.fill(0.1),
                 valueColor: AlwaysStoppedAnimation<Color>(
@@ -613,7 +613,7 @@ class ItemPreviewView extends StatelessWidget {
                 Text(
                   switch (progress.channel) {
                     'preparing' => '正在准备下载',
-                    'upload' => '正在上传到云盘',
+                    'upload' => progress.uploadLabel,
                     'p2p_connecting' => '正在建立 P2P 连接',
                     'p2p_replica' => 'P2P 局域网副本',
                     'p2p_direct' => 'P2P 端到端直连',
@@ -628,14 +628,14 @@ class ItemPreviewView extends StatelessWidget {
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      '${(progress.fraction * 100).toStringAsFixed(0)}%'
-                      '${progress.speedBps > 0 ? ' · ${formatBytes(progress.speedBps)}/s' : ''}',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: MacPalette.textPrimary,
+                    if (progress.progressText case final text?)
+                      Text(
+                        text,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: MacPalette.textPrimary,
+                        ),
                       ),
-                    ),
                     const SizedBox(width: 8),
                     CupertinoButton(
                       padding: const EdgeInsets.symmetric(horizontal: 4),
