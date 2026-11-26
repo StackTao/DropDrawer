@@ -30,6 +30,26 @@ jobs:
       - name: Run Rust workspace tests
         run: cargo test --workspace --locked
 
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Build server image
+        run: docker build -f deploy/Dockerfile -t dropdrawer-ci .
+
+      - name: Check server image startup
+        run: |
+          docker run --detach --name dropdrawer-ci -p 127.0.0.1:18088:8080 dropdrawer-ci
+          trap 'docker rm -f dropdrawer-ci >/dev/null' EXIT
+          if ! curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-max-time 30 http://127.0.0.1:18088/health; then
+            docker logs dropdrawer-ci
+            exit 1
+          fi
+
   flutter:
     runs-on: ubuntu-latest
     timeout-minutes: 20
