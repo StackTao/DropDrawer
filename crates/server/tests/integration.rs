@@ -1597,7 +1597,7 @@ async fn public_share_misses_are_limited_across_endpoints() {
         let uri = if attempt % 2 == 0 {
             format!("/api/s/{attempt:012}/meta")
         } else {
-            format!("/s/{attempt:08}")
+            format!("/api/s/{attempt:08}/download")
         };
         let (status, _) = send_raw(&app_at_peer, "GET", &uri, None, None).await;
         assert_eq!(status, StatusCode::NOT_FOUND);

@@ -1890,13 +1890,14 @@ fn lookup_public_share(
     Err((StatusCode::NOT_FOUND, "分享链接不存在或已被撤销".to_string()))
 }
 
-async fn public_share_page(
-    State(state): State<Arc<AppState>>,
-    ClientIp(ip): ClientIp,
-    Path(code): Path<String>,
-) -> Result<Html<String>, (StatusCode, String)> {
-    let share = lookup_public_share(&state, &ip, &code)?;
-    Ok(Html(PUBLIC_SHARE_HTML.replace("__SHARE_CODE__", &share.code)))
+async fn public_share_page(Path(code): Path<String>) -> Html<String> {
+    // The landing page is static. The metadata and download routes look up
+    // the code and enforce the shared miss limit.
+    let safe_code: String = code
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect();
+    Html(PUBLIC_SHARE_HTML.replace("__SHARE_CODE__", &safe_code))
 }
 
 fn generate_short_code() -> String {
