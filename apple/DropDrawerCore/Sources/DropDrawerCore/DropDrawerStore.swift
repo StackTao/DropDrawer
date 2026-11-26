@@ -31,6 +31,7 @@ public final class DropDrawerStore {
     public var dropPolicy: DropPolicy
     public var autoCloudThresholdMb: Int
     public var defaultTtlHours: Int
+    public var customDownloadDir: String?
 
     public var toastMessage: String?
     public var authLoading: Bool = false
@@ -70,6 +71,7 @@ public final class DropDrawerStore {
         self.dropPolicy = storage.dropPolicy
         self.autoCloudThresholdMb = storage.autoCloudThresholdMb
         self.defaultTtlHours = storage.defaultTtlHours
+        self.customDownloadDir = storage.customDownloadDir
         self.localFilePaths = storage.localFilePaths
     }
 
@@ -257,6 +259,12 @@ public final class DropDrawerStore {
         storage.defaultTtlHours = hours
     }
 
+    public func setCustomDownloadDir(_ path: String?) {
+        let cleaned = path?.trimmingCharacters(in: .whitespacesAndNewlines)
+        customDownloadDir = (cleaned?.isEmpty == false) ? cleaned : nil
+        storage.customDownloadDir = customDownloadDir
+    }
+
     // MARK: - Refresh & Device Registration
 
     private func currentDeviceNameAndPlatform() -> (String, String) {
@@ -327,9 +335,19 @@ public final class DropDrawerStore {
     }
 
     public func downloadsDirectory() -> URL {
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        if let custom = customDownloadDir, !custom.isEmpty {
+            let dir = URL(fileURLWithPath: custom, isDirectory: true)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            return dir
+        }
+        #if os(macOS)
+        let base = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads", isDirectory: true)
+        #else
+        let base = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
-        let dir = docs.appendingPathComponent("DropDrawer", isDirectory: true)
+        #endif
+        let dir = base.appendingPathComponent("DropDrawer", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
@@ -679,8 +697,14 @@ public final class DropDrawerStore {
         }
     }
 
-    public func addFiles(_ urls: [URL]) async {
+    public func addFiles(_ urls: [URL], copyToManaged: Bool? = nil) async {
         guard let api, let deviceId else { return }
+        #if os(macOS)
+        let shouldCopyByDefault = false
+        #else
+        let shouldCopyByDefault = true
+        #endif
+        let mustCopy = copyToManaged ?? shouldCopyByDefault
         for sourceURL in urls {
             let scoped = sourceURL.startAccessingSecurityScopedResource()
             defer { if scoped { sourceURL.stopAccessingSecurityScopedResource() } }
@@ -693,7 +717,12 @@ public final class DropDrawerStore {
             defer { pendingDrops.removeAll { $0.id == pending.id } }
 
             do {
-                let localCopy = try copyIntoManagedDocuments(sourceURL: sourceURL, preferredName: name)
+                let localCopy: URL
+                if mustCopy {
+                    localCopy = try copyIntoManagedDocuments(sourceURL: sourceURL, preferredName: name)
+                } else {
+                    localCopy = sourceURL.standardizedFileURL
+                }
                 let attrs = try FileManager.default.attributesOfItem(atPath: localCopy.path)
                 let size = (attrs[.size] as? NSNumber)?.int64Value ?? 0
                 let mime = UTType(filenameExtension: localCopy.pathExtension)?.preferredMIMEType
@@ -900,6 +929,11 @@ public final class DropDrawerStore {
         }
         // Keep p2pDownloadIds[itemId] until native reports terminal event (`AGENTS.md` #6).
         activeCancelTokens[itemId]?.cancel()
+    }
+
+    public func cancelOutgoingTransfer(transferId: String) {
+        cancellingSends.insert(transferId)
+        _ = try? p2p.cancelTransfer(transferId: transferId)
     }
 
     public func downloadAllPending() async {

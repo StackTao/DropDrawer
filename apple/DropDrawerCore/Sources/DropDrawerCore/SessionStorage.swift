@@ -17,6 +17,7 @@ public final class SessionStorage: @unchecked Sendable {
         static let dropPolicy = "dd.drop_policy"
         static let autoCloudThresholdMb = "dd.auto_cloud_threshold_mb"
         static let defaultTtlHours = "dd.default_ttl_hours"
+        static let customDownloadDir = "dd.custom_download_dir"
         static let localFilePaths = "dd.local_file_paths"
         static let tokenAccount = "auth_jwt_token"
         static let unsignedSimTokenFallback = "dd.unsigned_sim_token"
@@ -88,6 +89,20 @@ public final class SessionStorage: @unchecked Sendable {
         set { defaults.set(newValue, forKey: Keys.defaultTtlHours) }
     }
 
+    public var customDownloadDir: String? {
+        get {
+            let v = defaults.string(forKey: Keys.customDownloadDir)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (v?.isEmpty == false) ? v : nil
+        }
+        set {
+            if let newValue, !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                defaults.set(newValue, forKey: Keys.customDownloadDir)
+            } else {
+                defaults.removeObject(forKey: Keys.customDownloadDir)
+            }
+        }
+    }
+
     public var localFilePaths: [String: String] {
         get { defaults.dictionary(forKey: Keys.localFilePaths) as? [String: String] ?? [:] }
         set { defaults.set(newValue, forKey: Keys.localFilePaths) }
@@ -125,8 +140,8 @@ public final class SessionStorage: @unchecked Sendable {
         let status = SecItemAdd(attrs as CFDictionary, nil)
         if status == errSecSuccess {
             defaults.removeObject(forKey: Keys.unsignedSimTokenFallback)
-        } else if status == errSecMissingEntitlement {
-            // Unsigned iOS Simulator builds lack keychain entitlements (-34018).
+        } else if status == errSecMissingEntitlement || status == errSecAuthFailed || status == errSecInteractionNotAllowed {
+            // Unsigned simulator / local dev builds may lack keychain entitlements.
             defaults.set(value, forKey: Keys.unsignedSimTokenFallback)
         }
     }
@@ -144,7 +159,10 @@ public final class SessionStorage: @unchecked Sendable {
         if status == errSecSuccess, let data = item as? Data {
             return String(data: data, encoding: .utf8)
         }
-        if status == errSecMissingEntitlement || status == errSecItemNotFound {
+        if status == errSecMissingEntitlement
+            || status == errSecItemNotFound
+            || status == errSecAuthFailed
+            || status == errSecInteractionNotAllowed {
             return defaults.string(forKey: Keys.unsignedSimTokenFallback)
         }
         return nil
