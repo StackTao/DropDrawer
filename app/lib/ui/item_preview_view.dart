@@ -71,6 +71,25 @@ class ItemPreviewView extends StatelessWidget {
       onBack();
     }
 
+    final actions = [
+      PageAction(icon: CupertinoIcons.link, tooltip: '创建外链分享', onPressed: onShare),
+      PageAction(
+        icon: CupertinoIcons.trash,
+        tooltip: '移出抽屉',
+        destructive: true,
+        onPressed: remove,
+      ),
+    ];
+    if (UiDensity.isTouch(context)) {
+      return PhonePage(
+        title: title,
+        actions: actions,
+        body: NativeTypeScale(
+          child: _buildPhoneBody(context, c, hasLocalFile ? localPath : null, isMine),
+        ),
+      );
+    }
+
     return AdaptivePage(
       title: title,
       actions: [
@@ -142,6 +161,235 @@ class ItemPreviewView extends StatelessWidget {
               _buildActionsRow(c, hasLocalFile ? localPath : null, isMine),
             ],
           ),
+    );
+  }
+
+  List<(String, String)> _infoRows(String? localPath) => [
+        if (item.kind == 'file') ('文件名', item.name),
+        ('大小', formatBytes(item.size)),
+        if (item.ownerDeviceName != null)
+          (
+            '来源设备',
+            item.ownerDeviceName!.replaceAll(RegExp(r'\.local$', caseSensitive: false), ''),
+          ),
+        ('添加时间', _formatDateTime(item.createdAt)),
+        (
+          '传输方式',
+          controller.canDownloadP2p(item) && item.cloudReady
+              ? 'P2P 直连 + ${item.storageBackendName ?? '云端缓存'}'
+              : (controller.canDownloadP2p(item)
+                  ? '仅 P2P 直连'
+                  : (item.cloudReady
+                      ? (item.storageBackendName ?? '已存云盘')
+                      : '来源离线')),
+        ),
+        ('到期清理', item.expiresAt != null ? _formatDateTime(item.expiresAt!) : '永不过期'),
+        if (localPath != null) ('本机位置', localPath),
+      ];
+
+  /// Phones: the content up top (text, image, or a large file icon and name
+  /// like the Files info view), then actions, transfer progress and details
+  /// as settings groups.
+  Widget _buildPhoneBody(
+    BuildContext context,
+    DropDrawerController c,
+    String? localPath,
+    bool isMine,
+  ) {
+    final material = usesMaterialChrome(context);
+    final Widget hero;
+    if (item.kind == 'text') {
+      hero = PhoneSection(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: SelectableText(
+              item.textContent ?? item.name,
+              style: TextStyle(
+                fontSize: material ? 16 : 17,
+                height: 1.45,
+                color: MacPalette.textPrimary,
+              ),
+            ),
+          ),
+        ],
+      );
+    } else if (_isImage) {
+      hero = Padding(
+        padding: const EdgeInsets.only(bottom: 24),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(material ? 18 : 12),
+          child: ColoredBox(
+            color: MacPalette.cardBg,
+            child: SizedBox(height: 320, child: _imagePreview(localPath)),
+          ),
+        ),
+      );
+    } else {
+      hero = Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+        child: Column(
+          children: [
+            Container(
+              width: 76,
+              height: 76,
+              decoration: BoxDecoration(
+                color: MacPalette.cardBg,
+                borderRadius: BorderRadius.circular(18),
+              ),
+              child: Icon(
+                material ? Icons.insert_drive_file : CupertinoIcons.doc_fill,
+                size: 38,
+                color: MacPalette.accent,
+              ),
+            ),
+            const SizedBox(height: 14),
+            SelectableText(
+              item.name,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w600,
+                color: MacPalette.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              formatBytes(item.size),
+              style: TextStyle(fontSize: 15, color: MacPalette.textSecondary),
+            ),
+          ],
+        ),
+      );
+    }
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+      children: [
+        hero,
+        _buildPhoneActions(c, localPath, isMine),
+        const SizedBox(height: 24),
+        ListenableBuilder(
+          listenable: c.transferTicks,
+          builder: (context, _) => _buildPhoneTransfer(c),
+        ),
+        PhoneSection(
+          header: '信息',
+          children: [
+            for (final (label, value) in _infoRows(localPath))
+              value.length > 22
+                  ? PhoneRow(title: label, subtitle: value, selectable: true)
+                  : PhoneRow(title: label, value: value),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPhoneTransfer(DropDrawerController c) {
+    final progress = c.activeTransfers[item.id];
+    final isTransferring = progress != null && !progress.finished;
+    final outgoing = c.outgoingTransfers.entries
+        .where((e) => e.value.itemId == item.id)
+        .toList();
+    if (!isTransferring && outgoing.isEmpty) return const SizedBox.shrink();
+    return PhoneSection(
+      header: '传输',
+      children: [
+        if (isTransferring)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(2),
+                  child: LinearProgressIndicator(
+                    value: progress.fraction > 0 ? progress.fraction : null,
+                    minHeight: 4,
+                    backgroundColor: MacPalette.fill(0.1),
+                    color: MacPalette.accent,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '${switch (progress.channel) {
+                          'preparing' => '正在准备下载',
+                          'upload' => '正在上传到云盘',
+                          'p2p_connecting' => '正在建立 P2P 连接',
+                          'p2p_replica' => 'P2P 局域网副本',
+                          'p2p_direct' => 'P2P 端到端直连',
+                          'p2p_relay' => 'P2P 加密中继',
+                          _ => '云端下载',
+                        }} · ${(progress.fraction * 100).toStringAsFixed(0)}%'
+                        '${progress.speedBps > 0 ? ' · ${formatBytes(progress.speedBps)}/s' : ''}',
+                        style: TextStyle(fontSize: 13, color: MacPalette.textSecondary),
+                      ),
+                    ),
+                    CupertinoButton(
+                      padding: const EdgeInsets.only(left: 8),
+                      minimumSize: const Size(0, 36),
+                      onPressed: c.isCancelling(item.id)
+                          ? null
+                          : () => c.cancelTransfer(item.id),
+                      child: Text(
+                        c.isCancelling(item.id) ? '正在取消' : '取消',
+                        style: TextStyle(fontSize: 15, color: MacPalette.red),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        for (final entry in outgoing)
+          PhoneRow(
+            title: '正在发送给 ${c.recipientName(entry.value.sendingTo!)}',
+            value: '${(entry.value.fraction * 100).floor()}%',
+            trailing: CupertinoButton(
+              padding: EdgeInsets.zero,
+              minimumSize: const Size(0, 36),
+              onPressed: c.isCancellingSend(entry.key)
+                  ? null
+                  : () => c.cancelOutgoingTransfer(entry.key),
+              child: Text(
+                c.isCancellingSend(entry.key) ? '正在取消' : '取消',
+                style: TextStyle(fontSize: 15, color: MacPalette.red),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _imagePreview(String? localPath) {
+    Widget? preview;
+    if (localPath != null) {
+      preview = Image.file(
+        File(localPath),
+        fit: BoxFit.contain,
+        errorBuilder: (_, _, _) => const SizedBox.shrink(),
+      );
+    } else if (item.thumbnailBase64 != null &&
+        item.thumbnailBase64!.isNotEmpty) {
+      try {
+        preview = Image.memory(base64Decode(item.thumbnailBase64!), fit: BoxFit.contain);
+      } catch (_) {}
+    }
+    if (preview != null) {
+      return InteractiveViewer(
+        minScale: 0.8,
+        maxScale: 4.0,
+        child: Center(child: preview),
+      );
+    }
+    return Center(
+      child: Text(
+        '下载到本机后可查看原图',
+        style: TextStyle(fontSize: 15, color: MacPalette.textTertiary),
+      ),
     );
   }
 

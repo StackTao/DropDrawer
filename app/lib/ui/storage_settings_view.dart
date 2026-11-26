@@ -233,6 +233,19 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
   @override
   Widget build(BuildContext context) {
     final c = widget.controller;
+    if (UiDensity.isTouch(context)) {
+      return PhonePage(
+        title: '云盘与存储',
+        actions: [
+          PageAction(
+            icon: CupertinoIcons.refresh,
+            tooltip: '刷新存储列表',
+            onPressed: () => c.refreshStorageBackends(),
+          ),
+        ],
+        body: NativeTypeScale(child: _buildPhoneBody()),
+      );
+    }
     return AdaptivePage(
       title: '云盘与存储',
       actions: [
@@ -306,6 +319,213 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
         ),
         ],
       ),
+    );
+  }
+
+  static const _kinds = [
+    ('google_drive', 'Google Drive'),
+    ('quark', '夸克网盘'),
+    ('baidu_netdisk', '百度网盘'),
+    ('s3', 'S3 / R2'),
+    ('web_dav', 'WebDAV'),
+    ('local', '本地盘'),
+  ];
+
+  /// The connection fields of the selected kind, name first.
+  List<({TextEditingController controller, String label, String? placeholder, bool obscure})>
+      _fields() {
+    ({TextEditingController controller, String label, String? placeholder, bool obscure}) f(
+      TextEditingController controller,
+      String label, {
+      String? placeholder,
+      bool obscure = false,
+    }) =>
+        (controller: controller, label: label, placeholder: placeholder, obscure: obscure);
+    return [
+      f(_nameCtrl, '名称'),
+      ...switch (_selectedKind) {
+        'google_drive' => [
+            f(_clientIdCtrl, 'Client ID', placeholder: 'xxx.apps.googleusercontent.com'),
+            f(_clientSecretCtrl, 'Secret', placeholder: 'GOCSPX-...', obscure: true),
+            f(_refreshTokenCtrl, 'Refresh', placeholder: '可留空，点下方一键授权自动获取'),
+            f(_pathCtrl, '目录 ID', placeholder: 'root (或指定文件夹 ID)'),
+          ],
+        'quark' => [
+            f(_cookieCtrl, 'Cookie', placeholder: 'pan.quark.cn 完整 Cookie'),
+            f(_pathCtrl, '目录 fid', placeholder: '0 表示根目录'),
+          ],
+        'baidu_netdisk' => [
+            f(_accessTokenCtrl, 'Token', placeholder: 'Access Token (或填下方 Refresh)'),
+            f(_clientIdCtrl, 'App Key', placeholder: '可选，用于自动刷新'),
+            f(_clientSecretCtrl, 'Secret', obscure: true),
+            f(_refreshTokenCtrl, 'Refresh', placeholder: '可选，10年长效刷新令牌'),
+            f(_pathCtrl, '路径', placeholder: '/apps/dropdrawer'),
+          ],
+        'web_dav' => [
+            f(_urlCtrl, '地址'),
+            f(_userCtrl, '用户名'),
+            f(_passCtrl, '密码', obscure: true),
+          ],
+        's3' => [
+            f(_urlCtrl, 'Endpoint'),
+            f(_bucketCtrl, 'Bucket'),
+            f(_regionCtrl, 'Region'),
+            f(_userCtrl, 'AccessKey'),
+            f(_passCtrl, 'SecretKey', obscure: true),
+          ],
+        _ => const [],
+      },
+    ];
+  }
+
+  static const _localNote =
+      '文件保存在服务器数据目录中属于当前账号的文件夹（由服务端 DROPDRAWER_LOCAL_STORAGE 决定）。';
+  static const _nativeNote =
+      '全部云盘均由服务端原生直连，无需额外安装或部署 OpenList 等任何第三方服务。';
+
+  Future<void> _testBackend(String id) async {
+    final (ok, msg) = await widget.controller.testStorageBackend(id);
+    if (mounted) {
+      setState(() {
+        _feedbackOk = ok;
+        _feedback = ok ? '连通正常: $msg' : '连通失败: $msg';
+      });
+    }
+  }
+
+  /// Phones: the configured backends as a settings group (tap for test or
+  /// remove), and the add form as grouped fields.
+  Widget _buildPhoneBody() {
+    final c = widget.controller;
+    final material = usesMaterialChrome(context);
+    final list = c.storageBackends;
+    final feedback = _feedback;
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+      children: [
+        PhoneSegmented<int>(
+          options: const [(0, '已配置'), (1, '添加云盘')],
+          selected: _tab,
+          onChanged: (v) => setState(() => _tab = v),
+        ),
+        if (feedback != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: Text(
+              feedback,
+              style: TextStyle(
+                fontSize: 13,
+                color: _feedbackOk ? MacPalette.green : MacPalette.red,
+              ),
+            ),
+          ),
+        const SizedBox(height: 20),
+        if (_tab == 0)
+          PhoneSection(
+            footer: list.isEmpty ? '还没有存储策略，切换到「添加云盘」直连配置。' : _nativeNote,
+            children: [
+              if (list.isEmpty)
+                const PhoneRow(title: '暂无云盘', dimmed: true)
+              else
+                for (final backend in list)
+                  PhoneRow(
+                    leading: Icon(
+                      material ? Icons.cloud_outlined : CupertinoIcons.cloud,
+                      size: 22,
+                      color: MacPalette.accent,
+                    ),
+                    title: backend.name,
+                    subtitle: '${_kindLabel(backend.kind)} · ${backend.displayTarget}',
+                    value: backend.isDefault ? '默认' : null,
+                    onTap: () => showPhoneActions(
+                      context,
+                      title: backend.name,
+                      entries: [
+                        PhoneMenuEntry(
+                          label: '测试连通性',
+                          icon: CupertinoIcons.waveform_path,
+                          materialIcon: Icons.network_check,
+                          onSelected: () => _testBackend(backend.id),
+                        ),
+                        PhoneMenuEntry(
+                          label: '删除',
+                          icon: CupertinoIcons.trash,
+                          materialIcon: Icons.delete_outline,
+                          destructive: true,
+                          onSelected: () => c.removeStorageBackend(backend.id),
+                        ),
+                      ],
+                    ),
+                  ),
+            ],
+          )
+        else ...[
+          PhoneSection(
+            children: [
+              PhoneRow(
+                title: '类型',
+                value: _kinds.firstWhere((k) => k.$1 == _selectedKind).$2,
+                onTap: () async {
+                  final kind = await showPhoneChoice<String>(
+                    context,
+                    title: '云盘类型',
+                    options: _kinds,
+                    selected: _selectedKind,
+                    previousTitle: '云盘',
+                  );
+                  if (kind != null && mounted) _selectKind(kind);
+                },
+              ),
+            ],
+          ),
+          PhoneSection(
+            header: '连接信息',
+            footer: switch (_selectedKind) {
+              'local' => _localNote,
+              'google_drive' =>
+                '回调地址请填：${c.serverUrl}/api/oauth/google/callback',
+              _ => null,
+            },
+            children: [
+              for (final field in _fields())
+                PhoneFieldRow(
+                  controller: field.controller,
+                  label: field.label,
+                  placeholder: field.placeholder,
+                  obscureText: field.obscure,
+                ),
+            ],
+          ),
+          PhoneSection(
+            children: [
+              PhoneRow(
+                title: '设为默认中转存储',
+                trailing: AdaptiveSwitch(
+                  value: _isDefault,
+                  onChanged: (v) => setState(() => _isDefault = v),
+                ),
+              ),
+            ],
+          ),
+          if (_selectedKind == 'google_drive') ...[
+            PhoneButton(
+              icon: material ? Icons.open_in_browser : CupertinoIcons.globe,
+              label: '在浏览器中授权 Google Drive',
+              onPressed: _saving ? null : _launchGoogleOAuth,
+            ),
+            const SizedBox(height: 10),
+            PhoneButton(
+              kind: PhoneButtonKind.secondary,
+              label: '已有 Refresh Token，直接保存',
+              onPressed: _saving ? null : _addBackend,
+            ),
+          ] else
+            PhoneButton(
+              label: _saving ? '正在保存…' : '保存',
+              onPressed: _saving ? null : _addBackend,
+            ),
+        ],
+      ],
     );
   }
 
@@ -384,16 +604,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
                         icon: CupertinoIcons.waveform_path,
                         tooltip: '测试连通性',
                         size: 14,
-                        onPressed: () async {
-                          final (ok, msg) = await widget.controller
-                              .testStorageBackend(list[i].id);
-                          if (mounted) {
-                            setState(() {
-                              _feedbackOk = ok;
-                              _feedback = ok ? '连通正常: $msg' : '连通失败: $msg';
-                            });
-                          }
-                        },
+                        onPressed: () => _testBackend(list[i].id),
                       ),
                       const SizedBox(width: 2),
                       MacIconButton(
@@ -412,7 +623,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
         ),
         const SizedBox(height: 12),
         Text(
-          '全部云盘均由服务端原生直连，无需额外安装或部署 OpenList 等任何第三方服务。',
+          _nativeNote,
           style: TextStyle(
             fontSize: 11,
             height: 1.5,
@@ -424,14 +635,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
   }
 
   Widget _buildAddBackendForm() {
-    final kinds = [
-      ('google_drive', 'Google Drive'),
-      ('quark', '夸克网盘'),
-      ('baidu_netdisk', '百度网盘'),
-      ('s3', 'S3 / R2'),
-      ('web_dav', 'WebDAV'),
-      ('local', '本地盘'),
-    ];
+    const kinds = _kinds;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -484,106 +688,14 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
           ),
           child: Column(
             children: [
-              MacFormField(controller: _nameCtrl, label: '名称'),
-              if (_selectedKind == 'google_drive') ...[
-                const Divider(height: 0.5, thickness: 0.5, indent: 12),
+              for (final (index, field) in _fields().indexed) ...[
+                if (index > 0)
+                  const Divider(height: 0.5, thickness: 0.5, indent: 12),
                 MacFormField(
-                  controller: _clientIdCtrl,
-                  label: 'Client ID',
-                  placeholder: 'xxx.apps.googleusercontent.com',
-                ),
-                const Divider(height: 0.5, thickness: 0.5, indent: 12),
-                MacFormField(
-                  controller: _clientSecretCtrl,
-                  label: 'Secret',
-                  placeholder: 'GOCSPX-...',
-                  obscureText: true,
-                ),
-                const Divider(height: 0.5, thickness: 0.5, indent: 12),
-                MacFormField(
-                  controller: _refreshTokenCtrl,
-                  label: 'Refresh',
-                  placeholder: '可留空，点下方一键授权自动获取',
-                ),
-                const Divider(height: 0.5, thickness: 0.5, indent: 12),
-                MacFormField(
-                  controller: _pathCtrl,
-                  label: '目录 ID',
-                  placeholder: 'root (或指定文件夹 ID)',
-                ),
-              ],
-              if (_selectedKind == 'quark') ...[
-                const Divider(height: 0.5, thickness: 0.5, indent: 12),
-                MacFormField(
-                  controller: _cookieCtrl,
-                  label: 'Cookie',
-                  placeholder: 'pan.quark.cn 完整 Cookie',
-                ),
-                const Divider(height: 0.5, thickness: 0.5, indent: 12),
-                MacFormField(
-                  controller: _pathCtrl,
-                  label: '目录 fid',
-                  placeholder: '0 表示根目录',
-                ),
-              ],
-              if (_selectedKind == 'baidu_netdisk') ...[
-                const Divider(height: 0.5, thickness: 0.5, indent: 12),
-                MacFormField(
-                  controller: _accessTokenCtrl,
-                  label: 'Token',
-                  placeholder: 'Access Token (或填下方 Refresh)',
-                ),
-                const Divider(height: 0.5, thickness: 0.5, indent: 12),
-                MacFormField(
-                  controller: _clientIdCtrl,
-                  label: 'App Key',
-                  placeholder: '可选，用于自动刷新',
-                ),
-                const Divider(height: 0.5, thickness: 0.5, indent: 12),
-                MacFormField(
-                  controller: _clientSecretCtrl,
-                  label: 'Secret',
-                  obscureText: true,
-                ),
-                const Divider(height: 0.5, thickness: 0.5, indent: 12),
-                MacFormField(
-                  controller: _refreshTokenCtrl,
-                  label: 'Refresh',
-                  placeholder: '可选，10年长效刷新令牌',
-                ),
-                const Divider(height: 0.5, thickness: 0.5, indent: 12),
-                MacFormField(
-                  controller: _pathCtrl,
-                  label: '路径',
-                  placeholder: '/apps/dropdrawer',
-                ),
-              ],
-              if (_selectedKind == 'web_dav') ...[
-                const Divider(height: 0.5, thickness: 0.5, indent: 12),
-                MacFormField(controller: _urlCtrl, label: '地址'),
-                const Divider(height: 0.5, thickness: 0.5, indent: 12),
-                MacFormField(controller: _userCtrl, label: '用户名'),
-                const Divider(height: 0.5, thickness: 0.5, indent: 12),
-                MacFormField(
-                  controller: _passCtrl,
-                  label: '密码',
-                  obscureText: true,
-                ),
-              ],
-              if (_selectedKind == 's3') ...[
-                const Divider(height: 0.5, thickness: 0.5, indent: 12),
-                MacFormField(controller: _urlCtrl, label: 'Endpoint'),
-                const Divider(height: 0.5, thickness: 0.5, indent: 12),
-                MacFormField(controller: _bucketCtrl, label: 'Bucket'),
-                const Divider(height: 0.5, thickness: 0.5, indent: 12),
-                MacFormField(controller: _regionCtrl, label: 'Region'),
-                const Divider(height: 0.5, thickness: 0.5, indent: 12),
-                MacFormField(controller: _userCtrl, label: 'AccessKey'),
-                const Divider(height: 0.5, thickness: 0.5, indent: 12),
-                MacFormField(
-                  controller: _passCtrl,
-                  label: 'SecretKey',
-                  obscureText: true,
+                  controller: field.controller,
+                  label: field.label,
+                  placeholder: field.placeholder,
+                  obscureText: field.obscure,
                 ),
               ],
               if (_selectedKind == 'local') ...[
@@ -591,7 +703,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
                 Padding(
                   padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   child: Text(
-                    '文件保存在服务器数据目录中属于当前账号的文件夹（由服务端 DROPDRAWER_LOCAL_STORAGE 决定）。',
+                    _localNote,
                     style: TextStyle(fontSize: 11, color: MacPalette.textSecondary),
                   ),
                 ),
@@ -618,13 +730,6 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
         ),
         if (_selectedKind == 'google_drive') ...[
           const SizedBox(height: 6),
-          if (UiDensity.isTouch(context))
-            PhoneButton(
-              icon: CupertinoIcons.globe,
-              label: '浏览器一键授权 Google Drive',
-              onPressed: _saving ? null : _launchGoogleOAuth,
-            )
-          else
           SizedBox(
             height: 36,
             child: ElevatedButton.icon(
@@ -671,12 +776,6 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
           ),
         ] else ...[
           const SizedBox(height: 10),
-          if (UiDensity.isTouch(context))
-            PhoneButton(
-              label: _saving ? '正在保存…' : '保存原生云盘配置',
-              onPressed: _saving ? null : _addBackend,
-            )
-          else
           SizedBox(
             height: 36,
             child: ElevatedButton(

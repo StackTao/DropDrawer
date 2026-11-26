@@ -125,15 +125,24 @@ class _ShareViewState extends State<ShareView> {
         : (isBundle
             ? '打包创建外链 (${widget.targetItems.length} 项)'
             : '创建外链分享');
+    final phoneTitle = hasTargets
+        ? (isBundle ? '打包外链 (${widget.targetItems.length})' : '创建外链')
+        : '外链管理';
+    final refresh = PageAction(
+      icon: CupertinoIcons.refresh,
+      tooltip: '刷新外链列表',
+      onPressed: _loadingList ? null : _refreshList,
+    );
+    if (UiDensity.isTouch(context)) {
+      return PhonePage(
+        title: phoneTitle,
+        actions: [refresh],
+        body: NativeTypeScale(child: _buildPhoneBody(c)),
+      );
+    }
     return AdaptivePage(
-      title: hasTargets ? (isBundle ? '打包外链 (${widget.targetItems.length})' : '创建外链') : '外链管理',
-      actions: [
-        PageAction(
-          icon: CupertinoIcons.refresh,
-          tooltip: '刷新外链列表',
-          onPressed: _loadingList ? null : _refreshList,
-        ),
-      ],
+      title: phoneTitle,
+      actions: [refresh],
       desktopHeader: Padding(
           padding: c.windowService.needsMacTrafficLightPadding
               ? const EdgeInsets.fromLTRB(78, 1, 10, 3)
@@ -226,6 +235,246 @@ class _ShareViewState extends State<ShareView> {
                     )),
             ],
           ),
+    );
+  }
+
+  static const _expiryOptions = [
+    (1, '1 小时'),
+    (24, '24 小时'),
+    (168, '7 天'),
+    (0, '永久'),
+  ];
+  static const _downloadOptions = [
+    (0, '不限'),
+    (1, '1 次（阅后即焚）'),
+    (5, '5 次'),
+    (20, '20 次'),
+  ];
+
+  static String _optionLabel(List<(int, String)> options, int value) =>
+      options.where((o) => o.$1 == value).firstOrNull?.$2 ?? '$value';
+
+  /// Phones: what is shared, the access settings and the created links as
+  /// settings groups. Tapping a link offers copy, open and revoke.
+  Widget _buildPhoneBody(DropDrawerController c) {
+    final items = widget.targetItems;
+    final material = usesMaterialChrome(context);
+    final isBundle = items.length > 1;
+    final pendingUploadCount =
+        items.where((it) => it.kind == 'file' && !it.cloudReady).length;
+    final totalBytes = items.fold<int>(0, (sum, it) => sum + it.size);
+
+    Future<void> choose(
+      String title,
+      List<(int, String)> options,
+      int selected,
+      ValueChanged<int> onChanged,
+    ) async {
+      final value = await showPhoneChoice<int>(
+        context,
+        title: title,
+        options: options,
+        selected: selected,
+        previousTitle: '外链',
+      );
+      if (value != null && mounted) setState(() => onChanged(value));
+    }
+
+    IconData itemIcon(DrawerItem item) => item.kind == 'text'
+        ? (material ? Icons.notes : CupertinoIcons.text_quote)
+        : (material ? Icons.insert_drive_file_outlined : CupertinoIcons.doc);
+
+    final created = _justCreated;
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
+      children: [
+        if (items.isNotEmpty) ...[
+          PhoneSection(
+            header: isBundle ? '打包 ${items.length} 项 · ${formatBytes(totalBytes)}' : '分享内容',
+            footer: pendingUploadCount > 0
+                ? '生成前会先把 $pendingUploadCount 个文件上传到「${c.defaultStorageBackendName}」，拿到链接的人用浏览器即可下载，无需登录。'
+                : '拿到链接的人用浏览器即可下载，无需登录。',
+            children: [
+              for (final item in items.take(8))
+                PhoneRow(
+                  leading: Icon(itemIcon(item), size: 22, color: MacPalette.textSecondary),
+                  title: item.name,
+                  value: formatBytes(item.size),
+                ),
+              if (items.length > 8)
+                PhoneRow(title: '以及另外 ${items.length - 8} 项', dimmed: true),
+            ],
+          ),
+          if (isBundle)
+            PhoneSection(
+              header: '合集标题',
+              children: [
+                PhoneFieldRow(
+                  controller: _titleCtrl,
+                  placeholder: '${items.first.name} 等 ${items.length} 项',
+                ),
+              ],
+            ),
+          PhoneSection(
+            header: '访问设置',
+            footer: '提取码留空时，任何拿到链接的人都能下载。',
+            children: [
+              PhoneRow(
+                title: '有效期',
+                value: _optionLabel(_expiryOptions, _expiresHours),
+                onTap: () => choose('有效期', _expiryOptions, _expiresHours,
+                    (v) => _expiresHours = v),
+              ),
+              PhoneRow(
+                title: '下载次数',
+                value: _optionLabel(_downloadOptions, _maxDownloads),
+                onTap: () => choose('下载次数', _downloadOptions, _maxDownloads,
+                    (v) => _maxDownloads = v),
+              ),
+              PhoneFieldRow(
+                controller: _passcodeCtrl,
+                label: '提取码',
+                placeholder: '留空为公开',
+                trailing: PhoneBarButton(
+                  action: PageAction(
+                    icon: material ? Icons.casino_outlined : CupertinoIcons.sparkles,
+                    tooltip: '随机生成 4 位提取码',
+                    onPressed: _generateRandomPasscode,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: Text(
+                _error!,
+                style: TextStyle(fontSize: 13, color: MacPalette.red),
+              ),
+            ),
+          PhoneButton(
+            label: _creating
+                ? '正在生成…'
+                : (pendingUploadCount > 0
+                    ? '上传并生成外链'
+                    : (isBundle ? '生成合集外链并复制' : '生成外链并复制')),
+            onPressed: _creating ? null : _createShare,
+          ),
+          const SizedBox(height: 24),
+          if (created != null)
+            PhoneSection(
+              header: '已生成并复制到剪贴板',
+              children: [
+                PhoneRow(
+                  title: '链接',
+                  subtitle: _formatCopyText(created, plainPasscode: _justCreatedPasscode),
+                  selectable: true,
+                ),
+                PhoneRow(
+                  title: '再次复制',
+                  action: true,
+                  onTap: () {
+                    Clipboard.setData(ClipboardData(
+                      text: _formatCopyText(created, plainPasscode: _justCreatedPasscode),
+                    ));
+                    c.setBanner('已复制外链信息');
+                  },
+                ),
+                PhoneRow(
+                  title: '在浏览器中打开',
+                  action: true,
+                  onTap: () {
+                    final base = c.buildFullShareUrl(created.sharePath);
+                    final pass = _justCreatedPasscode;
+                    c.windowService.openExternalUrl(
+                      pass != null ? '$base?p=${Uri.encodeQueryComponent(pass)}' : base,
+                    );
+                  },
+                ),
+              ],
+            ),
+        ],
+        PhoneSection(
+          header: '已创建的外链（${c.shareLinks.length}）',
+          footer: c.shareLinks.isEmpty
+              ? '在抽屉里长按或打开一项可以创建外链；多选后可以打包成合集。'
+              : '点按一条外链可以复制、打开或撤销。',
+          children: [
+            if (c.shareLinks.isEmpty)
+              PhoneRow(
+                title: _loadingList ? '正在加载…' : '还没有外链',
+                dimmed: true,
+              )
+            else
+              for (final link in c.shareLinks) _buildPhoneLinkRow(c, link),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPhoneLinkRow(DropDrawerController c, ShareLinkInfo link) {
+    final material = usesMaterialChrome(context);
+    final fullUrl = c.buildFullShareUrl(link.sharePath);
+    final inactive = link.isExpired || link.isExhausted;
+    final meta = <String>[
+      if (link.itemCount > 1) '${link.itemCount} 项合集',
+      if (link.hasPasscode) '需提取码',
+      link.maxDownloads != null
+          ? '已下 ${link.downloadCount}/${link.maxDownloads} 次'
+          : '已下 ${link.downloadCount} 次',
+      if (link.isExpired)
+        '已过期'
+      else if (link.isExhausted)
+        '次数用尽'
+      else if (link.expiresAt != null)
+        _formatRemaining(link.expiresAt!)
+      else
+        '永久有效',
+    ];
+    return PhoneRow(
+      leading: Icon(
+        link.hasPasscode
+            ? (material ? Icons.lock_outline : CupertinoIcons.lock)
+            : (link.itemCount > 1
+                ? (material ? Icons.collections_outlined : CupertinoIcons.collections)
+                : (material ? Icons.link : CupertinoIcons.link)),
+        size: 22,
+        color: inactive ? MacPalette.textTertiary : MacPalette.accent,
+      ),
+      title: link.itemName,
+      subtitle: meta.join(' · '),
+      dimmed: inactive,
+      onTap: () => showPhoneActions(
+        context,
+        title: link.itemName,
+        message: fullUrl,
+        entries: [
+          PhoneMenuEntry(
+            label: '复制链接',
+            icon: CupertinoIcons.doc_on_doc,
+            materialIcon: Icons.content_copy,
+            onSelected: () {
+              Clipboard.setData(ClipboardData(text: fullUrl));
+              c.setBanner('已复制外链');
+            },
+          ),
+          PhoneMenuEntry(
+            label: '在浏览器中打开',
+            icon: CupertinoIcons.globe,
+            materialIcon: Icons.open_in_browser,
+            onSelected: () => c.windowService.openExternalUrl(fullUrl),
+          ),
+          PhoneMenuEntry(
+            label: '撤销外链',
+            icon: CupertinoIcons.trash,
+            materialIcon: Icons.link_off,
+            destructive: true,
+            onSelected: () => c.revokeShareLink(link.code),
+          ),
+        ],
+      ),
     );
   }
 
@@ -434,17 +683,7 @@ class _ShareViewState extends State<ShareView> {
             ),
           ],
           const SizedBox(height: 12),
-          if (UiDensity.isTouch(context))
-            PhoneButton(
-              label: _creating
-                  ? '正在生成…'
-                  : (pendingUploadCount > 0
-                ? '自动上云并生成外链'
-                : (isBundle ? '生成合集外链并复制' : '生成外链并复制')),
-              onPressed: _creating ? null : _createShare,
-            )
-          else
-            SizedBox(
+          SizedBox(
               height: 34,
               child: FilledButton(
                 onPressed: _creating ? null : _createShare,

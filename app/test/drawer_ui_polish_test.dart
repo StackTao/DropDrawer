@@ -43,6 +43,12 @@ class _TestController extends DropDrawerController {
   Future<String> getEffectiveDownloadDir() async => '/tmp/DropDrawer';
 
   @override
+  Future<void> refreshShareLinks() async {}
+
+  @override
+  Future<void> refreshStorageBackends() async {}
+
+  @override
   Future<void> deleteItem(String itemId) async {
     deleted.add(itemId);
     items.removeWhere((e) => e.id == itemId);
@@ -612,6 +618,79 @@ void main() {
       expect(MacPalette.group(0.22), MacPalette.cardBg);
       MacPalette.use(Brightness.dark);
       expect(MacPalette.background, const Color(0xFF141417));
+    });
+
+    testWidgets('iOS share links are rows that offer copy, open and revoke', (tester) async {
+      final ctrl = await _pumpPhone(
+        tester,
+        items: [_item('a', cloud: true)],
+        platform: TargetPlatform.iOS,
+      );
+      ctrl.shareLinks.add(ShareLinkInfo(
+        code: 'abc',
+        itemId: 'a',
+        itemName: '季度报告',
+        itemKind: 'file',
+        itemSize: 1024,
+        itemCount: 1,
+        hasPasscode: true,
+        downloadCount: 2,
+        createdAt: DateTime.now(),
+        sharePath: '/s/abc',
+      ));
+      await tester.tap(find.byTooltip('更多'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('外链管理'));
+      await tester.pumpAndSettle();
+      expect(find.text('季度报告'), findsOneWidget);
+      expect(find.textContaining('需提取码'), findsOneWidget);
+      await tester.tap(find.text('季度报告'));
+      await tester.pumpAndSettle();
+      expect(find.byType(CupertinoActionSheet), findsOneWidget);
+      expect(find.text('撤销外链'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('Android storage page lists backends and adds by kind', (tester) async {
+      final ctrl = await _pumpPhone(tester, items: [_item('a', cloud: true)]);
+      ctrl.storageBackends.add(StorageBackendSummary(
+        id: 'b1',
+        name: '家里的 NAS',
+        kind: 'web_dav',
+        isDefault: true,
+        displayTarget: 'https://nas.local/dav',
+      ));
+      await tester.tap(find.byTooltip('更多'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('云盘与存储'));
+      await tester.pumpAndSettle();
+      expect(find.text('家里的 NAS'), findsOneWidget);
+      expect(find.text('默认'), findsOneWidget);
+
+      await tester.tap(find.text('添加云盘'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('类型'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('WebDAV'));
+      await tester.pumpAndSettle();
+      expect(find.text('地址'), findsOneWidget);
+      expect(find.text('密码'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('iOS item page shows the file, its actions and details', (tester) async {
+      await _pumpPhone(
+        tester,
+        items: [_item('a', name: 'Q4-Proposal.pdf', cloud: true)],
+        platform: TargetPlatform.iOS,
+      );
+      await tester.tap(find.text('Q4-Proposal.pdf'));
+      await tester.pumpAndSettle();
+      expect(find.text('文件详情'), findsOneWidget);
+      expect(find.text('从云端下载'), findsOneWidget);
+      expect(find.text('信息'), findsOneWidget);
+      expect(find.text('来源设备'), findsOneWidget);
+      expect(tester.takeException(), isNull);
     });
 
     test('phone type ramp maps desktop sizes onto the system scale', () {

@@ -875,14 +875,24 @@ class PhoneRow extends StatelessWidget {
     required this.title,
     this.subtitle,
     this.value,
+    this.leading,
     this.trailing,
     this.onTap,
     this.destructive = false,
     this.chevron = true,
     this.action = false,
+    this.dimmed = false,
+    this.selectable = false,
   });
 
   final String title;
+  final Widget? leading;
+
+  /// Greys out the title (an inactive entry that can still be opened).
+  final bool dimmed;
+
+  /// Lets the subtitle be selected and copied (paths, links).
+  final bool selectable;
   final String? subtitle;
   final String? value;
   final Widget? trailing;
@@ -909,6 +919,7 @@ class PhoneRow extends StatelessWidget {
           ),
           child: Row(
             children: [
+              if (leading != null) ...[leading!, const SizedBox(width: 12)],
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -916,9 +927,13 @@ class PhoneRow extends StatelessWidget {
                   children: [
                     Text(
                       title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: material ? 16 : 17,
-                        color: destructive
+                        color: dimmed
+                            ? MacPalette.textTertiary
+                            : destructive
                             ? MacPalette.red
                             : (action
                                 ? (onTap == null
@@ -930,15 +945,23 @@ class PhoneRow extends StatelessWidget {
                     if (subtitle != null)
                       Padding(
                         padding: const EdgeInsets.only(top: 2),
-                        child: Text(
-                          subtitle!,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: material ? 14 : 13,
-                            color: MacPalette.textSecondary,
-                          ),
-                        ),
+                        child: selectable
+                            ? SelectableText(
+                                subtitle!,
+                                style: TextStyle(
+                                  fontSize: material ? 14 : 13,
+                                  color: MacPalette.textSecondary,
+                                ),
+                              )
+                            : Text(
+                                subtitle!,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: material ? 14 : 13,
+                                  color: MacPalette.textSecondary,
+                                ),
+                              ),
                       ),
                   ],
                 ),
@@ -1063,4 +1086,181 @@ Future<T?> showPhoneChoice<T>(
       ),
     ),
   );
+}
+
+/// A labelled text field row for a [PhoneSection].
+class PhoneFieldRow extends StatelessWidget {
+  const PhoneFieldRow({
+    super.key,
+    required this.controller,
+    this.label,
+    this.placeholder,
+    this.obscureText = false,
+    this.trailing,
+    this.onSubmitted,
+    this.keyboardType,
+  });
+
+  final TextEditingController controller;
+  final String? label;
+  final String? placeholder;
+  final bool obscureText;
+  final Widget? trailing;
+  final ValueChanged<String>? onSubmitted;
+  final TextInputType? keyboardType;
+
+  @override
+  Widget build(BuildContext context) {
+    final size = usesMaterialChrome(context) ? 16.0 : 17.0;
+    return ConstrainedBox(
+      constraints: BoxConstraints(minHeight: usesMaterialChrome(context) ? 56 : 44),
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(16, 0, trailing == null ? 16 : 4, 0),
+        child: Row(
+          children: [
+            if (label != null)
+              SizedBox(
+                width: 96,
+                child: Text(
+                  label!,
+                  style: TextStyle(fontSize: size, color: MacPalette.textPrimary),
+                ),
+              ),
+            Expanded(
+              child: TextField(
+                controller: controller,
+                obscureText: obscureText,
+                keyboardType: keyboardType,
+                onSubmitted: onSubmitted,
+                style: TextStyle(fontSize: size, color: MacPalette.textPrimary),
+                cursorColor: MacPalette.accent,
+                decoration: InputDecoration.collapsed(
+                  hintText: placeholder,
+                  hintStyle: TextStyle(
+                    fontSize: size,
+                    color: MacPalette.textTertiary,
+                  ),
+                ),
+              ),
+            ),
+            ?trailing,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Offers actions for one thing: an iOS action sheet, or a Material 3 bottom
+/// sheet. Entries flagged [PhoneMenuEntry.destructive] are shown in red.
+Future<void> showPhoneActions(
+  BuildContext context, {
+  String? title,
+  String? message,
+  required List<PhoneMenuEntry> entries,
+}) async {
+  PhoneMenuEntry? chosen;
+  if (usesMaterialChrome(context)) {
+    chosen = await showModalBottomSheet<PhoneMenuEntry>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: MacPalette.elevatedBg,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (title != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+                child: Text(
+                  title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+            for (final entry in entries)
+              ListTile(
+                leading: Icon(
+                  entry.materialIcon,
+                  color: entry.destructive ? MacPalette.red : null,
+                ),
+                title: Text(
+                  entry.label,
+                  style: entry.destructive ? TextStyle(color: MacPalette.red) : null,
+                ),
+                onTap: () => Navigator.of(context).pop(entry),
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  } else {
+    chosen = await showCupertinoModalPopup<PhoneMenuEntry>(
+      context: context,
+      builder: (context) => CupertinoActionSheet(
+        title: title == null ? null : Text(title, maxLines: 2, overflow: TextOverflow.ellipsis),
+        message: message == null ? null : Text(message),
+        actions: [
+          for (final entry in entries)
+            CupertinoActionSheetAction(
+              isDestructiveAction: entry.destructive,
+              onPressed: () => Navigator.of(context).pop(entry),
+              child: Text(entry.label),
+            ),
+        ],
+        cancelButton: CupertinoActionSheetAction(
+          isDefaultAction: true,
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+      ),
+    );
+  }
+  chosen?.onSelected();
+}
+
+/// The platform segmented control: iOS sliding segments or a Material 3
+/// segmented button.
+class PhoneSegmented<T extends Object> extends StatelessWidget {
+  const PhoneSegmented({
+    super.key,
+    required this.options,
+    required this.selected,
+    required this.onChanged,
+  });
+
+  final List<(T, String)> options;
+  final T selected;
+  final ValueChanged<T> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    if (usesMaterialChrome(context)) {
+      return SegmentedButton<T>(
+        showSelectedIcon: false,
+        segments: [
+          for (final (value, label) in options)
+            ButtonSegment<T>(value: value, label: Text(label)),
+        ],
+        selected: {selected},
+        onSelectionChanged: (values) => onChanged(values.first),
+      );
+    }
+    return CupertinoSlidingSegmentedControl<T>(
+      groupValue: selected,
+      children: {
+        for (final (value, label) in options)
+          value: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Text(label, style: const TextStyle(fontSize: 14)),
+          ),
+      },
+      onValueChanged: (value) {
+        if (value != null) onChanged(value);
+      },
+    );
+  }
 }
