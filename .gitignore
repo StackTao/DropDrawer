@@ -26,6 +26,13 @@ app/ios/DropDrawerP2P/Frameworks/
 app/ios/Podfile.lock
 app/ios/Runner.xcworkspace/xcshareddata/swiftpm/
 
+# Apple native (Swift / XcodeGen)
+apple/Frameworks/DropDrawerP2P.xcframework/
+apple/DropDrawer.xcodeproj/
+apple/build/
+apple/DropDrawerCore/.build/
+apple/DropDrawerCore/.swiftpm/
+
 # OS / IDE
 .DS_Store
 .idea/

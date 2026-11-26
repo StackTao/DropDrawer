@@ -1,0 +1,111 @@
+import Foundation
+import Testing
+@testable import DropDrawerCore
+
+@Suite("DropDrawerCore Tests")
+struct DropDrawerCoreTests {
+    @Test("DrawerItem decodes server JSON and computes display helpers")
+    func decodeDrawerItem() throws {
+        let json = """
+        {
+          "id": "item-1",
+          "user_id": "u1",
+          "owner_device_id": "d1",
+          "owner_device_name": "Studio MacBook Pro.local",
+          "owner_online": true,
+          "owner_iroh_node_id": "node123",
+          "owner_direct_addrs": ["192.168.1.5:4000"],
+          "kind": "file",
+          "name": "vacation.heic",
+          "size": 1572864,
+          "mime_type": "image/heic",
+          "transfer_mode": "hybrid",
+          "storage_backend_name": "Cloudflare R2",
+          "cloud_ready": true,
+          "created_at": "2026-11-26T02:00:00.123Z"
+        }
+        """
+        let item = try JSONDecoder().decode(DrawerItem.self, from: Data(json.utf8))
+        #expect(item.id == "item-1")
+        #expect(item.cleanOwnerDeviceName == "Studio MacBook Pro")
+        #expect(item.isImage)
+        #expect(item.canSaveToPhotos)
+        #expect(item.canP2P)
+        #expect(formatBytes(item.size) == "1.5 MB")
+    }
+
+    @Test("TransferCancelToken notifies all attached listeners once")
+    func multiListenerCancelToken() {
+        final class Collector: @unchecked Sendable {
+            private let lock = NSLock()
+            private var values: [Int] = []
+            func append(_ v: Int) { lock.withLock { values.append(v) } }
+            var snapshot: [Int] { lock.withLock { values } }
+        }
+        let token = TransferCancelToken()
+        let fired = Collector()
+        token.attach { fired.append(1) }
+        token.attach { fired.append(2) }
+        token.cancel()
+        token.cancel()
+        // Attaching after cancel fires immediately.
+        token.attach { fired.append(3) }
+        #expect(token.isCancelled)
+        #expect(fired.snapshot == [1, 2, 3])
+    }
+
+    @Test("WebSocket reducer updates devices and refreshes owner online state")
+    @MainActor
+    func wsStateReduction() {
+        let storage = SessionStorage(suiteName: "test.\(UUID().uuidString)", keychainService: "test.\(UUID().uuidString)")
+        let store = DropDrawerStore(storage: storage)
+
+        store.handleWSMessage("""
+        {
+          "type": "snapshot",
+          "payload": {
+            "devices": [
+              {"id": "d1", "user_id": "u1", "name": "Mac.local", "platform": "macos", "online": false, "direct_addrs": []}
+            ],
+            "items": [
+              {"id": "i1", "user_id": "u1", "owner_device_id": "d1", "owner_device_name": "Mac.local", "owner_online": false, "kind": "file", "name": "demo.pdf", "size": 2048, "transfer_mode": "p2p_only", "cloud_ready": false, "created_at": "2026-11-26T02:00:00Z"}
+            ]
+          }
+        }
+        """)
+        #expect(store.devices.count == 1)
+        #expect(store.items.count == 1)
+        #expect(store.items[0].ownerOnline == false)
+
+        store.handleWSMessage("""
+        {
+          "type": "device_updated",
+          "payload": {
+            "id": "d1",
+            "user_id": "u1",
+            "name": "Mac.local",
+            "platform": "macos",
+            "iroh_node_id": "abc",
+            "online": true,
+            "direct_addrs": ["10.0.0.2:1234"]
+          }
+        }
+        """)
+        #expect(store.devices[0].online == true)
+        #expect(store.items[0].ownerOnline == true)
+        #expect(store.items[0].canP2P == true)
+
+        store.handleWSMessage("""
+        {"type": "item_deleted", "payload": {"item_id": "i1"}}
+        """)
+        #expect(store.items.isEmpty)
+    }
+
+    @Test("Relative time formatting matches Chinese labels")
+    func relativeDateLabels() {
+        let now = Date(timeIntervalSince1970: 1_795_660_000)
+        #expect(DateParsing.formatRelative(now.addingTimeInterval(-15), now: now) == "刚刚")
+        #expect(DateParsing.formatRelative(now.addingTimeInterval(-420), now: now) == "7 分钟前")
+        #expect(DateParsing.formatRelative(now.addingTimeInterval(-10800), now: now) == "3 小时前")
+    }
+}
