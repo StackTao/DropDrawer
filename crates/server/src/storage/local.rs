@@ -7,9 +7,23 @@ use tokio_util::io::ReaderStream;
 
 use super::{ByteStream, DownloadResolution, PutResult, StorageProvider};
 
+#[derive(Debug, thiserror::Error)]
+#[error("文件超过服务器本地盘的单文件上传上限（{0} 字节）")]
+pub(crate) struct LocalUploadTooLarge(u64);
+
+impl LocalUploadTooLarge {
+    pub(crate) fn check(max_file_bytes: Option<u64>, size: u64) -> Result<(), Self> {
+        if let Some(limit) = max_file_bytes.filter(|&limit| size > limit) {
+            return Err(Self(limit));
+        }
+        Ok(())
+    }
+}
+
 pub struct LocalProvider {
     root_dir: PathBuf,
     max_bytes: Option<u64>,
+    max_file_bytes: Option<u64>,
     /// When set, every storage key must live under this first path component
     /// (the owning user's id), so one account can never address another's blobs.
     key_prefix: Option<String>,
@@ -22,8 +36,14 @@ impl LocalProvider {
         Ok(Self {
             root_dir,
             max_bytes,
+            max_file_bytes: None,
             key_prefix: None,
         })
+    }
+
+    pub(crate) fn with_max_file_bytes(mut self, max_file_bytes: Option<u64>) -> Self {
+        self.max_file_bytes = max_file_bytes;
+        self
     }
 
     /// Restricts all keys handled by this provider to `<prefix>/...`.
@@ -84,6 +104,9 @@ impl StorageProvider for LocalProvider {
         content_length: Option<u64>,
         mut stream: ByteStream,
     ) -> anyhow::Result<PutResult> {
+        if let Some(size) = content_length {
+            LocalUploadTooLarge::check(self.max_file_bytes, size)?;
+        }
         if let (Some(limit), Some(expected)) = (self.max_bytes, content_length) {
             let used = self.dir_size();
             if used.saturating_add(expected) > limit {
@@ -98,21 +121,30 @@ impl StorageProvider for LocalProvider {
 
         let tmp = target.with_extension("uploading");
         let mut file = tokio::fs::File::create(&tmp).await?;
-        let mut total = 0u64;
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk?;
-            total += chunk.len() as u64;
-            if let Some(limit) = self.max_bytes {
-                if total > limit {
-                    drop(file);
-                    let _ = tokio::fs::remove_file(&tmp).await;
+        let result = async {
+            let mut total = 0u64;
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk?;
+                total += chunk.len() as u64;
+                LocalUploadTooLarge::check(self.max_file_bytes, total)?;
+                if let Some(limit) = self.max_bytes.filter(|&limit| total > limit) {
                     anyhow::bail!("upload exceeded local storage quota ({limit} bytes)");
                 }
+                file.write_all(&chunk).await?;
             }
-            file.write_all(&chunk).await?;
+            file.flush().await?;
+            Ok(total)
         }
-        file.flush().await?;
+        .await;
         drop(file);
+
+        let total = match result {
+            Ok(total) => total,
+            Err(err) => {
+                let _ = tokio::fs::remove_file(&tmp).await;
+                return Err(err);
+            }
+        };
         tokio::fs::rename(&tmp, &target).await?;
         Ok(PutResult {
             bytes_written: total,

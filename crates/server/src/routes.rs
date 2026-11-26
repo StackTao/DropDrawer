@@ -29,7 +29,7 @@ use uuid::Uuid;
 use crate::auth::{create_jwt, decode_jwt, hash_password, verify_password, AuthUser};
 use crate::db::DrawerItemRow;
 use crate::state::AppState;
-use crate::storage::DownloadResolution;
+use crate::storage::{DownloadResolution, local::LocalUploadTooLarge};
 
 pub fn build_router(state: Arc<AppState>) -> Router {
     let cors = CorsLayer::new()
@@ -684,6 +684,10 @@ async fn request_upload_plan(
     let backend = state
         .resolve_backend(&auth.user_id, backend_id)
         .map_err(internal_err)?;
+    if matches!(&backend.config, StorageBackendConfig::Local { .. }) {
+        LocalUploadTooLarge::check(state.local_max_file_bytes, item.size)
+            .map_err(|err| (StatusCode::PAYLOAD_TOO_LARGE, err.to_string()))?;
+    }
     let provider = state.build_storage_provider(&backend).map_err(internal_err)?;
 
     let remote_key = item_storage_key(&auth.user_id, &item.id, &item.name);
@@ -753,7 +757,10 @@ async fn stream_upload_item(
     let put_res = provider
         .put_stream(&remote_key, content_length, Box::pin(stream))
         .await
-        .map_err(internal_err)?;
+        .map_err(|err| match err.downcast_ref::<LocalUploadTooLarge>() {
+            Some(limit) => (StatusCode::PAYLOAD_TOO_LARGE, limit.to_string()),
+            None => internal_err(err),
+        })?;
 
     state
         .db

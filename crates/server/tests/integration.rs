@@ -28,12 +28,20 @@ use tempfile::TempDir;
 use tower::ServiceExt;
 
 async fn spawn_test_server() -> (Router, Arc<AppState>, TempDir) {
+    test_server_with_local_file_limit(None)
+}
+
+fn test_server_with_local_file_limit(
+    limit: Option<u64>,
+) -> (Router, Arc<AppState>, TempDir) {
     let tmp = TempDir::new().unwrap();
     let db = Database::open(tmp.path().join("test.db")).unwrap();
-    let state = AppState::new(
+    let state = AppState::with_google_login(
         db,
         "test-jwt-secret".to_string(),
         tmp.path().join("local_blobs"),
+        None,
+        limit,
     );
     let app = build_router(state.clone());
     (app, state, tmp)
@@ -708,7 +716,7 @@ async fn test_native_google_drive_resumable_upload_download_delete_and_s3() {
         axum::serve(listener, mock_app).await.unwrap();
     });
 
-    let (app, state, _tmp) = spawn_test_server().await;
+    let (app, state, _tmp) = test_server_with_local_file_limit(Some(10));
     let (_, auth): (StatusCode, AuthResponse) = send_json(
         &app,
         "POST",
@@ -1235,6 +1243,93 @@ async fn send_raw(
         .await
         .unwrap();
     (status, bytes.to_vec())
+}
+
+#[tokio::test]
+async fn test_local_file_upload_limit_checks_plans_and_streams() {
+    const LIMIT: usize = 10 * 1024 * 1024;
+    let (app, state, _tmp) = test_server_with_local_file_limit(Some(LIMIT as u64));
+    let (_, owner): (_, AuthResponse) = send_json(
+        &app,
+        "POST",
+        "/api/auth/register",
+        None,
+        Some(json!({"username": "owner", "password": "password123"})),
+    )
+    .await;
+    let token = Some(owner.token.as_str());
+
+    for size in [LIMIT, LIMIT + 1] {
+        let (_, item): (_, DrawerItem) = send_json(
+            &app,
+            "POST",
+            "/api/drawer/items",
+            token,
+            Some(json!({
+                "device_id": "test-device",
+                "name": "file.bin",
+                "kind": "file",
+                "size": size,
+                "transfer_mode": "p2p_only",
+            })),
+        )
+        .await;
+        let item_url = format!("/api/drawer/items/{}", item.id);
+        let (plan_status, _) = send_raw(
+            &app,
+            "POST",
+            &format!("{item_url}/upload-plan"),
+            token,
+            Some(json!({})),
+        )
+        .await;
+        if size > LIMIT {
+            assert_eq!(plan_status, StatusCode::PAYLOAD_TOO_LARGE);
+            continue;
+        }
+        assert_eq!(plan_status, StatusCode::OK);
+        let upload = || {
+            Request::builder()
+                .method("PUT")
+                .uri(format!("{item_url}/upload"))
+                .header(header::AUTHORIZATION, format!("Bearer {}", owner.token))
+        };
+        let payload = bytes::Bytes::from(vec![1; LIMIT]);
+        let at_limit = upload()
+            .header(header::CONTENT_LENGTH, LIMIT)
+            .body(Body::from(payload.clone()))
+            .unwrap();
+        assert_eq!(
+            app.clone().oneshot(at_limit).await.unwrap().status(),
+            StatusCode::OK
+        );
+        let over_limit = upload()
+            .header(header::CONTENT_LENGTH, LIMIT + 1)
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            app.clone().oneshot(over_limit).await.unwrap().status(),
+            StatusCode::PAYLOAD_TOO_LARGE
+        );
+
+        // An upload that omits Content-Length can exceed its declared item size.
+        let chunks = futures_util::stream::iter([
+            Ok::<_, std::io::Error>(bytes::Bytes::from(vec![2; LIMIT])),
+            Ok(bytes::Bytes::from_static(b"x")),
+        ]);
+        let chunked = upload().body(Body::from_stream(chunks)).unwrap();
+        assert_eq!(
+            app.clone().oneshot(chunked).await.unwrap().status(),
+            StatusCode::PAYLOAD_TOO_LARGE
+        );
+        let owner_id = &owner.user.id;
+        let file_dir = state.user_local_storage_dir(owner_id).join(owner_id);
+        assert_eq!(std::fs::read_dir(&file_dir).unwrap().count(), 1);
+        let (download_status, old_file) =
+            send_raw(&app, "GET", &format!("{item_url}/download"), token, None).await;
+        assert_eq!(download_status, StatusCode::OK);
+        assert_eq!(old_file.as_slice(), payload.as_ref());
+    }
 }
 
 #[tokio::test]

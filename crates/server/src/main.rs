@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     env,
+    num::NonZeroU64,
     path::{Path, PathBuf},
 };
 
@@ -22,6 +23,11 @@ async fn main() -> anyhow::Result<()> {
     let db_path = get("DROPDRAWER_DB_PATH").unwrap_or_else(|| "./data/dropdrawer.db".to_string());
     let local_storage =
         get("DROPDRAWER_LOCAL_STORAGE").unwrap_or_else(|| "./data/blobs".to_string());
+    let local_max_file_bytes = get("DROPDRAWER_LOCAL_MAX_FILE_BYTES")
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.trim().parse::<NonZeroU64>().map(NonZeroU64::get))
+        .transpose()
+        .map_err(|_| anyhow::anyhow!("DROPDRAWER_LOCAL_MAX_FILE_BYTES must be a positive byte count"))?;
     let jwt_secret = resolve_jwt_secret(&db_path, get("DROPDRAWER_JWT_SECRET").as_deref())?;
     let cleanup_secs: u64 = get("DROPDRAWER_TTL_CLEANUP_SECS")
         .and_then(|v| v.parse().ok())
@@ -31,8 +37,16 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("Google sign-in is enabled");
     }
     let db = Database::open(&db_path)?;
-    let state =
-        AppState::with_google_login(db, jwt_secret, PathBuf::from(local_storage), google_config);
+    let state = AppState::with_google_login(
+        db,
+        jwt_secret,
+        PathBuf::from(local_storage),
+        google_config,
+        local_max_file_bytes,
+    );
+    if let Some(limit) = local_max_file_bytes {
+        tracing::info!(limit, "server-local per-file upload limit is enabled");
+    }
     let allow_registration = get("DROPDRAWER_ALLOW_REGISTRATION")
         .map(|v| {
             !matches!(

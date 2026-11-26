@@ -396,6 +396,7 @@ mod tests {
             "dropdrawer-test-key".into(),
             std::path::PathBuf::new(),
             config,
+            None,
         )
     }
 

@@ -34,6 +34,7 @@ pub struct AppState {
     pub http: reqwest::Client,
     pub jwt_secret: String,
     pub default_local_storage_dir: PathBuf,
+    pub(crate) local_max_file_bytes: Option<u64>,
     /// Active WebSocket connections keyed by `(user_id, device_id)`.
     pub connections: DashMap<(String, String), mpsc::UnboundedSender<WsEvent>>,
     pub(crate) ready_files: DashMap<(String, String), std::collections::BTreeMap<String, String>>,
@@ -97,7 +98,7 @@ impl AttemptLimiter {
 
 impl AppState {
     pub fn new(db: Database, jwt_secret: String, default_local_storage_dir: PathBuf) -> Arc<Self> {
-        Self::with_google_login(db, jwt_secret, default_local_storage_dir, None)
+        Self::with_google_login(db, jwt_secret, default_local_storage_dir, None, None)
     }
 
     pub fn with_google_login(
@@ -105,6 +106,7 @@ impl AppState {
         jwt_secret: String,
         default_local_storage_dir: PathBuf,
         google_config: Option<GoogleLoginConfig>,
+        local_max_file_bytes: Option<u64>,
     ) -> Arc<Self> {
         let http = reqwest::Client::builder()
             .pool_idle_timeout(std::time::Duration::from_secs(60))
@@ -115,6 +117,7 @@ impl AppState {
             http,
             jwt_secret,
             default_local_storage_dir,
+            local_max_file_bytes,
             connections: DashMap::new(),
             ready_files: DashMap::new(),
             presence_changes: Mutex::new(()),
@@ -298,7 +301,9 @@ impl AppState {
                 anyhow::bail!("local storage directory is outside the server storage area");
             }
             return Ok(Box::new(
-                LocalProvider::new(root, *max_bytes)?.restrict_keys_to(record.user_id.clone()),
+                LocalProvider::new(root, *max_bytes)?
+                    .with_max_file_bytes(self.local_max_file_bytes)
+                    .restrict_keys_to(record.user_id.clone()),
             ));
         }
         build_provider(&record.config, self.http.clone())
