@@ -1,7 +1,7 @@
 name: dropdrawer_app
 description: "DropDrawer - Cross-platform P2P & multi-cloud file transfer drawer."
 publish_to: 'none'
-version: 0.1.9+11
+version: 0.1.10+12
 
 environment:
   sdk: ^3.12.0
