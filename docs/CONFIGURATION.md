@@ -41,7 +41,7 @@ unset admin_password
 ```
 
 使用相同的服务端环境与数据库路径。Docker 部署可将命令替换为
-`docker compose -f deploy/docker-compose.yml run --rm --no-deps -T dropdrawer-server admin-account 'admin@example.com'`。
+`docker compose -f deploy/docker-compose.yml run --rm --no-deps -T dropdrawer-server dropdrawer-server admin-account 'admin@example.com'`。
 如果账号已存在，命令会更新密码并吊销该账号的旧会话。原角色与两步验证设置继续有效。
 
 ### Google 登录与 Turnstile
