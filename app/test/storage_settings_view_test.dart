@@ -159,7 +159,7 @@ void main() {
           ),
         ),
       );
-      await tester.tap(find.text(phone ? '添加云盘' : '添加原生云盘'));
+      await tester.tap(find.text('添加云盘'));
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
       // The default selection (Google Drive) moves to the first allowed kind.
@@ -195,7 +195,7 @@ void main() {
         ),
       ),
     );
-    await tester.tap(find.text('添加原生云盘'));
+    await tester.tap(find.text('添加云盘'));
     await tester.pumpAndSettle();
     expect(find.textContaining('已停用所有可添加的存储类型'), findsOneWidget);
   });

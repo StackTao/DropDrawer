@@ -216,6 +216,7 @@ class ApiClient {
   Future<(String, UserProfile)> changePassword({
     String? currentPassword,
     required String newPassword,
+    String? deviceId,
   }) async {
     final resp = await http
         .post(
@@ -225,6 +226,8 @@ class ApiClient {
             if (currentPassword != null && currentPassword.isNotEmpty)
               'current_password': currentPassword,
             'new_password': newPassword,
+            // The server keeps this device's live connection and closes the others.
+            'device_id': ?deviceId,
           }),
         )
         .timeout(const Duration(seconds: 15));
@@ -248,12 +251,18 @@ class ApiClient {
   Future<AccountInfo> confirmBindEmail({
     required String email,
     required String code,
+    String? currentPassword,
   }) async {
     final resp = await http
         .post(
           Uri.parse('$_cleanBase/api/auth/me/email/confirm'),
           headers: _headers(),
-          body: jsonEncode({'email': email.trim(), 'code': code.trim()}),
+          body: jsonEncode({
+            'email': email.trim(),
+            'code': code.trim(),
+            if (currentPassword != null && currentPassword.isNotEmpty)
+              'current_password': currentPassword,
+          }),
         )
         .timeout(const Duration(seconds: 15));
     _check(resp);

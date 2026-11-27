@@ -59,6 +59,8 @@ pub struct AdminShareRow {
     pub owner_username: String,
     pub item_name: String,
     pub item_size: u64,
+    /// Files in the share (batch shares hold several).
+    pub item_count: u64,
     pub has_passcode: bool,
     pub max_downloads: Option<u64>,
     pub download_count: u64,
@@ -310,8 +312,16 @@ impl Database {
                  s.max_downloads,
                  s.download_count,
                  s.expires_at,
-                 s.created_at
+                 s.created_at,
+                 bundle.n,
+                 bundle.total
              FROM share_links s
+             LEFT JOIN (
+                 SELECT si.share_code AS code, COUNT(*) AS n, SUM(di.size) AS total
+                 FROM share_link_items si
+                 JOIN drawer_items di ON di.id = si.item_id
+                 GROUP BY si.share_code
+             ) bundle ON bundle.code = s.code
              JOIN users u ON u.id = s.user_id
              LEFT JOIN drawer_items i ON i.id = s.item_id
              ORDER BY s.created_at DESC
@@ -319,12 +329,21 @@ impl Database {
         )?;
         let rows = stmt.query_map([], |row| {
             let created: String = row.get(9)?;
+            // Shares made before `share_link_items` existed hold just their primary item.
+            let bundle_count = row.get::<_, Option<i64>>(10)?.unwrap_or(0).max(0) as u64;
+            let primary_size = row.get::<_, i64>(4)?.max(0) as u64;
+            let item_name: String = row.get(3)?;
             Ok(AdminShareRow {
                 code: row.get(0)?,
                 owner_id: row.get(1)?,
                 owner_username: row.get(2)?,
-                item_name: row.get(3)?,
-                item_size: row.get::<_, i64>(4)?.max(0) as u64,
+                item_count: if bundle_count > 0 { bundle_count } else if item_name.is_empty() { 0 } else { 1 },
+                item_name,
+                item_size: if bundle_count > 0 {
+                    row.get::<_, Option<i64>>(11)?.unwrap_or(0).max(0) as u64
+                } else {
+                    primary_size
+                },
                 has_passcode: row.get::<_, i64>(5)? != 0,
                 max_downloads: row.get::<_, Option<i64>>(6)?.map(|v| v.max(0) as u64),
                 download_count: row.get::<_, i64>(7)?.max(0) as u64,

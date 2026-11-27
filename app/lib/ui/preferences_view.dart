@@ -809,7 +809,8 @@ class _PreferencesViewState extends State<PreferencesView> {
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
                                             Icon(
-                                              _recordingHotkey
+                                              // ⌘ is a Mac key; Windows shows a keyboard.
+                                              _recordingHotkey || c.windowService.isWindows
                                                   ? CupertinoIcons.keyboard
                                                   : CupertinoIcons.command,
                                               size: 12,
@@ -1548,8 +1549,13 @@ class _BindEmailDialogState extends State<_BindEmailDialog> {
   late final TextEditingController _emailCtrl =
       TextEditingController(text: widget.initialEmail);
   final _codeCtrl = TextEditingController();
+  final _passwordCtrl = TextEditingController();
   Timer? _cooldownTimer;
   int _cooldownSeconds = 0;
+
+  /// The recovery email can only change with the current password (accounts
+  /// without one must have signed in recently; the server enforces both).
+  bool get _needsPassword => widget.controller.accountInfo?.hasPassword ?? false;
   bool _sending = false;
   bool _submitting = false;
   String? _error;
@@ -1560,6 +1566,7 @@ class _BindEmailDialogState extends State<_BindEmailDialog> {
     _cooldownTimer?.cancel();
     _emailCtrl.dispose();
     _codeCtrl.dispose();
+    _passwordCtrl.dispose();
     super.dispose();
   }
 
@@ -1612,12 +1619,20 @@ class _BindEmailDialogState extends State<_BindEmailDialog> {
       setState(() => _error = l10n.verificationCodeLabel);
       return;
     }
+    if (_needsPassword && _passwordCtrl.text.isEmpty) {
+      setState(() => _error = l10n.currentPassword);
+      return;
+    }
     setState(() {
       _submitting = true;
       _error = null;
     });
     try {
-      await widget.controller.confirmBindEmail(email: email, code: code);
+      await widget.controller.confirmBindEmail(
+        email: email,
+        code: code,
+        currentPassword: _needsPassword ? _passwordCtrl.text : null,
+      );
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
       if (mounted) {
@@ -1682,6 +1697,19 @@ class _BindEmailDialogState extends State<_BindEmailDialog> {
                   ),
                 ],
               ),
+              if (_needsPassword) ...[
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _passwordCtrl,
+                  obscureText: true,
+                  autofillHints: const [AutofillHints.password],
+                  onSubmitted: (_) => _submitting ? null : _submit(),
+                  decoration: InputDecoration(
+                    labelText: l10n.currentPassword,
+                    isDense: true,
+                  ),
+                ),
+              ],
               if (_info != null) ...[
                 const SizedBox(height: 10),
                 Text(

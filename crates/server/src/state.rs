@@ -274,10 +274,26 @@ impl AppState {
     }
 
     pub fn disconnect_user(&self, user_id: &str) {
+        self.disconnect_user_except(user_id, None);
+    }
+
+    /// Keeps WebSocket registration and credential revocation ordered.
+    pub(crate) async fn revoke_user_sessions(
+        &self,
+        user_id: &str,
+        keep_device_id: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let _presence = self.presence_changes.lock().await;
+        self.db.bump_token_version(user_id)?;
+        self.disconnect_user_except(user_id, keep_device_id);
+        Ok(())
+    }
+
+    fn disconnect_user_except(&self, user_id: &str, keep_device_id: Option<&str>) {
         let keys: Vec<(String, String)> = self
             .connections
             .iter()
-            .filter(|e| e.key().0 == user_id)
+            .filter(|e| e.key().0 == user_id && Some(e.key().1.as_str()) != keep_device_id)
             .map(|e| e.key().clone())
             .collect();
         for key in keys {
@@ -339,6 +355,15 @@ impl AppState {
         user_id: &str,
         item_id: &str,
     ) -> anyhow::Result<bool> {
+        self.delete_drawer_item_with_storage_policy(user_id, item_id, false).await
+    }
+
+    async fn delete_drawer_item_with_storage_policy(
+        &self,
+        user_id: &str,
+        item_id: &str,
+        require_storage_delete: bool,
+    ) -> anyhow::Result<bool> {
         let _item_lock = self.lock_drawer_item(item_id).await;
         let Some(item) = self.db.get_drawer_item(item_id, user_id)? else {
             return Ok(false);
@@ -361,8 +386,11 @@ impl AppState {
                 if let Err(err) =
                     crate::policy::ensure_endpoints_allowed(&settings, &backend.config).await
                 {
-                    // The admin has since blocked this endpoint; drop the record without
-                    // contacting it so the item (and TTL cleanup) is not stuck forever.
+                    if require_storage_delete {
+                        return Err(err);
+                    }
+                    // Explicit item removal and TTL cleanup may drop the record
+                    // without contacting a blocked endpoint.
                     tracing::warn!(item_id, "skipping remote blob deletion: {err}");
                 } else {
                     self.build_storage_provider(&backend)?
@@ -381,6 +409,22 @@ impl AppState {
             },
         );
         Ok(true)
+    }
+
+    /// Deletes every drawer item of a user, storage files included. Returns how
+    /// many could not be removed; those keep their records so cleanup can retry.
+    pub(crate) async fn delete_all_drawer_items(&self, user_id: &str) -> anyhow::Result<usize> {
+        let mut failed = 0;
+        for item in self.db.list_drawer_items(user_id)? {
+            if let Err(err) = self
+                .delete_drawer_item_with_storage_policy(user_id, &item.id, true)
+                .await
+            {
+                tracing::warn!(item_id = %item.id, "could not delete drawer item: {err:#}");
+                failed += 1;
+            }
+        }
+        Ok(failed)
     }
 
     /// The only directory a user's server-local storage may live in.

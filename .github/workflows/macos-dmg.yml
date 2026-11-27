@@ -22,6 +22,8 @@ jobs:
     timeout-minutes: 45
     env:
       FLUTTER_VERSION: "3.44.0"
+      # Step `if:` can't read `secrets`; expose whether the certificate is set.
+      HAS_MACOS_CERT: ${{ secrets.DROPDRAWER_MACOS_CERT_P12_BASE64 != '' }}
 
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -56,7 +58,7 @@ jobs:
         run: flutter pub get --enforce-lockfile
 
       - name: Import macOS signing certificate
-        if: secrets.DROPDRAWER_MACOS_CERT_P12_BASE64 != ''
+        if: env.HAS_MACOS_CERT == 'true'
         env:
           CERT_P12_BASE64: ${{ secrets.DROPDRAWER_MACOS_CERT_P12_BASE64 }}
           CERT_PASSWORD: ${{ secrets.DROPDRAWER_MACOS_CERT_PASSWORD }}

@@ -216,8 +216,19 @@ pub(crate) struct CallbackQuery {
     error: Option<String>,
 }
 
-pub(crate) async fn privacy_notice() -> &'static str {
-    include_str!("google_privacy.txt")
+/// Public privacy notice (the URL given to Google's OAuth consent screen). Both
+/// languages stay on one page so the URL works for every reviewer; the
+/// visitor's language comes first.
+pub(crate) async fn privacy_notice() -> impl axum::response::IntoResponse {
+    let en = crate::i18n::is_en();
+    let html = include_str!("google_privacy.html")
+        .replace("__LANG__", crate::i18n::current().html_tag())
+        .replace("__TITLE__", if en { "Privacy Notice · DropDrawer" } else { "隐私说明 · DropDrawer" })
+        .replace("__ORDER__", if en { "en-first" } else { "zh-first" });
+    (
+        [(axum::http::header::VARY, "Accept-Language")],
+        axum::response::Html(html),
+    )
 }
 
 #[derive(Deserialize, Default)]
@@ -541,7 +552,7 @@ body{{margin:0;min-height:100dvh;display:grid;place-items:center;padding:24px 16
 .card{{position:relative;width:100%;max-width:416px;padding:34px 30px 26px;border-radius:22px;background:var(--card);border:1px solid var(--line);box-shadow:var(--shadow);text-align:center}}
 .card::before{{content:"";position:absolute;inset:-1px 28px auto 28px;height:1px;background:linear-gradient(90deg,transparent,var(--accent),transparent);opacity:.6}}
 .brand{{display:inline-flex;align-items:center;gap:7px;padding:4px 11px;border-radius:999px;border:1px solid var(--line);font-size:12px;font-weight:600;color:var(--muted);margin-bottom:22px}}
-.brand i{{width:7px;height:7px;border-radius:50%;background:var(--accent);display:block}}
+.brand img{{width:18px;height:18px;display:block}}
 .badge{{width:58px;height:58px;margin:0 auto 18px;border-radius:18px;display:grid;place-items:center}}
 .badge svg{{width:28px;height:28px;fill:none;stroke:currentColor;stroke-width:2.3;stroke-linecap:round;stroke-linejoin:round}}
 .ok .badge{{background:var(--ok-bg);border:1px solid var(--ok-line);color:var(--ok)}}
@@ -553,7 +564,7 @@ p.detail{{margin:0;color:var(--muted);font-size:14px;line-height:1.65}}
 </head>
 <body>
 <main class="card {tone}">
-  <div class="brand"><i></i>DropDrawer</div>
+  <div class="brand"><img src="/admin/assets/logo.svg" alt="">DropDrawer</div>
   <div class="badge">{badge_svg}</div>
   <h1>{title}</h1>
   <p class="detail">{detail}</p>
@@ -570,7 +581,7 @@ p.detail{{margin:0;color:var(--muted);font-size:14px;line-height:1.65}}
             (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
             (
                 header::CONTENT_SECURITY_POLICY,
-                "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+                "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
             ),
         ],
         Html(html),

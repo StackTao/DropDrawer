@@ -100,7 +100,7 @@ struct DevicesView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("\(device.displayName)\(device.id == store.deviceId ? String(localized: "（本机）") : "")")
                     .lineLimit(1)
-                Text(device.platform)
+                Text(device.platformName)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }

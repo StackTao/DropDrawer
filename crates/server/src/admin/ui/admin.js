@@ -412,7 +412,11 @@
         h("thead", null, h("tr", null, columns.map((c) => h("th", { class: c.cls || null }, c.label)))),
         h("tbody", null, rows.map((r) => {
           const tr = h("tr", { class: onRowClick ? "clickable" : null },
-            columns.map((c) => h("td", { class: c.cls || null }, c.render(r))));
+            columns.map((c) => h("td", {
+              class: c.cls || null,
+              // Narrow screens show each row as a card, labelling every value.
+              "data-label": typeof c.label === "string" ? c.label : "",
+            }, c.render(r))));
           if (onRowClick) {
             tr.tabIndex = 0;
             tr.addEventListener("click", (e) => { if (!e.target.closest("button, a")) onRowClick(r); });
@@ -780,7 +784,7 @@
       h("span", { class: "dot " + state }), h("span", { class: "label", text: label }), h("span", { class: "value", text: value }), icon("arrow-right", "faint"));
     const f = st.features;
     const policies = h("div", { class: "card" },
-      h("div", { class: "card-head" }, h("div", null, h("h2", { text: t("当前生效的策略") }), h("p", { text: t("客户端通过 /api/auth/config 实时读取") }))),
+      h("div", { class: "card-head" }, h("div", null, h("h2", { text: t("当前生效的策略") }), h("p", { text: t("修改后立即对所有客户端生效") }))),
       h("div", { class: "policy-list" },
         policy(t("新用户注册"), regLabel, st.registration_mode === "closed" ? "danger" : st.registration_mode === "invite_only" ? "warn" : "ok", "access"),
         policy(t("账号密码登录"), st.password_login_enabled ? t("开启") : t("关闭"), st.password_login_enabled ? "ok" : "", "access"),
@@ -1142,7 +1146,7 @@
             u.google_linked ? pill("Google", "accent", false) : pill(t("密码"), null, false),
             u.email_verified ? pill(t("邮箱已验证"), "ok", false) : null),
         },
-        { label: t("设备"), cls: "num", render: (u) => `${u.online_devices} / ${u.device_count}` },
+        { label: t("在线 / 设备"), cls: "num", render: (u) => `${u.online_devices} / ${u.device_count}` },
         { label: t("条目 / 云端"), cls: "num", render: (u) => h("div", null, h("div", { text: fmtNum(u.item_count) }), h("div", { class: "cell-sub", text: fmtBytes(u.storage_bytes) })) },
         {
           label: t("限制"), render: (u) => {
@@ -1270,7 +1274,7 @@
 
     return [
       h("div", { class: "mini-stats" },
-        miniStat(t("设备"), `${u.online_devices} / ${u.device_count}`),
+        miniStat(t("在线 / 设备"), `${u.online_devices} / ${u.device_count}`),
         miniStat(t("抽屉条目"), fmtNum(u.item_count)),
         miniStat(t("云端占用"), fmtBytes(u.storage_bytes)),
         miniStat(t("配额"), detail.effective_local_quota_bytes ? fmtBytes(detail.effective_local_quota_bytes) : t("不限")),
@@ -1289,9 +1293,19 @@
           onclick: async (e) => {
             const ok = await typedConfirm(t("删除账号"), t("此操作会永久删除「{username}」及其全部云端文件。请输入用户名确认：", { username: u.username }), u.username);
             if (!ok) return;
-            if ((await run(e.currentTarget, () => api(userPath, { method: "DELETE" }), t("已删除「{username}」", { username: u.username }))) !== undefined) {
-              drawerState.close();
-              refreshAll();
+            const button = e.currentTarget;
+            const done = () => { toast(t("已删除「{username}」", { username: u.username })); drawerState.close(); refreshAll(); };
+            button.classList.add("busy");
+            try {
+              await api(userPath, { method: "DELETE" });
+              done();
+            } catch (err) {
+              // 409: some cloud files could not be removed and the account was kept.
+              if (err.status !== 409) { if (err.status !== 401) toast(err.message || String(err), "err"); return; }
+              const force = await confirmDialog(t("部分云端文件无法删除"), err.message + " " + t("强制删除后，这些文件会留在用户的云盘里，需要手动清理。"), { confirmText: t("强制删除"), danger: true });
+              if (force && (await run(button, () => api(userPath + "?force=true", { method: "DELETE" }))) !== undefined) done();
+            } finally {
+              button.classList.remove("busy");
             }
           },
         })),
@@ -1455,11 +1469,13 @@
       const rows = filtered();
       meta.textContent = t("{rowsLength} 条", { rowsLength: rows.length }) + (S.shares.length >= 1000 ? t("（最多显示 1000 条）") : "");
       replace(host, table([
-      { label: t("外链"), render: (s) => h("a", { class: "mono", href: "/s/" + encodeURIComponent(s.code), target: "_blank", rel: "noopener noreferrer", text: "/s/" + s.code }) },
-      { label: t("内容"), render: (s) => h("div", { class: "truncate" }, h("div", { class: s.item_name ? "cell-main truncate" : "cell-main truncate faint", text: s.item_name || t("（已删除）") }), h("div", { class: "cell-sub", text: fmtBytes(s.item_size) })) },
+      { label: t("外链"), render: (s) => h("div", { class: "nowrap" },
+        h("a", { class: "mono", href: "/s/" + encodeURIComponent(s.code), target: "_blank", rel: "noopener noreferrer", text: "/s/" + s.code }),
+        s.has_passcode ? h("span", { title: t("有提取码") }, " ", icon("lock", "faint")) : null) },
+      { label: t("内容"), render: (s) => h("div", { class: "truncate" }, h("div", { class: s.item_name ? "cell-main truncate" : "cell-main truncate faint", text: s.item_name || t("（已删除）") }), h("div", { class: "cell-sub", text: s.item_count > 1 ? t("{count} 个文件 · {size}", { count: s.item_count, size: fmtBytes(s.item_size) }) : fmtBytes(s.item_size) })) },
       { label: t("创建者"), render: (s) => h("button", { class: "btn ghost sm", type: "button", onclick: () => openUserDrawer(s.owner_id, "shares") }, s.owner_username) },
       { label: t("下载"), cls: "num", render: (s) => `${fmtNum(s.download_count)}${s.max_downloads ? " / " + fmtNum(s.max_downloads) : ""}` },
-      { label: t("有效期"), render: (s) => h("div", { class: "nowrap" }, s.has_passcode ? icon("lock", "faint") : null, " ", s.expires_at ? fmtDate(s.expires_at) : t("永久")) },
+      { label: t("有效期"), render: (s) => h("div", { class: "nowrap", text: s.expires_at ? fmtDate(s.expires_at) : t("永久") }) },
       { label: t("状态"), render: shareState },
       {
         label: "", cls: "actions", render: (s) => btn(t("吊销"), {
@@ -1690,11 +1706,13 @@
     if (!sess) return h("div", { class: "page" });
     const current = h("input", { class: "input", type: "password", autocomplete: "current-password", id: "me-cur" });
     const next = h("input", { class: "input", type: "password", autocomplete: "new-password", id: "me-new", placeholder: t("至少 10 位") });
+    const confirmNext = h("input", { class: "input", type: "password", autocomplete: "new-password", id: "me-new2" });
     const changePwd = btn(t("修改密码"), {
       kind: "primary",
       onclick: async (e) => {
+        if (next.value !== confirmNext.value) { toast(t("两次输入的新密码不一致"), "err"); confirmNext.focus(); return; }
         if ((await run(e.currentTarget, () => api("/api/admin/me/password", { method: "POST", body: { current_password: current.value, new_password: next.value } }), t("密码已修改，其他设备上的会话已退出"))) !== undefined) {
-          current.value = ""; next.value = "";
+          current.value = ""; next.value = ""; confirmNext.value = "";
         }
       },
     });
@@ -1752,7 +1770,9 @@
         h("div", null, h("h2", { text: sess.actor }), h("div", { class: "pills" }, pill(ROLE_LABELS[sess.role] || sess.role, "accent", false))))),
       sectionTitle(t("两步验证")), totpSection,
       sectionTitle(t("修改密码"), t("修改后其他设备上的管理端会话会退出")),
-      h("div", { class: "card" }, h("div", { class: "inline-form" }, field(t("当前密码"), current), field(t("新密码"), next), h("span"), changePwd)));
+      h("div", { class: "card" },
+        h("div", { class: "fields" }, field(t("当前密码"), current), field(t("新密码"), next), field(t("确认新密码"), confirmNext)),
+        h("div", { class: "form-foot" }, changePwd)));
   }
 
   // ---------------------------------------------------------------------------

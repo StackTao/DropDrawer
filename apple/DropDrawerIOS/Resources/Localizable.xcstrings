@@ -1181,7 +1181,7 @@
         }
       }
     },
-    "已下 %lld 次": {
+    "已下载 %lld 次": {
       "localizations": {
         "en": {
           "variations": {
@@ -1203,7 +1203,7 @@
         }
       }
     },
-    "已下 %lld/%lld 次": {
+    "已下载 %lld/%lld 次": {
       "localizations": {
         "en": {
           "stringUnit": {

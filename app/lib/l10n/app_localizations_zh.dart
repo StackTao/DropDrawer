@@ -1053,7 +1053,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get shareLinkCreatedAndCopiedTo => '外链已生成并自动复制到剪贴板';
 
   @override
-  String get manageShareLinks => '外链分享管理';
+  String get manageShareLinks => '外链管理';
 
   @override
   String createBundleLinkItems(int targetItemsLength) {
@@ -1231,12 +1231,12 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String downloadedOfMax(Object downloadCount, Object maxDownloads) {
-    return '已下 $downloadCount/$maxDownloads 次';
+    return '已下载 $downloadCount/$maxDownloads 次';
   }
 
   @override
   String downloadedCount(int downloadCount) {
-    return '已下 $downloadCount 次';
+    return '已下载 $downloadCount 次';
   }
 
   @override
@@ -1360,7 +1360,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get pasteTheCookieFromPanQuark => '请粘贴 pan.quark.cn 的 Cookie';
 
   @override
-  String get storageSaved => '已保存原生云盘策略';
+  String get storageSaved => '已保存云盘配置';
 
   @override
   String saveFailedColon(Object e) {
@@ -1374,16 +1374,16 @@ class AppLocalizationsZh extends AppLocalizations {
   String get refreshStorageList => '刷新存储列表';
 
   @override
-  String get cloudStorage2 => '原生云盘与存储';
+  String get cloudStorage2 => '云盘与存储';
 
   @override
   String get editStorage => '编辑存储';
 
   @override
-  String get configured => '已配置云盘';
+  String get configured => '已配置';
 
   @override
-  String get addStorage => '添加原生云盘';
+  String get addStorage => '添加云盘';
 
   @override
   String get theServerAdministratorHasDisabledEvery =>
@@ -1521,7 +1521,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get save => '保存';
 
   @override
-  String get noStorageYetUseAddStorage => '暂无存储策略，点击上方「添加原生云盘」直连配置';
+  String get noStorageYetUseAddStorage => '还没有存储，点击上方「添加云盘」开始配置';
 
   @override
   String cantReadStorage(Object e) {
@@ -1564,7 +1564,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get alreadyHaveARefreshTokenSave => '已有 Refresh Token？直接保存';
 
   @override
-  String get saveStorage => '保存原生云盘配置';
+  String get saveStorage => '保存云盘配置';
 
   @override
   String get localDiskFull => '本地磁盘';
@@ -1762,10 +1762,10 @@ class AppLocalizationsZh extends AppLocalizations {
   String get switchToTheEdgeDrawer => '切换为边缘抽屉';
 
   @override
-  String get cloudStorageTransferStorage => '多云盘与中转存储';
+  String get cloudStorageTransferStorage => '云盘与存储';
 
   @override
-  String get deviceStatus => '设备状态';
+  String get deviceStatus => '设备与 P2P';
 
   @override
   String get clearDrawer => '清空抽屉';
@@ -1914,7 +1914,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get oldRecordsLeftWhenTheSame => '同一台设备重装或重新登录后留下的旧记录。';
 
   @override
-  String get signedInDevicesP2pNodes => '已登录设备与 P2P 节点';
+  String get signedInDevicesP2pNodes => '设备与 P2P';
 
   @override
   String get irohQuicP2pNodeRunningOn => '本机 iroh QUIC P2P 节点运行中';

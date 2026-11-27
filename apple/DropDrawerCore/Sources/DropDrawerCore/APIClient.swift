@@ -534,10 +534,14 @@ public final class APIClient: @unchecked Sendable {
         return try JSONDecoder().decode(AccountInfo.self, from: data)
     }
 
-    public func changePassword(currentPassword: String?, newPassword: String) async throws -> AuthResult {
+    public func changePassword(currentPassword: String?, newPassword: String, deviceId: String? = nil) async throws -> AuthResult {
         var body: [String: Any] = ["new_password": newPassword]
         if let currentPassword, !currentPassword.isEmpty {
             body["current_password"] = currentPassword
+        }
+        // The server keeps this device's live connection and closes the others.
+        if let deviceId {
+            body["device_id"] = deviceId
         }
         let req = try makeRequest("/api/auth/me/password", method: "POST", jsonBody: body)
         let data = try await perform(req)
@@ -555,15 +559,15 @@ public final class APIClient: @unchecked Sendable {
         _ = try await perform(req)
     }
 
-    public func confirmBindEmail(email: String, code: String) async throws -> AccountInfo {
-        let req = try makeRequest(
-            "/api/auth/me/email/confirm",
-            method: "POST",
-            jsonBody: [
-                "email": email.trimmingCharacters(in: .whitespacesAndNewlines),
-                "code": code.trimmingCharacters(in: .whitespacesAndNewlines),
-            ]
-        )
+    public func confirmBindEmail(email: String, code: String, currentPassword: String? = nil) async throws -> AccountInfo {
+        var body: [String: Any] = [
+            "email": email.trimmingCharacters(in: .whitespacesAndNewlines),
+            "code": code.trimmingCharacters(in: .whitespacesAndNewlines),
+        ]
+        if let currentPassword, !currentPassword.isEmpty {
+            body["current_password"] = currentPassword
+        }
+        let req = try makeRequest("/api/auth/me/email/confirm", method: "POST", jsonBody: body)
         let data = try await perform(req)
         return try JSONDecoder().decode(AccountInfo.self, from: data)
     }

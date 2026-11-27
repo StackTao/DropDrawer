@@ -22,12 +22,27 @@ services:
       # Leave empty to auto-generate and persist in /data/jwt_secret.
       - DROPDRAWER_JWT_SECRET=${DROPDRAWER_JWT_SECRET:-}
       # Set to true after creating an admin account to enable /admin.
-      - DROPDRAWER_ADMIN_ENABLED=${DROPDRAWER_ADMIN_ENABLED:-false}
+      - DROPDRAWER_ADMIN_ENABLED=${DROPDRAWER_ADMIN_ENABLED:-}
+      # Legacy enable flag kept for upgrades from older templates (used only when
+      # DROPDRAWER_ADMIN_ENABLED is unset). Its value no longer authenticates requests.
+      - DROPDRAWER_ADMIN_TOKEN=${DROPDRAWER_ADMIN_TOKEN:-}
       # Set to true when deployed behind Nginx / Caddy / Cloudflare reverse proxy.
       - DROPDRAWER_TRUST_PROXY=${DROPDRAWER_TRUST_PROXY:-false}
       - DROPDRAWER_ALLOW_REGISTRATION=${DROPDRAWER_ALLOW_REGISTRATION:-true}
       - DROPDRAWER_TTL_CLEANUP_SECS=${DROPDRAWER_TTL_CLEANUP_SECS:-300}
       - DROPDRAWER_CORS_ORIGINS=${DROPDRAWER_CORS_ORIGINS:-}
       - RUST_LOG=${RUST_LOG:-info}
+      # Google sign-in. Used until settings are saved once in /admin, which then wins.
+      - DROPDRAWER_GOOGLE_CLIENT_ID=${DROPDRAWER_GOOGLE_CLIENT_ID:-}
+      - DROPDRAWER_GOOGLE_CLIENT_SECRET=${DROPDRAWER_GOOGLE_CLIENT_SECRET:-}
+      - DROPDRAWER_GOOGLE_REDIRECT_URI=${DROPDRAWER_GOOGLE_REDIRECT_URI:-}
+      # Optional initial SMTP defaults (can also be configured live inside /admin).
+      - DROPDRAWER_SMTP_HOST=${DROPDRAWER_SMTP_HOST:-}
+      - DROPDRAWER_SMTP_PORT=${DROPDRAWER_SMTP_PORT:-587}
+      - DROPDRAWER_SMTP_SECURITY=${DROPDRAWER_SMTP_SECURITY:-start_tls}
+      - DROPDRAWER_SMTP_USERNAME=${DROPDRAWER_SMTP_USERNAME:-}
+      - DROPDRAWER_SMTP_PASSWORD=${DROPDRAWER_SMTP_PASSWORD:-}
+      - DROPDRAWER_SMTP_FROM=${DROPDRAWER_SMTP_FROM:-}
+      - DROPDRAWER_SMTP_FROM_NAME=${DROPDRAWER_SMTP_FROM_NAME:-DropDrawer}
     volumes:
       - ./data/server:/data

@@ -1139,7 +1139,7 @@ class MainFlutterWindow: NSWindow {
 
       addItem(NativeStrings.text("menuShares", "外链管理"), symbol: "link", id: "shares")
       addItem(NativeStrings.text("menuPreferences", "偏好设置"), symbol: "gearshape", id: "preferences")
-      addItem(NativeStrings.text("menuDevices", "设备状态"), symbol: "laptopcomputer.and.iphone", id: "devices")
+      addItem(NativeStrings.text("menuDevices", "设备与 P2P"), symbol: "laptopcomputer.and.iphone", id: "devices")
       addItem(
         self.dockSide == .left ? NativeStrings.text("dockRight", "停靠右侧") : NativeStrings.text("dockLeft", "停靠左侧"),
         symbol: self.dockSide == .left ? "sidebar.right" : "sidebar.left",

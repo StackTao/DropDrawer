@@ -152,6 +152,11 @@ pub struct ChangePasswordRequest {
     #[serde(default)]
     pub current_password: Option<String>,
     pub new_password: String,
+    /// The device making the change. Its live connection is kept; every other
+    /// device of the account is disconnected. Older clients omit it, and then
+    /// all connections are closed.
+    #[serde(default)]
+    pub device_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -163,6 +168,10 @@ pub struct BindEmailSendCodeRequest {
 pub struct BindEmailConfirmRequest {
     pub email: String,
     pub code: String,
+    /// Required when the account has a password: changing the recovery email
+    /// must not be possible with a session alone.
+    #[serde(default)]
+    pub current_password: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

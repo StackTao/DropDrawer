@@ -716,7 +716,7 @@
   },
   "thisServerRequiresAPasscodeFor": "服务器要求外链必须设置提取码",
   "shareLinkCreatedAndCopiedTo": "外链已生成并自动复制到剪贴板",
-  "manageShareLinks": "外链分享管理",
+  "manageShareLinks": "外链管理",
   "createBundleLinkItems": "打包创建外链 ({targetItemsLength} 项)",
   "@createBundleLinkItems": {
     "placeholders": {
@@ -859,7 +859,7 @@
     }
   },
   "passcodeRequired2": "需提取码",
-  "downloadedOfMax": "已下 {downloadCount}/{maxDownloads} 次",
+  "downloadedOfMax": "已下载 {downloadCount}/{maxDownloads} 次",
   "@downloadedOfMax": {
     "placeholders": {
       "downloadCount": {
@@ -870,7 +870,7 @@
       }
     }
   },
-  "downloadedCount": "已下 {downloadCount} 次",
+  "downloadedCount": "已下载 {downloadCount} 次",
   "@downloadedCount": {
     "placeholders": {
       "downloadCount": {
@@ -991,7 +991,7 @@
   },
   "enterARefreshTokenOrUse": "请填写 Refresh Token，或点击上方「浏览器一键授权 Google」",
   "pasteTheCookieFromPanQuark": "请粘贴 pan.quark.cn 的 Cookie",
-  "storageSaved": "已保存原生云盘策略",
+  "storageSaved": "已保存云盘配置",
   "saveFailedColon": "保存失败: {e}",
   "@saveFailedColon": {
     "placeholders": {
@@ -1002,10 +1002,10 @@
   },
   "cloudStorage": "云盘与存储",
   "refreshStorageList": "刷新存储列表",
-  "cloudStorage2": "原生云盘与存储",
+  "cloudStorage2": "云盘与存储",
   "editStorage": "编辑存储",
-  "configured": "已配置云盘",
-  "addStorage": "添加原生云盘",
+  "configured": "已配置",
+  "addStorage": "添加云盘",
   "theServerAdministratorHasDisabledEvery": "服务器管理员已停用所有可添加的存储类型，暂时无法添加新的云盘。",
   "localDisk": "本地盘",
   "name": "名称",
@@ -1082,7 +1082,7 @@
   "iAlreadyHaveARefreshToken": "已有 Refresh Token，直接保存",
   "saving": "正在保存…",
   "save": "保存",
-  "noStorageYetUseAddStorage": "暂无存储策略，点击上方「添加原生云盘」直连配置",
+  "noStorageYetUseAddStorage": "还没有存储，点击上方「添加云盘」开始配置",
   "cantReadStorage": "无法读取存储配置：{e}",
   "@cantReadStorage": {
     "placeholders": {
@@ -1109,7 +1109,7 @@
   "storageLocation": "存储位置",
   "authorizeGoogleDriveInBrowserOne": "浏览器一键授权 Google Drive",
   "alreadyHaveARefreshTokenSave": "已有 Refresh Token？直接保存",
-  "saveStorage": "保存原生云盘配置",
+  "saveStorage": "保存云盘配置",
   "localDiskFull": "本地磁盘",
   "p2pEndToEndOnThis": "仅本机 P2P 端到端直连 · 不占服务器与云盘",
   "policyAlwaysUploadShort": "直接上传至「{defaultStorageBackendName}」· 离线可下",
@@ -1271,8 +1271,8 @@
   "collapseToEdgeEsc": "收起到边缘 (Esc)",
   "switchToARegularWindow": "切换为常规窗口",
   "switchToTheEdgeDrawer": "切换为边缘抽屉",
-  "cloudStorageTransferStorage": "多云盘与中转存储",
-  "deviceStatus": "设备状态",
+  "cloudStorageTransferStorage": "云盘与存储",
+  "deviceStatus": "设备与 P2P",
   "clearDrawer": "清空抽屉",
   "dockRight": "停靠右侧",
   "dockLeft": "停靠左侧",
@@ -1390,7 +1390,7 @@
     }
   },
   "oldRecordsLeftWhenTheSame": "同一台设备重装或重新登录后留下的旧记录。",
-  "signedInDevicesP2pNodes": "已登录设备与 P2P 节点",
+  "signedInDevicesP2pNodes": "设备与 P2P",
   "irohQuicP2pNodeRunningOn": "本机 iroh QUIC P2P 节点运行中",
   "p2pEngineNotLoaded": "P2P 引擎未加载",
   "thisDeviceSuffixShort": " (本机)",

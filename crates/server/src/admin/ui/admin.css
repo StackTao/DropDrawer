@@ -430,7 +430,7 @@ body.readonly .readonly-banner { display: flex; }
 /* ---------- Shell & Mobile Header ---------- */
 .mobile-bar { display: none; }
 .sidebar-scrim { display: none; }
-.sidebar-close { display: none; }
+.btn.sidebar-close { display: none; }
 
 .shell {
   position: relative;
@@ -598,6 +598,7 @@ body.readonly .readonly-banner { display: flex; }
 .row-control { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
 .row.disabled .row-title, .row.disabled .row-desc, .row.stack.disabled .fields { opacity: 0.45; }
 .fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 14px; }
+.form-foot { display: flex; justify-content: flex-end; margin-top: 14px; }
 .field { display: grid; gap: 6px; min-width: 0; }
 .field > label { font-size: 12px; color: var(--text-2); font-weight: 500; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .callout {
@@ -763,7 +764,7 @@ body.readonly .readonly-banner { display: flex; }
 .pills { display: flex; flex-wrap: wrap; gap: 6px; }
 
 /* ---------- Overview ---------- */
-.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(176px, 1fr)); gap: 14px; }
 .kpi {
   position: relative;
   padding: 18px 18px 16px;
@@ -1065,7 +1066,7 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
     box-shadow: var(--shadow);
   }
   .sidebar.open { transform: translateX(0); }
-  .sidebar-close { display: inline-flex; margin-left: auto; }
+  .btn.sidebar-close { display: inline-flex; margin-left: auto; }
   .brand { padding: 2px 6px 14px; }
   .main { padding: 0 16px 110px; }
   .topbar { padding: 20px 0 14px; align-items: flex-start; flex-direction: column; gap: 12px; }
@@ -1073,6 +1074,26 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
   .grid-2 { grid-template-columns: 1fr; }
   .savebar { left: 50%; }
   .inline-form { grid-template-columns: 1fr 1fr; }
+}
+
+/* Tables become one card per row on phones: the first column is the title,
+   other values sit beside their column name, actions go to the bottom. */
+@media (max-width: 720px) {
+  .table-scroll { overflow-x: visible; }
+  .table thead { display: none; }
+  .table, .table tbody, .table tr, .table td { display: block; width: 100%; }
+  .table tr { padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .table tr:last-child { border-bottom: 0; }
+  .table td, .table td.num, .table td.actions {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    padding: 4px 0; border: 0; text-align: right; white-space: normal;
+  }
+  .table td::before { content: attr(data-label); flex-shrink: 0; color: var(--text-3); font-size: 12px; text-align: left; }
+  .table td:first-child { justify-content: flex-start; text-align: left; padding: 0 0 6px; }
+  .table td:first-child::before, .table td[data-label=""]::before { display: none; }
+  .table td.actions { justify-content: flex-end; padding-top: 8px; }
+  .table td > * { min-width: 0; }
+  .table .truncate { max-width: 100%; }
 }
 
 @media (max-width: 600px) {
@@ -1083,6 +1104,8 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
   .row-control .input-unit { width: 100%; max-width: 180px; }
   .card { padding: 16px; }
   .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  /* An odd last card spans the row instead of leaving a gap beside it. */
+  .kpis > .kpi:last-child:nth-child(odd) { grid-column: 1 / -1; }
   .kpi { padding: 14px; }
   .kpi-value { font-size: 24px; }
   .fields { grid-template-columns: 1fr; }

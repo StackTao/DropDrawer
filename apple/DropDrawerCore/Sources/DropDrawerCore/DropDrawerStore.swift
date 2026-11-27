@@ -259,7 +259,8 @@ public final class DropDrawerStore {
         guard let api else { return }
         let auth = try await api.changePassword(
             currentPassword: currentPassword,
-            newPassword: newPassword
+            newPassword: newPassword,
+            deviceId: deviceId
         )
         storage.token = auth.token
         storage.user = auth.user
@@ -287,9 +288,9 @@ public final class DropDrawerStore {
         try await api.sendBindEmailCode(email: email)
     }
 
-    public func confirmBindEmail(email: String, code: String) async throws {
+    public func confirmBindEmail(email: String, code: String, currentPassword: String? = nil) async throws {
         guard let api else { return }
-        let info = try await api.confirmBindEmail(email: email, code: code)
+        let info = try await api.confirmBindEmail(email: email, code: code, currentPassword: currentPassword)
         accountInfo = info
         let updatedUser = UserProfile(id: info.id, username: info.username, email: info.email)
         user = updatedUser

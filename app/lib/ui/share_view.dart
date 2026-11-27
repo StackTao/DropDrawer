@@ -496,7 +496,7 @@ class _ShareViewState extends State<ShareView> {
         color: inactive ? MacPalette.textTertiary : MacPalette.accent,
       ),
       title: link.itemName,
-      subtitle: meta.join(' · '),
+      subtitleParts: meta,
       dimmed: inactive,
       onTap: () => showPhoneActions(
         context,

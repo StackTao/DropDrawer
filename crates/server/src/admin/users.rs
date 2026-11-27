@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
@@ -185,8 +185,7 @@ pub(super) async fn reset_password(
         return Err(not_found("user"));
     }
     // Sessions opened with the old password end with it.
-    state.db.bump_token_version(&id).map_err(internal_err)?;
-    state.disconnect_user(&id);
+    state.revoke_user_sessions(&id, None).await.map_err(internal_err)?;
     state.failed_logins.reset(&user.username.to_lowercase());
     audit(&state, &admin, "user.reset_password", Some(&user.username), None);
     Ok(Json(serde_json::json!({ "ok": true })))
@@ -199,8 +198,7 @@ pub(super) async fn sign_out(
     Path(id): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let user = require_user(&state, &id)?;
-    state.db.bump_token_version(&id).map_err(internal_err)?;
-    state.disconnect_user(&id);
+    state.revoke_user_sessions(&id, None).await.map_err(internal_err)?;
     audit(&state, &admin, "user.sign_out", Some(&user.username), None);
     Ok(Json(serde_json::json!({ "ok": true })))
 }
@@ -232,19 +230,34 @@ pub(super) async fn update_policy(
     Ok(Json(saved))
 }
 
+#[derive(Deserialize, Default)]
+pub(super) struct DeleteUserQuery {
+    /// Delete the account even when some cloud files could not be removed
+    /// (for storage that is gone for good). Those files must be cleaned up by hand.
+    #[serde(default)]
+    force: bool,
+}
+
 pub(super) async fn delete_user(
     admin: AdminSession,
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    Query(query): Query<DeleteUserQuery>,
 ) -> ApiResult<StatusCode> {
     let user = require_user(&state, &id)?;
     state.disconnect_user(&id);
-    let items = state.db.list_drawer_items(&id).map_err(internal_err)?;
-    let mut failed = 0usize;
-    for item in items {
-        if state.delete_drawer_item(&id, &item.id).await.is_err() {
-            failed += 1;
-        }
+    let failed = state.delete_all_drawer_items(&id).await.map_err(internal_err)?;
+    if failed > 0 && !query.force {
+        // Deleting the user would drop the storage credentials and the records
+        // cleanup retries with, orphaning the files in the user's cloud.
+        return Err((
+            StatusCode::CONFLICT,
+            if crate::i18n::is_en() {
+                format!("{failed} cloud file(s) couldn't be removed, so the account was kept. Try again, or force delete if the storage is gone for good.")
+            } else {
+                format!("有 {failed} 个云端文件无法删除，账号已保留。请稍后重试；如果该云盘已永久失效，可以强制删除。")
+            },
+        ));
     }
     if !state.db.delete_user(&id).map_err(internal_err)? {
         return Err(not_found("user"));

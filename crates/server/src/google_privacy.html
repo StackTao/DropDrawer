@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="__LANG__">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>__TITLE__</title>
+<link rel="icon" href="/admin/assets/logo.svg" type="image/svg+xml">
+<style>
+:root{color-scheme:light dark;--bg:#f4f6fa;--card:#fff;--line:rgba(15,23,42,.09);--text:#0f172a;--muted:#475569;--faint:#64748b;--accent:#0284c7;--glow:rgba(14,165,233,.1)}
+@media(prefers-color-scheme:dark){:root{--bg:#07090e;--card:#10141e;--line:rgba(255,255,255,.11);--text:#f4f6fa;--muted:#a2a9b8;--faint:#6e7588;--accent:#38bdf8;--glow:rgba(56,189,248,.12)}}
+*{box-sizing:border-box}
+body{margin:0;padding:48px 16px 64px;background:radial-gradient(880px 420px at 50% -8%,var(--glow),transparent 65%),var(--bg);color:var(--text);font:400 15px/1.75 -apple-system,BlinkMacSystemFont,"PingFang SC","SF Pro Text","Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
+main{max-width:720px;margin:0 auto;display:flex;flex-direction:column;gap:20px}
+main.en-first #en{order:-1}
+header{display:flex;align-items:center;gap:10px;margin-bottom:4px;font-weight:650;font-size:15px}
+header img{width:28px;height:28px}
+header nav{margin-left:auto;display:flex;gap:14px;font-size:13px;font-weight:500}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+article{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:30px 32px}
+h1{margin:0 0 6px;font-size:24px;letter-spacing:-.02em}
+.updated{margin:0 0 20px;color:var(--faint);font-size:13px}
+h2{margin:24px 0 6px;font-size:16px}
+p{margin:0 0 10px;color:var(--muted)}
+footer{text-align:center;color:var(--faint);font-size:13px}
+@media(max-width:560px){article{padding:24px 20px}h1{font-size:21px}}
+</style>
+</head>
+<body>
+<main class="__ORDER__">
+  <header><img src="/admin/assets/logo.svg" alt="">DropDrawer<nav><a href="#zh" lang="zh-CN">中文</a><a href="#en" lang="en">English</a></nav></header>
+
+  <article id="zh" lang="zh-CN">
+    <h1>隐私说明</h1>
+    <p class="updated">适用于 DropDrawer 客户端与服务端</p>
+    <h2>Google 登录</h2>
+    <p>DropDrawer 向 Google 申请基本身份信息和已验证的电子邮箱。服务端保存 Google 账号的唯一标识以识别同一用户，并将已验证邮箱用作初始账号名称。</p>
+    <p>服务端用 Google 身份令牌确认登录后签发 DropDrawer 会话。登录过程不保存 Google 令牌，也不读取 Gmail、联系人或 Google Drive。Google Drive 文件缓存需要用户另行配置。</p>
+    <h2>数据使用</h2>
+    <p>登录数据只用于访问同一服务器上的账号和抽屉。服务器保存已登记的设备、抽屉数据和文件元数据。文件可能在设备间直接传输，或存到用户配置的存储服务。用户创建外链后，获得链接的人可以按外链设置访问分享的文件。</p>
+    <h2>删除数据</h2>
+    <p>可以在应用内删除抽屉内容、撤销外链或注销账号。也可以联系所用服务器的管理员删除账号及关联数据；官方服务可通过 Google 授权界面列出的支持邮箱联系。删除后，备份中可能仍保留数据，直到该备份被轮换删除。</p>
+  </article>
+
+  <article id="en" lang="en">
+    <h1>Privacy Notice</h1>
+    <p class="updated">Applies to the DropDrawer apps and server</p>
+    <h2>Google sign-in</h2>
+    <p>DropDrawer requests your basic Google identity and verified email address. The server stores your Google account identifier to recognize your account and uses the verified email as your initial account name.</p>
+    <p>The server verifies the Google ID token and issues a DropDrawer session. Sign-in stores no Google tokens and does not read Gmail, Google Contacts, or Google Drive. Google Drive file caching is configured separately.</p>
+    <h2>How data is used</h2>
+    <p>Sign-in data is used only to give you access to your account and drawer on the server you selected. That server stores registered devices, drawer data, and file metadata. Files may travel directly between your devices or be stored in storage you configure. When you create a share link, people with the link can access the shared files according to the link's settings.</p>
+    <h2>Deleting data</h2>
+    <p>You can delete drawer items, revoke share links, or delete your account in the app. You can also ask your server administrator to delete your account and associated data; for the official server, use the support address on the Google consent screen. Deleted data may persist in backups until those backups are rotated out.</p>
+  </article>
+
+  <footer><a href="https://github.com/StackTao/DropDrawer">github.com/StackTao/DropDrawer</a></footer>
+</main>
+</body>
+</html>

@@ -936,7 +936,7 @@ void main() {
     await tester.pump();
 
     // Navigate to a secondary page (Storage Settings).
-    await tester.tap(find.byTooltip('多云盘与中转存储'));
+    await tester.tap(find.byTooltip('云盘与存储'));
     await tester.pump();
     expect(find.byType(StorageSettingsView), findsOneWidget);
 

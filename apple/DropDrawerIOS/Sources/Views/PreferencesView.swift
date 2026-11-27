@@ -403,6 +403,7 @@ private struct BindEmailSheet: View {
 
     @State private var email: String = ""
     @State private var code: String = ""
+    @State private var currentPassword: String = ""
     @State private var cooldown: Int = 0
     @State private var sending: Bool = false
     @State private var submitting: Bool = false
@@ -434,6 +435,13 @@ private struct BindEmailSheet: View {
                             }
                         }
                         .disabled(sending || cooldown > 0 || email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+
+                    // The recovery email only changes with the current password; accounts
+                    // without one must have signed in recently (the server checks both).
+                    if needsPassword {
+                        SecureField(String(localized: "当前密码"), text: $currentPassword)
+                            .textContentType(.password)
                     }
                 } footer: {
                     Text(String(localized: "绑定后可用于邮箱登录和找回密码。"))
@@ -472,10 +480,14 @@ private struct BindEmailSheet: View {
                     Button(String(localized: "保存")) {
                         Task { await submit() }
                     }
-                    .disabled(submitting || email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(submitting || email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (needsPassword && currentPassword.isEmpty))
                 }
             }
         }
+    }
+
+    private var needsPassword: Bool {
+        store.accountInfo?.hasPassword ?? false
     }
 
     private func startCooldown() {
@@ -510,7 +522,11 @@ private struct BindEmailSheet: View {
         errorMessage = nil
         defer { submitting = false }
         do {
-            try await store.confirmBindEmail(email: email, code: code)
+            try await store.confirmBindEmail(
+                email: email,
+                code: code,
+                currentPassword: needsPassword ? currentPassword : nil
+            )
             dismiss()
         } catch {
             errorMessage = error.localizedDescription

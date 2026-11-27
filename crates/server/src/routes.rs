@@ -34,7 +34,7 @@ use uuid::Uuid;
 use crate::admin::ClientIp;
 use crate::auth::{
     create_versioned_jwt, decode_jwt, hash_password, issue_user_token, validate_user_claims,
-    verify_password, AuthUser,
+    verify_password, AuthUser, Claims,
 };
 use crate::db::DrawerItemRow;
 use crate::mailer::build_verification_email;
@@ -322,8 +322,7 @@ async fn reset_password(
         .update_user_password(&user.id, &hash)
         .map_err(internal_err)?;
     // A reset password must also end sessions that may have been opened with the old one.
-    state.db.bump_token_version(&user.id).map_err(internal_err)?;
-    state.disconnect_user(&user.id);
+    state.revoke_user_sessions(&user.id, None).await.map_err(internal_err)?;
     state.failed_logins.reset(&login_limit_key(&ip, &user.username));
     state.failed_logins.reset(&login_limit_key(&ip, &email));
 
@@ -558,25 +557,18 @@ async fn change_own_password(
         .map_err(internal_err)?
         .ok_or_else(|| (StatusCode::NOT_FOUND, t!("账号不存在", "account not found").to_string()))?;
 
-    let has_password = !user.password_hash.trim().is_empty();
-    if has_password {
-        let current = req.current_password.as_deref().unwrap_or("");
-        if current.is_empty() || !verify_password_blocking(current, &user.password_hash).await {
-            return Err((
-                StatusCode::UNAUTHORIZED,
-                t!("当前密码不正确", "Current password is incorrect").to_string(),
-            ));
-        }
-    }
+    // A Google-only account adding its first password must also prove it is the holder.
+    confirm_account_holder(&auth, &user, req.current_password.as_deref()).await?;
 
     let hash = hash_password(&req.new_password).map_err(internal_err)?;
     state
         .db
         .update_user_password(&user.id, &hash)
         .map_err(internal_err)?;
+    // The initiating device reconnects with the new token after this response.
     state
-        .db
-        .bump_token_version(&user.id)
+        .revoke_user_sessions(&user.id, req.device_id.as_deref())
+        .await
         .map_err(internal_err)?;
     state.failed_logins.reset(&user.username.to_lowercase());
     if let Some(ref email) = user.email {
@@ -599,6 +591,16 @@ async fn send_bind_email_code(
     State(state): State<Arc<AppState>>,
     Json(req): Json<BindEmailSendCodeRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let user = state
+        .db
+        .find_user_by_id(&auth.user_id)
+        .map_err(internal_err)?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, t!("账号不存在", "account not found").to_string()))?;
+    // Passwordless accounts must have signed in recently; password accounts give
+    // their password when confirming the code. Checking now saves a wasted email.
+    if user.password_hash.trim().is_empty() {
+        confirm_account_holder(&auth, &user, None).await?;
+    }
     let email = req.email.trim().to_ascii_lowercase();
     if !is_valid_email(&email) {
         return Err((
@@ -674,6 +676,13 @@ async fn confirm_bind_email(
     State(state): State<Arc<AppState>>,
     Json(req): Json<BindEmailConfirmRequest>,
 ) -> Result<Json<AccountInfo>, (StatusCode, String)> {
+    let user = state
+        .db
+        .find_user_by_id(&auth.user_id)
+        .map_err(internal_err)?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, t!("账号不存在", "account not found").to_string()))?;
+    // The email is where password resets go, so a session alone must not change it.
+    confirm_account_holder(&auth, &user, req.current_password.as_deref()).await?;
     let email = req.email.trim().to_ascii_lowercase();
     if !is_valid_email(&email) {
         return Err((
@@ -737,15 +746,7 @@ async fn delete_own_account(
         .ok_or_else(|| (StatusCode::NOT_FOUND, t!("账号不存在", "account not found").to_string()))?;
 
     let has_password = !user.password_hash.trim().is_empty();
-    if has_password {
-        let pwd = req.password.as_deref().unwrap_or("");
-        if pwd.is_empty() || !verify_password_blocking(pwd, &user.password_hash).await {
-            return Err((
-                StatusCode::UNAUTHORIZED,
-                t!("密码不正确，无法注销账号", "Password is incorrect").to_string(),
-            ));
-        }
-    } else {
+    if !has_password {
         let confirm = req.confirm_username.as_deref().map(str::trim).unwrap_or("");
         if confirm != user.username {
             return Err((
@@ -754,11 +755,22 @@ async fn delete_own_account(
             ));
         }
     }
+    confirm_account_holder(&auth, &user, req.password.as_deref()).await?;
 
     state.disconnect_user(&user.id);
-    let items = state.db.list_drawer_items(&user.id).map_err(internal_err)?;
-    for item in items {
-        let _ = state.delete_drawer_item(&user.id, &item.id).await;
+    let failed = state.delete_all_drawer_items(&user.id).await.map_err(internal_err)?;
+    if failed > 0 {
+        // Deleting the account would also drop the storage credentials and the
+        // records that let cleanup retry, leaving the files in the user's cloud
+        // for good. Keep the account so the user can try again.
+        let message = if crate::i18n::is_en() {
+            let files = if failed == 1 { "1 file" } else { "files" };
+            let files = if failed == 1 { files.to_string() } else { format!("{failed} {files}") };
+            format!("{files} couldn't be removed from cloud storage, so the account wasn't deleted. Check the storage connection and try again")
+        } else {
+            format!("有 {failed} 个文件暂时无法从云盘删除，账号尚未注销。请检查云盘连接后重试")
+        };
+        return Err((StatusCode::BAD_GATEWAY, message));
     }
     state.db.delete_user(&user.id).map_err(internal_err)?;
     Ok(StatusCode::NO_CONTENT)
@@ -1728,7 +1740,14 @@ fn format_share_display_name(custom_title: Option<&str>, items: &[DrawerItemRow]
     if items.len() == 1 {
         return items[0].name.clone();
     }
-    tf!("{} 等 {} 项", "{} and {} items", items[0].name, items.len())
+    let first = &items[0].name;
+    // "A 等 3 项" counts every item; English names the first and counts the rest.
+    if crate::i18n::is_en() {
+        let more = items.len() - 1;
+        format!("{first} and {more} more {}", if more == 1 { "item" } else { "items" })
+    } else {
+        format!("{first} 等 {} 项", items.len())
+    }
 }
 
 fn create_share_for_items(
@@ -1906,6 +1925,40 @@ struct PublicShareQuery {
     item_id: Option<String>,
 }
 
+/// How long after signing in a passwordless (Google-only) account may change
+/// its security settings. A session alone, however old, is not enough.
+const RECENT_SIGN_IN_MINUTES: i64 = 10;
+
+/// Confirms the request comes from the account holder, not just someone holding
+/// a session: the current password when the account has one, otherwise a sign-in
+/// within the last few minutes (signing in with Google again proves it).
+async fn confirm_account_holder(
+    auth: &AuthUser,
+    user: &crate::db::UserRecord,
+    password: Option<&str>,
+) -> Result<(), (StatusCode, String)> {
+    if !user.password_hash.trim().is_empty() {
+        let password = password.unwrap_or("");
+        if password.is_empty() || !verify_password_blocking(password, &user.password_hash).await {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                t!("当前密码不正确", "Current password is incorrect").to_string(),
+            ));
+        }
+        return Ok(());
+    }
+    if Utc::now() - auth.issued_at <= Duration::minutes(RECENT_SIGN_IN_MINUTES) {
+        return Ok(());
+    }
+    Err((
+        StatusCode::FORBIDDEN,
+        tf!(
+            "为了保护账号安全，请退出后重新用 Google 登录，并在 {RECENT_SIGN_IN_MINUTES} 分钟内完成此操作",
+            "For your security, sign out, sign in with Google again, and finish this within {RECENT_SIGN_IN_MINUTES} minutes"
+        ),
+    ))
+}
+
 /// Runs Argon2 verification off the async worker threads.
 async fn verify_password_blocking(password: &str, hash: &str) -> bool {
     let (password, hash) = (password.to_string(), hash.to_string());
@@ -1992,7 +2045,14 @@ async fn public_share_meta(
 
     let locked = !share_unlocked(&state, &share, query.passcode.as_deref()).await?;
 
-    let display_name = format_share_display_name(share.title.as_deref(), &items);
+    // Without a title chosen by the sharer, the name comes from the files, which
+    // the passcode protects. Before unlocking, show a neutral title instead.
+    let has_custom_title = share.title.as_deref().is_some_and(|t| !t.trim().is_empty());
+    let display_name = if locked && !has_custom_title {
+        t!("此分享需要提取码", "This share needs a passcode").to_string()
+    } else {
+        format_share_display_name(share.title.as_deref(), &items)
+    };
     let total_size: u64 = items.iter().map(|it| it.size).sum();
     let primary_kind = if items.iter().any(|it| it.kind == DrawerItemKind::File) {
         DrawerItemKind::File
@@ -2005,7 +2065,10 @@ async fn public_share_meta(
         None
     };
 
-    let serialized_items: Vec<serde_json::Value> = items
+    // A passcode protects the file list too: before unlocking, visitors see only
+    // the share's title, item count and total size.
+    let visible_items: &[DrawerItemRow] = if locked { &[] } else { &items };
+    let serialized_items: Vec<serde_json::Value> = visible_items
         .iter()
         .map(|it| {
             serde_json::json!({
@@ -2214,14 +2277,15 @@ async fn ws_upgrade(
         return Err((StatusCode::NOT_FOUND, t!("设备尚未注册，请重新登录", "This device isn't registered. Sign in again").to_string()));
     }
 
-    Ok(ws.on_upgrade(move |socket| handle_ws(socket, state, claims.sub, query.device_id)))
+    Ok(ws.on_upgrade(move |socket| handle_ws(socket, state, claims, query.device_id)))
 }
 
-async fn handle_ws(socket: WebSocket, state: Arc<AppState>, user_id: String, device_id: String) {
+async fn handle_ws(socket: WebSocket, state: Arc<AppState>, claims: Claims, device_id: String) {
     const PING_INTERVAL: StdDuration = StdDuration::from_secs(20);
     const READ_TIMEOUT: StdDuration = StdDuration::from_secs(60);
     let (mut ws_sink, mut ws_stream) = socket.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<WsEvent>();
+    let user_id = claims.sub.clone();
     let key = (user_id.clone(), device_id.clone());
     let is_current = || {
         state
@@ -2232,6 +2296,10 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>, user_id: String, dev
 
     {
         let _presence = state.presence_changes.lock().await;
+        // Credentials can change between the HTTP upgrade and this callback.
+        if validate_user_claims(&state, &claims).is_err() {
+            return;
+        }
         state.ready_files.remove(&key);
         state.connections.insert(key.clone(), tx.clone());
 

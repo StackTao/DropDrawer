@@ -173,6 +173,19 @@ public struct DeviceInfo: Codable, Sendable, Equatable, Identifiable {
         }
         return name.trimmingCharacters(in: .whitespacesAndNewlines)
     }
+
+    /// Product name for the reported platform ("macos" → "macOS").
+    public var platformName: String {
+        switch platform.lowercased() {
+        case "macos": return "macOS"
+        case "ios": return "iOS"
+        case "ipados": return "iPadOS"
+        case "android": return "Android"
+        case "windows": return "Windows"
+        case "linux": return "Linux"
+        default: return platform
+        }
+    }
 }
 
 public struct DrawerItem: Codable, Sendable, Equatable, Identifiable, Hashable {

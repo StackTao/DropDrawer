@@ -389,6 +389,7 @@ class DropDrawerController extends ChangeNotifier {
     final (tok, profile) = await api.changePassword(
       currentPassword: currentPassword,
       newPassword: newPassword,
+      deviceId: deviceId,
     );
     if (!identical(_api, api)) return;
     token = tok;
@@ -421,10 +422,15 @@ class DropDrawerController extends ChangeNotifier {
   Future<void> confirmBindEmail({
     required String email,
     required String code,
+    String? currentPassword,
   }) async {
     final api = _api;
     if (api == null) return;
-    final info = await api.confirmBindEmail(email: email, code: code);
+    final info = await api.confirmBindEmail(
+      email: email,
+      code: code,
+      currentPassword: currentPassword,
+    );
     if (!identical(_api, api)) return;
     accountInfo = info;
     user = UserProfile(

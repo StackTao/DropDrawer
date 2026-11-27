@@ -283,9 +283,9 @@ struct ShareLinksView: View {
         if link.itemCount > 1 { parts.append(String(localized: "\(link.itemCount) 项合集")) }
         parts.append(formatBytes(link.itemSize))
         if let max = link.maxDownloads {
-            parts.append(String(localized: "已下 \(link.downloadCount)/\(max) 次", locale: AppLanguage.locale))
+            parts.append(String(localized: "已下载 \(link.downloadCount)/\(max) 次", locale: AppLanguage.locale))
         } else {
-            parts.append(String(localized: "已下 \(link.downloadCount) 次", locale: AppLanguage.locale))
+            parts.append(String(localized: "已下载 \(link.downloadCount) 次", locale: AppLanguage.locale))
         }
         if link.hasPasscode { parts.append(String(localized: "需提取码")) }
         return parts.joined(separator: " · ")

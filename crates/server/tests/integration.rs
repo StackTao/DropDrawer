@@ -1074,6 +1074,9 @@ async fn test_public_share_link_passcode_limit_and_revoke() {
     .await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(meta_locked["locked"], json!(true));
+    // Without a custom title, the file name stays hidden until the passcode.
+    assert_eq!(meta_locked["name"], json!("此分享需要提取码"));
+    assert_eq!(meta_locked["items"], json!([]));
 
     let (st, meta_open): (StatusCode, serde_json::Value) = send_json(
         &app,
@@ -1201,6 +1204,20 @@ async fn test_public_share_link_passcode_limit_and_revoke() {
     assert_eq!(st, StatusCode::OK);
     assert_eq!(bundle.item_count, 2);
     assert_eq!(bundle.item_name, "项目打包合集");
+
+    // Before the passcode, only the title, count and total size are visible.
+    let (st, locked_meta): (StatusCode, serde_json::Value) = send_json(
+        &app,
+        "GET",
+        &format!("/api/s/{}/meta", bundle.code),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(locked_meta["locked"], json!(true));
+    assert_eq!(locked_meta["item_count"], json!(2));
+    assert_eq!(locked_meta["items"].as_array().unwrap().len(), 0);
 
     let (st, bmeta): (StatusCode, serde_json::Value) = send_json(
         &app,
@@ -1812,12 +1829,22 @@ async fn test_self_service_account_password_email_bind_and_delete() {
     assert_eq!(emails.len(), 1);
     let code = emails[0].subject.rsplit('：').next().unwrap().trim().to_string();
 
-    let (st, bound): (StatusCode, AccountInfo) = send_json(
+    // A session alone can't change the recovery email: the password is required.
+    let (st, _) = send_raw(
         &app,
         "POST",
         "/api/auth/me/email/confirm",
         Some(&reg.token),
         Some(json!({"email": "self@example.com", "code": code})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+    let (st, bound): (StatusCode, AccountInfo) = send_json(
+        &app,
+        "POST",
+        "/api/auth/me/email/confirm",
+        Some(&reg.token),
+        Some(json!({"email": "self@example.com", "code": code, "current_password": "oldpassword"})),
     )
     .await;
     assert_eq!(st, StatusCode::OK);
@@ -1835,15 +1862,27 @@ async fn test_self_service_account_password_email_bind_and_delete() {
     .await;
     assert_eq!(st, StatusCode::UNAUTHORIZED);
 
+    // Two live devices: the one changing the password keeps its connection,
+    // the other is disconnected along with its now-revoked token.
+    for device in ["this-device", "other-device"] {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        state.connections.insert((reg.user.id.clone(), device.into()), tx);
+    }
     let (st, updated): (StatusCode, AuthResponse) = send_json(
         &app,
         "POST",
         "/api/auth/me/password",
         Some(&reg.token),
-        Some(json!({"current_password": "oldpassword", "new_password": "newpassword123"})),
+        Some(json!({
+            "current_password": "oldpassword",
+            "new_password": "newpassword123",
+            "device_id": "this-device",
+        })),
     )
     .await;
     assert_eq!(st, StatusCode::OK);
+    assert!(state.connections.contains_key(&(reg.user.id.clone(), "this-device".into())));
+    assert!(!state.connections.contains_key(&(reg.user.id.clone(), "other-device".into())));
 
     // Old token must be rejected now.
     let (st, _) = send_raw(&app, "GET", "/api/auth/me", Some(&reg.token), None).await;
@@ -1876,6 +1915,206 @@ async fn test_self_service_account_password_email_bind_and_delete() {
 
     let (st, _) = send_raw(&app, "GET", "/api/auth/me", Some(&updated.token), None).await;
     assert_eq!(st, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn passwordless_accounts_must_sign_in_again_for_security_changes() {
+    use dropdrawer_server::auth::Claims;
+    use dropdrawer_server::mailer::MemoryEmailSender;
+    use jsonwebtoken::{EncodingKey, Header, encode};
+
+    let (app, state, _tmp) = spawn_test_server().await;
+    state.set_email_sender(Arc::new(MemoryEmailSender::new()));
+    // A Google-only account: no password to ask for.
+    let user = state.db.create_user("g-user", "gina", "").unwrap();
+    let token_signed_in = |minutes_ago: i64| {
+        let now = Utc::now();
+        let claims = Claims {
+            sub: user.id.clone(),
+            username: user.username.clone(),
+            exp: (now + Duration::days(1)).timestamp() as usize,
+            role: None,
+            ver: 0,
+            iat: (now - Duration::minutes(minutes_ago)).timestamp() as usize,
+        };
+        encode(&Header::default(), &claims, &EncodingKey::from_secret(state.jwt_secret.as_bytes())).unwrap()
+    };
+    let stale = token_signed_in(60);
+    let fresh = token_signed_in(1);
+
+    // An old session can't set a password, change the email or delete the account.
+    for (path, body) in [
+        ("/api/auth/me/password", json!({"new_password": "brand-new-password"})),
+        ("/api/auth/me/email/send-code", json!({"email": "gina@example.com"})),
+        ("/api/auth/me/email/confirm", json!({"email": "gina@example.com", "code": "123456"})),
+        ("/api/auth/me/delete", json!({"confirm_username": "gina"})),
+    ] {
+        let (st, body) = send_raw(&app, "POST", path, Some(&stale), Some(body)).await;
+        assert_eq!(st, StatusCode::FORBIDDEN, "{path}");
+        assert!(String::from_utf8_lossy(&body).contains("重新用 Google 登录"), "{path}");
+    }
+    // After signing in again it works.
+    let (st, _) = send_raw(
+        &app,
+        "POST",
+        "/api/auth/me/password",
+        Some(&fresh),
+        Some(json!({"new_password": "brand-new-password"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+}
+
+/// A drawer file whose storage delete fails: a directory sits where the file should be.
+fn stuck_cloud_file(state: &AppState, user_id: &str) -> std::path::PathBuf {
+    let backend = state.resolve_backend(user_id, None).unwrap();
+    let storage_key = format!("{user_id}/stuck.txt");
+    let path = state.user_local_storage_dir(user_id).join(&storage_key);
+    std::fs::create_dir_all(&path).unwrap();
+    std::fs::write(path.join("keep"), b"x").unwrap();
+    state
+        .db
+        .create_drawer_item(&DrawerItemRow {
+            id: "stuck".into(),
+            user_id: user_id.to_owned(),
+            owner_device_id: "device".into(),
+            kind: DrawerItemKind::File,
+            name: "stuck.txt".into(),
+            size: 1,
+            mime_type: None,
+            blake3_hash: None,
+            text_content: None,
+            thumbnail_base64: None,
+            transfer_mode: TransferMode::CloudCached,
+            storage_backend_id: Some(backend.id),
+            storage_path: Some(storage_key),
+            cloud_ready: true,
+            expires_at: None,
+            created_at: Utc::now(),
+        })
+        .unwrap();
+    path
+}
+
+#[tokio::test]
+async fn admin_delete_keeps_users_with_stuck_files_unless_forced() {
+    let (app, state, _tmp) = admin_test_server();
+    let admin = admin_login(&app).await;
+    let user = state.db.create_user("stuck-user", "stuck", "").unwrap();
+    stuck_cloud_file(&state, &user.id);
+    let uri = format!("/api/admin/users/{}", user.id);
+
+    let (st, _) = send_raw(&app, "DELETE", &uri, Some(&admin), None).await;
+    assert_eq!(st, StatusCode::CONFLICT);
+    assert!(state.db.find_user_by_id(&user.id).unwrap().is_some());
+
+    let (st, _) = send_raw(&app, "DELETE", &format!("{uri}?force=true"), Some(&admin), None).await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    assert!(state.db.find_user_by_id(&user.id).unwrap().is_none());
+}
+
+#[tokio::test]
+async fn account_is_kept_when_its_cloud_files_cannot_be_deleted() {
+    let (app, state, _tmp) = spawn_test_server().await;
+    let (_, reg): (_, AuthResponse) = send_json(
+        &app,
+        "POST",
+        "/api/auth/register",
+        None,
+        Some(json!({"username": "leaver", "password": "password123"})),
+    )
+    .await;
+    let user_id = reg.user.id.clone();
+    let path = stuck_cloud_file(&state, &user_id);
+
+    let delete = || {
+        send_raw(
+            &app,
+            "POST",
+            "/api/auth/me/delete",
+            Some(&reg.token),
+            Some(json!({"password": "password123"})),
+        )
+    };
+    let (st, _) = delete().await;
+    assert_eq!(st, StatusCode::BAD_GATEWAY);
+    // The account, its storage settings and the retry record all remain.
+    assert!(state.db.find_user_by_id(&user_id).unwrap().is_some());
+    assert!(state.db.get_drawer_item("stuck", &user_id).unwrap().is_some());
+
+    // Once the file can be removed, deletion goes through.
+    std::fs::remove_dir_all(&path).unwrap();
+    std::fs::write(&path, b"x").unwrap();
+    let (st, _) = delete().await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    assert!(state.db.find_user_by_id(&user_id).unwrap().is_none());
+    assert!(!path.exists());
+}
+
+#[tokio::test]
+async fn account_deletion_keeps_files_on_a_blocked_storage_endpoint() {
+    let (app, state, _tmp) = spawn_test_server().await;
+    let (_, reg): (_, AuthResponse) = send_json(
+        &app,
+        "POST",
+        "/api/auth/register",
+        None,
+        Some(json!({"username": "nas_owner", "password": "password123"})),
+    )
+    .await;
+    let user_id = &reg.user.id;
+    let backend = state
+        .db
+        .create_storage_backend(
+            "office-nas",
+            user_id,
+            "Office NAS",
+            &StorageBackendConfig::WebDav {
+                base_url: "http://127.0.0.1:9/dav".into(),
+                username: "test-user".into(),
+                password: "test-password".into(),
+            },
+            false,
+        )
+        .unwrap();
+    let mut settings = state.runtime_settings();
+    settings.storage_policy.block_private_endpoints = true;
+    state.apply_and_persist_settings(settings).unwrap();
+
+    state
+        .db
+        .create_drawer_item(&DrawerItemRow {
+            id: "stuck".into(),
+            user_id: user_id.clone(),
+            owner_device_id: "device".into(),
+            kind: DrawerItemKind::File,
+            name: "stuck.txt".into(),
+            size: 1,
+            mime_type: None,
+            blake3_hash: None,
+            text_content: None,
+            thumbnail_base64: None,
+            transfer_mode: TransferMode::CloudCached,
+            storage_backend_id: Some(backend.id.clone()),
+            storage_path: Some("stuck.txt".into()),
+            cloud_ready: true,
+            expires_at: None,
+            created_at: Utc::now(),
+        })
+        .unwrap();
+    let (status, _) = send_raw(
+        &app,
+        "POST",
+        "/api/auth/me/delete",
+        Some(&reg.token),
+        Some(json!({"password": "password123"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert!(state.db.find_user_by_id(user_id).unwrap().is_some());
+    let item = state.db.get_drawer_item("stuck", user_id).unwrap().unwrap();
+    assert_eq!(item.storage_backend_id.as_deref(), Some(backend.id.as_str()));
+    assert_eq!(item.storage_path.as_deref(), Some("stuck.txt"));
 }
 
 #[tokio::test]

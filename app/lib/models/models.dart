@@ -497,6 +497,26 @@ class TransferProgress {
   }
 }
 
+/// Product name for a device platform as reported by clients ("macos" → "macOS").
+String platformDisplayName(String platform) {
+  switch (platform.toLowerCase()) {
+    case 'macos':
+      return 'macOS';
+    case 'ios':
+      return 'iOS';
+    case 'ipados':
+      return 'iPadOS';
+    case 'android':
+      return 'Android';
+    case 'windows':
+      return 'Windows';
+    case 'linux':
+      return 'Linux';
+    default:
+      return platform;
+  }
+}
+
 String formatBytes(int bytes) {
   if (bytes < 1024) return '$bytes B';
   if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';

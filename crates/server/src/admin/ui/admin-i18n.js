@@ -205,7 +205,7 @@
     "客户端没有指定时使用，留空为 7 天（168 小时）。": "Used when the client doesn't specify one. Leave empty for 7 days (168 hours).",
     "客户端版本": "Client version",
     "客户端版本分布": "Client versions",
-    "客户端通过 /api/auth/config 实时读取": "Clients read these live from /api/auth/config",
+    "修改后立即对所有客户端生效": "Changes reach every client right away",
     "密码": "Password",
     "密码 / 授权码": "Password / app password",
     "密码已修改，其他设备上的会话已退出": "Password changed. Sessions on other devices were signed out",
@@ -492,7 +492,14 @@
     "默认配额": "Default quota",
     "（我）": " (me)",
     "（无标题）": "(No title)",
-    "（最多显示 1000 条）": " (showing up to 1,000)"
+    "（最多显示 1000 条）": " (showing up to 1,000)",
+    "两次输入的新密码不一致": "The new passwords don't match",
+    "确认新密码": "Confirm new password",
+    "在线 / 设备": "Online / devices",
+    "部分云端文件无法删除": "Some cloud files couldn't be removed",
+    "强制删除后，这些文件会留在用户的云盘里，需要手动清理。": "If you force delete, those files stay in the user's cloud storage and must be removed by hand.",
+    "强制删除": "Force delete",
+    "{count} 个文件 · {size}": "{count} file · {size}|{count} files · {size}"
   };
 
   function stored() {

@@ -3146,7 +3146,7 @@ class _DrawerScreenState extends State<DrawerScreen>
           color: device.online ? MacPalette.textPrimary : MacPalette.textTertiary,
         ),
         title: '$cleanName${device.id == c.deviceId ? l10n.thisDeviceSuffix : ''}',
-        subtitle: device.platform,
+        subtitle: platformDisplayName(device.platform),
         value: device.online ? l10n.online : l10n.offline,
         trailing: Container(
           width: 8,
@@ -3374,7 +3374,7 @@ class _DrawerScreenState extends State<DrawerScreen>
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            '${device.platform} · ${device.online ? l10n.online : l10n.offline}',
+                            '${platformDisplayName(device.platform)} · ${device.online ? l10n.online : l10n.offline}',
                             style: TextStyle(
                               fontSize: 10.5,
                               color: MacPalette.textTertiary,

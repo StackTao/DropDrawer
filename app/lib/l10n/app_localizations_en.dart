@@ -1172,7 +1172,7 @@ class AppLocalizationsEn extends AppLocalizations {
       'Share link created and copied to the clipboard';
 
   @override
-  String get manageShareLinks => 'Manage share links';
+  String get manageShareLinks => 'Share links';
 
   @override
   String createBundleLinkItems(int targetItemsLength) {
@@ -2034,10 +2034,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get switchToTheEdgeDrawer => 'Switch to the edge drawer';
 
   @override
-  String get cloudStorageTransferStorage => 'Cloud storage & transfer storage';
+  String get cloudStorageTransferStorage => 'Cloud & storage';
 
   @override
-  String get deviceStatus => 'Device status';
+  String get deviceStatus => 'Devices & P2P';
 
   @override
   String get clearDrawer => 'Clear drawer';
@@ -2202,7 +2202,7 @@ class AppLocalizationsEn extends AppLocalizations {
       'Old records left when the same device was reinstalled or signed in again.';
 
   @override
-  String get signedInDevicesP2pNodes => 'Signed-in devices & P2P nodes';
+  String get signedInDevicesP2pNodes => 'Devices & P2P';
 
   @override
   String get irohQuicP2pNodeRunningOn =>

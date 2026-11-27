@@ -1115,6 +1115,7 @@ class PhoneRow extends StatelessWidget {
     super.key,
     required this.title,
     this.subtitle,
+    this.subtitleParts,
     this.value,
     this.leading,
     this.trailing,
@@ -1135,6 +1136,10 @@ class PhoneRow extends StatelessWidget {
   /// Lets the subtitle be selected and copied (paths, links).
   final bool selectable;
   final String? subtitle;
+
+  /// Details shown as "a · b · c" that wrap only between parts, so a part
+  /// like "剩余 19 小时" never splits across lines. Used instead of [subtitle].
+  final List<String>? subtitleParts;
   final String? value;
   final Widget? trailing;
   final VoidCallback? onTap;
@@ -1162,9 +1167,30 @@ class PhoneRow extends StatelessWidget {
             builder: (context, constraints) {
               // Cap the trailing value width without wrapping it in Flexible so
               // Expanded(title) pushes value + chevron flush to the right edge.
-              final maxValueWidth = constraints.maxWidth.isFinite
+              // The value gets at least 46% of the row, and all the room a short
+              // title leaves (e.g. "添加时间" next to a full date).
+              var maxValueWidth = constraints.maxWidth.isFinite
                   ? constraints.maxWidth * 0.46
                   : 160.0;
+              if (constraints.maxWidth.isFinite && value != null) {
+                final titleWidth = (TextPainter(
+                  text: TextSpan(
+                    text: title,
+                    style: TextStyle(fontSize: material ? 16 : 16.5),
+                  ),
+                  maxLines: 1,
+                  textDirection: Directionality.of(context),
+                  textScaler: MediaQuery.textScalerOf(context),
+                )..layout())
+                    .width;
+                final reserved = titleWidth +
+                    12 +
+                    (leading != null ? 40 : 0) +
+                    (trailing != null ? 40 : 0) +
+                    (onTap != null && chevron ? 24 : 0);
+                final room = constraints.maxWidth - reserved;
+                if (room > maxValueWidth) maxValueWidth = room;
+              }
               return Row(
                 children: [
                   if (leading != null) ...[leading!, const SizedBox(width: 12)],
@@ -1191,6 +1217,27 @@ class PhoneRow extends StatelessWidget {
                                         : MacPalette.textPrimary),
                           ),
                         ),
+                        if (subtitle == null && subtitleParts != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 3),
+                            child: Wrap(
+                              children: [
+                                for (var i = 0; i < subtitleParts!.length; i++)
+                                  Text(
+                                    i == subtitleParts!.length - 1
+                                        ? subtitleParts![i]
+                                        : '${subtitleParts![i]} · ',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: material ? 14 : 13,
+                                      height: 1.35,
+                                      color: MacPalette.textSecondary,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
                         if (subtitle != null)
                           Padding(
                             padding: const EdgeInsets.only(top: 3),

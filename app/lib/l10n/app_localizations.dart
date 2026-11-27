@@ -1934,7 +1934,7 @@ abstract class AppLocalizations {
   /// No description provided for @manageShareLinks.
   ///
   /// In zh, this message translates to:
-  /// **'外链分享管理'**
+  /// **'外链管理'**
   String get manageShareLinks;
 
   /// No description provided for @createBundleLinkItems.
@@ -2237,13 +2237,13 @@ abstract class AppLocalizations {
   /// No description provided for @downloadedOfMax.
   ///
   /// In zh, this message translates to:
-  /// **'已下 {downloadCount}/{maxDownloads} 次'**
+  /// **'已下载 {downloadCount}/{maxDownloads} 次'**
   String downloadedOfMax(Object downloadCount, Object maxDownloads);
 
   /// No description provided for @downloadedCount.
   ///
   /// In zh, this message translates to:
-  /// **'已下 {downloadCount} 次'**
+  /// **'已下载 {downloadCount} 次'**
   String downloadedCount(int downloadCount);
 
   /// No description provided for @expired.
@@ -2439,7 +2439,7 @@ abstract class AppLocalizations {
   /// No description provided for @storageSaved.
   ///
   /// In zh, this message translates to:
-  /// **'已保存原生云盘策略'**
+  /// **'已保存云盘配置'**
   String get storageSaved;
 
   /// No description provided for @saveFailedColon.
@@ -2463,7 +2463,7 @@ abstract class AppLocalizations {
   /// No description provided for @cloudStorage2.
   ///
   /// In zh, this message translates to:
-  /// **'原生云盘与存储'**
+  /// **'云盘与存储'**
   String get cloudStorage2;
 
   /// No description provided for @editStorage.
@@ -2475,13 +2475,13 @@ abstract class AppLocalizations {
   /// No description provided for @configured.
   ///
   /// In zh, this message translates to:
-  /// **'已配置云盘'**
+  /// **'已配置'**
   String get configured;
 
   /// No description provided for @addStorage.
   ///
   /// In zh, this message translates to:
-  /// **'添加原生云盘'**
+  /// **'添加云盘'**
   String get addStorage;
 
   /// No description provided for @theServerAdministratorHasDisabledEvery.
@@ -2733,7 +2733,7 @@ abstract class AppLocalizations {
   /// No description provided for @noStorageYetUseAddStorage.
   ///
   /// In zh, this message translates to:
-  /// **'暂无存储策略，点击上方「添加原生云盘」直连配置'**
+  /// **'还没有存储，点击上方「添加云盘」开始配置'**
   String get noStorageYetUseAddStorage;
 
   /// No description provided for @cantReadStorage.
@@ -2811,7 +2811,7 @@ abstract class AppLocalizations {
   /// No description provided for @saveStorage.
   ///
   /// In zh, this message translates to:
-  /// **'保存原生云盘配置'**
+  /// **'保存云盘配置'**
   String get saveStorage;
 
   /// No description provided for @localDiskFull.
@@ -3145,13 +3145,13 @@ abstract class AppLocalizations {
   /// No description provided for @cloudStorageTransferStorage.
   ///
   /// In zh, this message translates to:
-  /// **'多云盘与中转存储'**
+  /// **'云盘与存储'**
   String get cloudStorageTransferStorage;
 
   /// No description provided for @deviceStatus.
   ///
   /// In zh, this message translates to:
-  /// **'设备状态'**
+  /// **'设备与 P2P'**
   String get deviceStatus;
 
   /// No description provided for @clearDrawer.
@@ -3403,7 +3403,7 @@ abstract class AppLocalizations {
   /// No description provided for @signedInDevicesP2pNodes.
   ///
   /// In zh, this message translates to:
-  /// **'已登录设备与 P2P 节点'**
+  /// **'设备与 P2P'**
   String get signedInDevicesP2pNodes;
 
   /// No description provided for @irohQuicP2pNodeRunningOn.
