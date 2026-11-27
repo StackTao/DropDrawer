@@ -202,6 +202,82 @@ class ApiClient {
     return (token!, UserProfile.fromJson(data['user'] as Map<String, dynamic>));
   }
 
+  /// Self-service account summary (`GET /api/auth/me`). Returns `null` on
+  /// older servers without the endpoint.
+  Future<AccountInfo?> getAccountInfo() async {
+    final resp = await http
+        .get(Uri.parse('$_cleanBase/api/auth/me'), headers: _headers(json: false))
+        .timeout(const Duration(seconds: 10));
+    if (resp.statusCode == 404) return null;
+    _check(resp);
+    return AccountInfo.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
+  }
+
+  Future<(String, UserProfile)> changePassword({
+    String? currentPassword,
+    required String newPassword,
+  }) async {
+    final resp = await http
+        .post(
+          Uri.parse('$_cleanBase/api/auth/me/password'),
+          headers: _headers(),
+          body: jsonEncode({
+            if (currentPassword != null && currentPassword.isNotEmpty)
+              'current_password': currentPassword,
+            'new_password': newPassword,
+          }),
+        )
+        .timeout(const Duration(seconds: 15));
+    _check(resp);
+    final data = jsonDecode(resp.body) as Map<String, dynamic>;
+    token = data['token'] as String;
+    return (token!, UserProfile.fromJson(data['user'] as Map<String, dynamic>));
+  }
+
+  Future<void> sendBindEmailCode(String email) async {
+    final resp = await http
+        .post(
+          Uri.parse('$_cleanBase/api/auth/me/email/send-code'),
+          headers: _headers(),
+          body: jsonEncode({'email': email.trim()}),
+        )
+        .timeout(const Duration(seconds: 15));
+    _check(resp);
+  }
+
+  Future<AccountInfo> confirmBindEmail({
+    required String email,
+    required String code,
+  }) async {
+    final resp = await http
+        .post(
+          Uri.parse('$_cleanBase/api/auth/me/email/confirm'),
+          headers: _headers(),
+          body: jsonEncode({'email': email.trim(), 'code': code.trim()}),
+        )
+        .timeout(const Duration(seconds: 15));
+    _check(resp);
+    return AccountInfo.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
+  }
+
+  Future<void> deleteOwnAccount({
+    String? password,
+    String? confirmUsername,
+  }) async {
+    final resp = await http
+        .post(
+          Uri.parse('$_cleanBase/api/auth/me/delete'),
+          headers: _headers(),
+          body: jsonEncode({
+            if (password != null && password.isNotEmpty) 'password': password,
+            if (confirmUsername != null && confirmUsername.trim().isNotEmpty)
+              'confirm_username': confirmUsername.trim(),
+          }),
+        )
+        .timeout(const Duration(seconds: 30));
+    _check(resp);
+  }
+
   Future<DeviceInfo> registerDevice({
     String? deviceId,
     required String name,

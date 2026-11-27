@@ -1,22 +1,22 @@
 {
   "sourceLanguage": "zh-Hans",
   "strings": {
-    "%@ 等 %lld 项": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ (%lld items)"
-          }
-        }
-      }
-    },
     "%@\n提取码：%@": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "%@\nPasscode: %@"
+          }
+        }
+      }
+    },
+    "%@ 等 %lld 项": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ (%lld items)"
           }
         }
       }
@@ -117,6 +117,16 @@
         }
       }
     },
+    "%llds 后重发": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resend (%llds)"
+          }
+        }
+      }
+    },
     "0 表示根目录": {
       "localizations": {
         "en": {
@@ -193,6 +203,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "6 digits"
+          }
+        }
+      }
+    },
+    "6 位验证码": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "6-digit code"
           }
         }
       }
@@ -333,6 +353,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Unlimited"
+          }
+        }
+      }
+    },
+    "两次输入的新密码不一致": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New passwords do not match"
           }
         }
       }
@@ -559,6 +589,36 @@
         }
       }
     },
+    "修改密码": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Change Password"
+          }
+        }
+      }
+    },
+    "修改密码会让其他设备下线；注销账号会永久删除所有云端文件、外链和设备记录。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Changing your password signs out other devices. Deleting your account permanently removes all cloud files, share links, and devices."
+          }
+        }
+      }
+    },
+    "修改密码后，其他已登录设备需要重新登录。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "After changing your password, other signed-in devices will need to sign in again."
+          }
+        }
+      }
+    },
     "全选": {
       "localizations": {
         "en": {
@@ -745,6 +805,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Couldn't start authorization: %@"
+          }
+        }
+      }
+    },
+    "发送验证码": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send Code"
           }
         }
       }
@@ -1183,6 +1253,16 @@
         }
       }
     },
+    "已关联 Google": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Google linked"
+          }
+        }
+      }
+    },
     "已创建的外链（%lld）": {
       "localizations": {
         "en": {
@@ -1349,6 +1429,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Configured"
+          }
+        }
+      }
+    },
+    "当前密码": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Current password"
           }
         }
       }
@@ -1553,6 +1643,26 @@
         }
       }
     },
+    "新密码至少 6 位": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New password must be at least 6 characters"
+          }
+        }
+      }
+    },
+    "新密码（至少 6 位）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New password (at least 6 characters)"
+          }
+        }
+      }
+    },
     "无法读取存储配置：%@": {
       "localizations": {
         "en": {
@@ -1619,6 +1729,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "More"
+          }
+        }
+      }
+    },
+    "更换邮箱": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Change Email"
           }
         }
       }
@@ -1701,6 +1821,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Not loaded"
+          }
+        }
+      }
+    },
+    "未绑定": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not linked"
           }
         }
       }
@@ -1831,6 +1961,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "Forever"
+          }
+        }
+      }
+    },
+    "注销后将立即永久删除你的账号、全部抽屉记录、云端文件、外链分享与设备信息，且无法恢复。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This permanently deletes your account, drawer items, cloud files, share links, and devices. This cannot be undone."
+          }
+        }
+      }
+    },
+    "注销账号": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete Account"
           }
         }
       }
@@ -2087,6 +2237,26 @@
         }
       }
     },
+    "确认新密码": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Confirm new password"
+          }
+        }
+      }
+    },
+    "确认永久注销": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete Permanently"
+          }
+        }
+      }
+    },
     "确认重置密码": {
       "localizations": {
         "en": {
@@ -2127,6 +2297,16 @@
         }
       }
     },
+    "第三方登录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Third-party Sign-In"
+          }
+        }
+      }
+    },
     "等待 Google 授权…": {
       "localizations": {
         "en": {
@@ -2163,6 +2343,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "Share"
+          }
+        }
+      }
+    },
+    "绑定后可用于邮箱登录和找回密码。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Used for email sign-in and password reset once linked."
+          }
+        }
+      }
+    },
+    "绑定邮箱": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Link Email"
           }
         }
       }
@@ -2277,6 +2477,26 @@
         }
       }
     },
+    "设置密码": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Set Password"
+          }
+        }
+      }
+    },
+    "设置密码后，除了 Google 登录，也可使用用户名和密码登录。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "After setting a password, you can sign in with your username and password in addition to Google."
+          }
+        }
+      }
+    },
     "访问设置": {
       "localizations": {
         "en": {
@@ -2347,6 +2567,16 @@
         }
       }
     },
+    "请输入当前密码": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enter your current password"
+          }
+        }
+      }
+    },
     "读取剪贴板图片失败": {
       "localizations": {
         "en": {
@@ -2363,6 +2593,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Account"
+          }
+        }
+      }
+    },
+    "账号与安全": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Account & Security"
           }
         }
       }
@@ -2407,12 +2647,32 @@
         }
       }
     },
+    "输入当前密码以确认": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enter your password to confirm"
+          }
+        }
+      }
+    },
     "输入用户名": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Enter your username"
+          }
+        }
+      }
+    },
+    "输入用户名「%@」以确认": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Type \"%@\" to confirm"
           }
         }
       }
@@ -2567,6 +2827,16 @@
         }
       }
     },
+    "邮箱地址": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Email address"
+          }
+        }
+      }
+    },
     "随机生成提取码": {
       "localizations": {
         "en": {
@@ -2603,6 +2873,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Code"
+          }
+        }
+      }
+    },
+    "验证码已发送到邮箱": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verification code sent"
           }
         }
       }

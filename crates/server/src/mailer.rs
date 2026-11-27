@@ -134,6 +134,7 @@ impl EmailSender for MemoryEmailSender {
 pub fn build_verification_email(to: &str, code: &str, purpose: &str) -> OutgoingEmail {
     let (title, action) = match purpose {
         "reset_password" => (t!("重置密码验证码", "Password reset code"), t!("重置你的 DropDrawer 账号密码", "reset the password of your DropDrawer account")),
+        "bind_email" => (t!("绑定邮箱验证码", "Email binding code"), t!("为你的 DropDrawer 账号绑定或更换邮箱", "link or update the email address on your DropDrawer account")),
         _ => (t!("注册邮箱验证码", "Email verification code"), t!("完成 DropDrawer 新账号注册", "finish creating your DropDrawer account")),
     };
     let subject = tf!("[DropDrawer] {title}：{code}", "[DropDrawer] {title}: {code}");

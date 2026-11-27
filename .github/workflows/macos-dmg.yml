@@ -1,0 +1,105 @@
+name: macOS DMG
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to embed in the app (requires Developer ID signing)"
+        required: false
+        type: string
+      notarize:
+        description: "Submit the signed DMG to Apple notarization service"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  macos-dmg:
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      FLUTTER_VERSION: "3.44.0"
+
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Check release tag
+        if: inputs.release_tag != ''
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: scripts/check_release_tag.sh "$RELEASE_TAG"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Fetch Flutter dependencies
+        working-directory: app
+        run: flutter pub get --enforce-lockfile
+
+      - name: Import macOS signing certificate
+        if: secrets.DROPDRAWER_MACOS_CERT_P12_BASE64 != ''
+        env:
+          CERT_P12_BASE64: ${{ secrets.DROPDRAWER_MACOS_CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.DROPDRAWER_MACOS_CERT_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          umask 077
+          cert_file="$RUNNER_TEMP/dropdrawer-macos.p12"
+          keychain="$RUNNER_TEMP/dropdrawer-signing.keychain-db"
+          printf '%s' "$CERT_P12_BASE64" | base64 --decode > "$cert_file"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$keychain"
+          security import "$cert_file" -P "$CERT_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security list-keychain -d user -s "$keychain" login.keychain-db
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$keychain"
+          rm -f "$cert_file"
+          identity="$(security find-identity -v -p codesigning "$keychain" | awk '/Developer ID Application|Apple Development/{print $2; exit}')"
+          if [ -z "$identity" ]; then
+            echo "::error::No usable code signing identity found in imported certificate."
+            exit 1
+          fi
+          printf 'DROPDRAWER_SIGN_IDENTITY=%s\n' "$identity" >> "$GITHUB_ENV"
+
+      - name: Build, sign, and optionally notarize macOS DMG
+        env:
+          DROPDRAWER_RELEASE_TAG: ${{ inputs.release_tag }}
+          DROPDRAWER_NOTARIZE: ${{ inputs.notarize && secrets.DROPDRAWER_APPLE_ID != '' && 'true' || 'false' }}
+          APPLE_ID: ${{ secrets.DROPDRAWER_APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.DROPDRAWER_APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.DROPDRAWER_APPLE_APP_PASSWORD }}
+        run: |
+          cargo build --release --locked -p p2p-core
+          ./scripts/build_macos_release.sh
+
+      - name: Clean up temporary signing keychain
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/dropdrawer-signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/dropdrawer-macos.p12"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: DropDrawer-macOS-DMG
+          path: dist/DropDrawer-macOS.dmg
+          if-no-files-found: error
+          retention-days: 30

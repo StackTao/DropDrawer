@@ -535,6 +535,26 @@ impl Database {
         Ok(affected > 0)
     }
 
+    pub fn user_has_google_link(&self, user_id: &str) -> anyhow::Result<bool> {
+        let conn = self.lock_conn();
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM google_accounts WHERE user_id = ?1)",
+            params![user_id],
+            |row| row.get(0),
+        )
+        .map_err(Into::into)
+    }
+
+    pub fn set_user_verified_email(&self, user_id: &str, email: &str) -> anyhow::Result<bool> {
+        let norm = email.trim().to_ascii_lowercase();
+        let conn = self.lock_conn();
+        let affected = conn.execute(
+            "UPDATE users SET email = ?1, email_verified = 1 WHERE id = ?2",
+            params![norm, user_id],
+        )?;
+        Ok(affected > 0)
+    }
+
     pub fn delete_user(&self, user_id: &str) -> anyhow::Result<bool> {
         let conn = self.lock_conn();
         let affected = conn.execute("DELETE FROM users WHERE id = ?1", params![user_id])?;

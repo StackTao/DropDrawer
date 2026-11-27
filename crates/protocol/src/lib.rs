@@ -130,6 +130,49 @@ pub struct AuthResponse {
     pub user: UserProfile,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountInfo {
+    pub id: String,
+    pub username: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub email_verified: bool,
+    #[serde(default)]
+    pub has_password: bool,
+    #[serde(default)]
+    pub google_linked: bool,
+    #[serde(default)]
+    pub email_binding_available: bool,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChangePasswordRequest {
+    #[serde(default)]
+    pub current_password: Option<String>,
+    pub new_password: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BindEmailSendCodeRequest {
+    pub email: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BindEmailConfirmRequest {
+    pub email: String,
+    pub code: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeleteOwnAccountRequest {
+    #[serde(default)]
+    pub password: Option<String>,
+    #[serde(default)]
+    pub confirm_username: Option<String>,
+}
+
 // ============================================================================
 // Device Models
 // ============================================================================

@@ -13,6 +13,37 @@ class UserProfile {
       );
 }
 
+class AccountInfo {
+  final String id;
+  final String username;
+  final String? email;
+  final bool emailVerified;
+  final bool hasPassword;
+  final bool googleLinked;
+  final bool emailBindingAvailable;
+
+  const AccountInfo({
+    required this.id,
+    required this.username,
+    this.email,
+    this.emailVerified = false,
+    this.hasPassword = true,
+    this.googleLinked = false,
+    this.emailBindingAvailable = false,
+  });
+
+  factory AccountInfo.fromJson(Map<String, dynamic> json) => AccountInfo(
+        id: json['id'] as String? ?? '',
+        username: json['username'] as String? ?? '',
+        email: json['email'] as String?,
+        emailVerified: json['email_verified'] as bool? ?? false,
+        hasPassword: json['has_password'] as bool? ?? true,
+        googleLinked: json['google_linked'] as bool? ?? false,
+        emailBindingAvailable:
+            json['email_binding_available'] as bool? ?? false,
+      );
+}
+
 class AuthProviderInfo {
   final String id;
   final String name;

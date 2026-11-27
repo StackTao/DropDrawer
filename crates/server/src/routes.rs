@@ -18,12 +18,13 @@ use axum::{
 use chrono::{Duration, Utc};
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
 use protocol::{
-    AuthPublicConfig, AuthResponse, CloudDownloadInfo, CreateBatchShareRequest,
-    CreateDrawerItemRequest, CreateShareRequest, CreateStorageBackendRequest, DeviceInfo,
-    DownloadPlan, DrawerItem, DrawerItemKind, LoginRequest, P2pSourceInfo, RegisterDeviceRequest,
-    RegisterRequest, ResetPasswordRequest, SendEmailCodeRequest, ShareLinkInfo,
-    StorageBackendConfig, StorageBackendSummary, StorageHealthResponse, TransferMode, UploadPlan,
-    WsClientCommand, WsEvent,
+    AccountInfo, AuthPublicConfig, AuthResponse, BindEmailConfirmRequest,
+    BindEmailSendCodeRequest, ChangePasswordRequest, CloudDownloadInfo, CreateBatchShareRequest,
+    CreateDrawerItemRequest, CreateShareRequest, CreateStorageBackendRequest,
+    DeleteOwnAccountRequest, DeviceInfo, DownloadPlan, DrawerItem, DrawerItemKind, LoginRequest,
+    P2pSourceInfo, RegisterDeviceRequest, RegisterRequest, ResetPasswordRequest,
+    SendEmailCodeRequest, ShareLinkInfo, StorageBackendConfig, StorageBackendSummary,
+    StorageHealthResponse, TransferMode, UploadPlan, WsClientCommand, WsEvent,
 };
 use serde::Deserialize;
 use tokio::sync::mpsc;
@@ -83,6 +84,12 @@ pub fn build_router_with_cors(state: Arc<AppState>, allowed_origins: Option<&[St
         .route("/api/auth/google/start", post(crate::google_login::start))
         .route("/api/auth/google/callback", get(crate::google_login::callback))
         .route("/api/auth/google/poll", post(crate::google_login::poll))
+        // Self-service account management (authenticated)
+        .route("/api/auth/me", get(get_own_account))
+        .route("/api/auth/me/password", post(change_own_password))
+        .route("/api/auth/me/email/send-code", post(send_bind_email_code))
+        .route("/api/auth/me/email/confirm", post(confirm_bind_email))
+        .route("/api/auth/me/delete", post(delete_own_account))
         // Admin Console (Vaultwarden-style, enabled only when DROPDRAWER_ADMIN_TOKEN is set)
         // Devices
         .route("/api/devices", get(list_devices).post(register_device))
@@ -503,6 +510,258 @@ async fn login(
             created_at: user_rec.created_at,
         },
     }))
+}
+
+fn build_account_info(state: &AppState, user: &crate::db::UserRecord) -> anyhow::Result<AccountInfo> {
+    let settings = state.runtime_settings();
+    let google_linked = state.db.user_has_google_link(&user.id)?;
+    let email_binding_available = settings.smtp.is_usable() || state.has_custom_email_sender();
+    Ok(AccountInfo {
+        id: user.id.clone(),
+        username: user.username.clone(),
+        email: user.email.clone(),
+        email_verified: user.email_verified,
+        has_password: !user.password_hash.trim().is_empty(),
+        google_linked,
+        email_binding_available,
+        created_at: user.created_at,
+    })
+}
+
+async fn get_own_account(
+    auth: AuthUser,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<AccountInfo>, (StatusCode, String)> {
+    let user = state
+        .db
+        .find_user_by_id(&auth.user_id)
+        .map_err(internal_err)?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, t!("账号不存在", "account not found").to_string()))?;
+    let info = build_account_info(&state, &user).map_err(internal_err)?;
+    Ok(Json(info))
+}
+
+async fn change_own_password(
+    auth: AuthUser,
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ChangePasswordRequest>,
+) -> Result<Json<AuthResponse>, (StatusCode, String)> {
+    if req.new_password.len() < 6 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            t!("新密码长度至少 6 位", "New password must be at least 6 characters").to_string(),
+        ));
+    }
+    let user = state
+        .db
+        .find_user_by_id(&auth.user_id)
+        .map_err(internal_err)?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, t!("账号不存在", "account not found").to_string()))?;
+
+    let has_password = !user.password_hash.trim().is_empty();
+    if has_password {
+        let current = req.current_password.as_deref().unwrap_or("");
+        if current.is_empty() || !verify_password_blocking(current, &user.password_hash).await {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                t!("当前密码不正确", "Current password is incorrect").to_string(),
+            ));
+        }
+    }
+
+    let hash = hash_password(&req.new_password).map_err(internal_err)?;
+    state
+        .db
+        .update_user_password(&user.id, &hash)
+        .map_err(internal_err)?;
+    state
+        .db
+        .bump_token_version(&user.id)
+        .map_err(internal_err)?;
+    state.failed_logins.reset(&user.username.to_lowercase());
+    if let Some(ref email) = user.email {
+        state.failed_logins.reset(&email.to_lowercase());
+    }
+    let token = issue_user_token(&state, &user.id, &user.username).map_err(internal_err)?;
+    Ok(Json(AuthResponse {
+        token,
+        user: protocol::UserProfile {
+            id: user.id,
+            username: user.username,
+            email: user.email,
+            created_at: user.created_at,
+        },
+    }))
+}
+
+async fn send_bind_email_code(
+    auth: AuthUser,
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<BindEmailSendCodeRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let email = req.email.trim().to_ascii_lowercase();
+    if !is_valid_email(&email) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            t!("邮箱地址格式无效", "Invalid email address").to_string(),
+        ));
+    }
+    let settings = state.runtime_settings();
+    if !settings.smtp.is_usable() && !state.has_custom_email_sender() {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            t!("当前服务器未启用邮件服务", "Email service is not enabled on this server").to_string(),
+        ));
+    }
+    if let Err(msg) = settings.check_email_domain(&email) {
+        return Err((StatusCode::FORBIDDEN, msg));
+    }
+    if let Some(owner) = state.db.find_user_by_email(&email).map_err(internal_err)? {
+        if owner.id != auth.user_id {
+            return Err((
+                StatusCode::CONFLICT,
+                t!("该邮箱已被其他账号使用", "That email address is already in use").to_string(),
+            ));
+        }
+    }
+
+    let purpose = "bind_email";
+    let rate_key = format!("{purpose}:{email}");
+    if state.email_send_limiter.is_blocked(&rate_key) {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            t!("发送验证码过于频繁，请稍后再试", "Too many verification codes sent; try again later").to_string(),
+        ));
+    }
+    if let Some(last) = state
+        .db
+        .last_email_verification_at(&email, purpose)
+        .map_err(internal_err)?
+    {
+        let elapsed = (Utc::now() - last).num_seconds();
+        if elapsed < 60 {
+            let wait = (60 - elapsed).max(1);
+            return Err((
+                StatusCode::TOO_MANY_REQUESTS,
+                tf!(
+                    "请等待 {wait} 秒后再重新发送验证码",
+                    "Please wait {wait} seconds before requesting another code"
+                ),
+            ));
+        }
+    }
+
+    state.email_send_limiter.record_failure(&rate_key);
+    let code = generate_six_digit_code();
+    let code_hash = hash_email_code(&email, purpose, &code, &state.jwt_secret);
+    let expires_at = Utc::now() + Duration::minutes(10);
+    state
+        .db
+        .create_email_verification(&email, purpose, &code_hash, expires_at)
+        .map_err(internal_err)?;
+
+    let message = build_verification_email(&email, &code, purpose);
+    state
+        .send_email(&message)
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, tf!("邮件发送失败: {e}", "Failed to send email: {e}")))?;
+
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+async fn confirm_bind_email(
+    auth: AuthUser,
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<BindEmailConfirmRequest>,
+) -> Result<Json<AccountInfo>, (StatusCode, String)> {
+    let email = req.email.trim().to_ascii_lowercase();
+    if !is_valid_email(&email) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            t!("邮箱地址格式无效", "Invalid email address").to_string(),
+        ));
+    }
+    let settings = state.runtime_settings();
+    if !settings.smtp.is_usable() && !state.has_custom_email_sender() {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            t!("当前服务器未启用邮件服务", "Email service is not enabled on this server").to_string(),
+        ));
+    }
+    if let Err(msg) = settings.check_email_domain(&email) {
+        return Err((StatusCode::FORBIDDEN, msg));
+    }
+    if let Some(owner) = state.db.find_user_by_email(&email).map_err(internal_err)? {
+        if owner.id != auth.user_id {
+            return Err((
+                StatusCode::CONFLICT,
+                t!("该邮箱已被其他账号使用", "That email address is already in use").to_string(),
+            ));
+        }
+    }
+
+    let code_hash = hash_email_code(&email, "bind_email", &req.code, &state.jwt_secret);
+    let valid = state
+        .db
+        .verify_and_consume_email_code(&email, "bind_email", &code_hash)
+        .map_err(internal_err)?;
+    if !valid {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            t!("验证码无效或已过期，请重新获取", "Verification code is invalid or expired").to_string(),
+        ));
+    }
+
+    state
+        .db
+        .set_user_verified_email(&auth.user_id, &email)
+        .map_err(internal_err)?;
+    let user = state
+        .db
+        .find_user_by_id(&auth.user_id)
+        .map_err(internal_err)?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, t!("账号不存在", "account not found").to_string()))?;
+    let info = build_account_info(&state, &user).map_err(internal_err)?;
+    Ok(Json(info))
+}
+
+async fn delete_own_account(
+    auth: AuthUser,
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<DeleteOwnAccountRequest>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    let user = state
+        .db
+        .find_user_by_id(&auth.user_id)
+        .map_err(internal_err)?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, t!("账号不存在", "account not found").to_string()))?;
+
+    let has_password = !user.password_hash.trim().is_empty();
+    if has_password {
+        let pwd = req.password.as_deref().unwrap_or("");
+        if pwd.is_empty() || !verify_password_blocking(pwd, &user.password_hash).await {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                t!("密码不正确，无法注销账号", "Password is incorrect").to_string(),
+            ));
+        }
+    } else {
+        let confirm = req.confirm_username.as_deref().map(str::trim).unwrap_or("");
+        if confirm != user.username {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                t!("请输入完整用户名以确认注销账号", "Enter your exact username to confirm account deletion").to_string(),
+            ));
+        }
+    }
+
+    state.disconnect_user(&user.id);
+    let items = state.db.list_drawer_items(&user.id).map_err(internal_err)?;
+    for item in items {
+        let _ = state.delete_drawer_item(&user.id, &item.id).await;
+    }
+    state.db.delete_user(&user.id).map_err(internal_err)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ============================================================================

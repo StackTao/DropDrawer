@@ -1,0 +1,14 @@
+# DropDrawer Caddy reverse-proxy example
+# Replace drop.example.com with your domain. Caddy automatically provisions TLS.
+# Remember to set DROPDRAWER_TRUST_PROXY=true in DropDrawer's environment.
+
+drop.example.com {
+    # Stream large file uploads and downloads without buffering to disk.
+    reverse_proxy 127.0.0.1:8080 {
+        flush_interval -1
+        transport http {
+            read_timeout 0
+            write_timeout 0
+        }
+    }
+}

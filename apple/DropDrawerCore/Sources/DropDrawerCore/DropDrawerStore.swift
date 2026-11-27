@@ -13,6 +13,7 @@ public final class DropDrawerStore {
 
     public var serverUrl: String
     public var user: UserProfile?
+    public var accountInfo: AccountInfo?
     public var deviceId: String?
     public var devices: [DeviceInfo] = []
     public var items: [DrawerItem] = []
@@ -238,6 +239,69 @@ public final class DropDrawerStore {
         )
     }
 
+    public func refreshAccountInfo() async {
+        guard let api else { return }
+        do {
+            if let info = try await api.getAccountInfo() {
+                accountInfo = info
+                let updatedUser = UserProfile(id: info.id, username: info.username, email: info.email)
+                user = updatedUser
+                storage.user = updatedUser
+            }
+        } catch APIError.httpStatus(401, _) {
+            handleSessionRevoked(by: api)
+        } catch {
+            // Offline or transient error: keep existing account summary.
+        }
+    }
+
+    public func changeOwnPassword(currentPassword: String?, newPassword: String) async throws {
+        guard let api else { return }
+        let auth = try await api.changePassword(
+            currentPassword: currentPassword,
+            newPassword: newPassword
+        )
+        storage.token = auth.token
+        storage.user = auth.user
+        user = auth.user
+        if let info = accountInfo {
+            accountInfo = AccountInfo(
+                id: info.id,
+                username: auth.user.username,
+                email: auth.user.email,
+                emailVerified: info.emailVerified,
+                hasPassword: true,
+                googleLinked: info.googleLinked,
+                emailBindingAvailable: info.emailBindingAvailable
+            )
+        }
+        // Reconnect WebSocket using the new JWT token_version.
+        wsTask?.cancel(with: .normalClosure, reason: nil)
+        wsTask = nil
+        wsConnected = false
+        connectWebSocket()
+    }
+
+    public func sendBindEmailCode(email: String) async throws {
+        guard let api else { return }
+        try await api.sendBindEmailCode(email: email)
+    }
+
+    public func confirmBindEmail(email: String, code: String) async throws {
+        guard let api else { return }
+        let info = try await api.confirmBindEmail(email: email, code: code)
+        accountInfo = info
+        let updatedUser = UserProfile(id: info.id, username: info.username, email: info.email)
+        user = updatedUser
+        storage.user = updatedUser
+    }
+
+    public func deleteOwnAccount(password: String?, confirmUsername: String?) async throws {
+        guard let api else { return }
+        try await api.deleteOwnAccount(password: password, confirmUsername: confirmUsername)
+        logout()
+    }
+
     public func login(
         server: String,
         username: String,
@@ -325,6 +389,7 @@ public final class DropDrawerStore {
         localNodeInfo = nil
         api = nil
         user = nil
+        accountInfo = nil
         deviceId = nil
         devices = []
         items = []

@@ -516,6 +516,70 @@ public final class APIClient: @unchecked Sendable {
         return result
     }
 
+    /// Self-service account summary (`GET /api/auth/me`). Returns `nil` on older
+    /// servers that predate the endpoint.
+    public func getAccountInfo() async throws -> AccountInfo? {
+        var req = try makeRequest("/api/auth/me", method: "GET")
+        req.timeoutInterval = 10
+        let (data, response) = try await session.data(for: req)
+        guard let http = response as? HTTPURLResponse else {
+            throw APIError.message(String(localized: "无效的服务器响应", bundle: Bundle.module))
+        }
+        if http.statusCode == 404 {
+            return nil
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            throw APIError.httpStatus(http.statusCode, String(data: data, encoding: .utf8) ?? "")
+        }
+        return try JSONDecoder().decode(AccountInfo.self, from: data)
+    }
+
+    public func changePassword(currentPassword: String?, newPassword: String) async throws -> AuthResult {
+        var body: [String: Any] = ["new_password": newPassword]
+        if let currentPassword, !currentPassword.isEmpty {
+            body["current_password"] = currentPassword
+        }
+        let req = try makeRequest("/api/auth/me/password", method: "POST", jsonBody: body)
+        let data = try await perform(req)
+        let result = try JSONDecoder().decode(AuthResult.self, from: data)
+        token = result.token
+        return result
+    }
+
+    public func sendBindEmailCode(email: String) async throws {
+        let req = try makeRequest(
+            "/api/auth/me/email/send-code",
+            method: "POST",
+            jsonBody: ["email": email.trimmingCharacters(in: .whitespacesAndNewlines)]
+        )
+        _ = try await perform(req)
+    }
+
+    public func confirmBindEmail(email: String, code: String) async throws -> AccountInfo {
+        let req = try makeRequest(
+            "/api/auth/me/email/confirm",
+            method: "POST",
+            jsonBody: [
+                "email": email.trimmingCharacters(in: .whitespacesAndNewlines),
+                "code": code.trimmingCharacters(in: .whitespacesAndNewlines),
+            ]
+        )
+        let data = try await perform(req)
+        return try JSONDecoder().decode(AccountInfo.self, from: data)
+    }
+
+    public func deleteOwnAccount(password: String?, confirmUsername: String?) async throws {
+        var body: [String: Any] = [:]
+        if let password, !password.isEmpty {
+            body["password"] = password
+        }
+        if let confirmUsername, !confirmUsername.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            body["confirm_username"] = confirmUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let req = try makeRequest("/api/auth/me/delete", method: "POST", jsonBody: body)
+        _ = try await perform(req)
+    }
+
     public func startGoogleSignIn(inviteCode: String? = nil) async throws -> GoogleSignInStart {
         guard let server = URL(string: cleanBase), let scheme = server.scheme?.lowercased() else {
             throw APIError.invalidURL(cleanBase)

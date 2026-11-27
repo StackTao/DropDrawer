@@ -12,6 +12,55 @@ public struct UserProfile: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
+public struct AccountInfo: Codable, Sendable, Equatable, Identifiable {
+    public let id: String
+    public let username: String
+    public let email: String?
+    public let emailVerified: Bool
+    public let hasPassword: Bool
+    public let googleLinked: Bool
+    public let emailBindingAvailable: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case username
+        case email
+        case emailVerified = "email_verified"
+        case hasPassword = "has_password"
+        case googleLinked = "google_linked"
+        case emailBindingAvailable = "email_binding_available"
+    }
+
+    public init(
+        id: String,
+        username: String,
+        email: String? = nil,
+        emailVerified: Bool = false,
+        hasPassword: Bool = true,
+        googleLinked: Bool = false,
+        emailBindingAvailable: Bool = false
+    ) {
+        self.id = id
+        self.username = username
+        self.email = email
+        self.emailVerified = emailVerified
+        self.hasPassword = hasPassword
+        self.googleLinked = googleLinked
+        self.emailBindingAvailable = emailBindingAvailable
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        username = try c.decode(String.self, forKey: .username)
+        email = try c.decodeIfPresent(String.self, forKey: .email)
+        emailVerified = try c.decodeIfPresent(Bool.self, forKey: .emailVerified) ?? false
+        hasPassword = try c.decodeIfPresent(Bool.self, forKey: .hasPassword) ?? true
+        googleLinked = try c.decodeIfPresent(Bool.self, forKey: .googleLinked) ?? false
+        emailBindingAvailable = try c.decodeIfPresent(Bool.self, forKey: .emailBindingAvailable) ?? false
+    }
+}
+
 public struct AuthProviderInfo: Codable, Sendable, Equatable, Identifiable {
     public let id: String
     public let name: String

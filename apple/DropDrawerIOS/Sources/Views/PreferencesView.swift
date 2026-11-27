@@ -7,6 +7,9 @@ struct PreferencesView: View {
     @Environment(\.openURL) private var openURL
     @State private var confirmLogout: Bool = false
     @State private var confirmClearCache: Bool = false
+    @State private var showChangePassword: Bool = false
+    @State private var showBindEmail: Bool = false
+    @State private var showDeleteAccount: Bool = false
     @State private var localCacheBytes: Int64 = 0
 
     private var appVersion: String {
@@ -177,6 +180,70 @@ struct PreferencesView: View {
             }
 
             Section {
+                let email = store.accountInfo?.email ?? store.user?.email
+                let hasEmail = !(email ?? "").isEmpty
+                let hasPassword = store.accountInfo?.hasPassword ?? true
+                let emailBindingAvailable = store.accountInfo?.emailBindingAvailable ?? false
+
+                if store.accountInfo?.googleLinked == true {
+                    LabeledContent(String(localized: "第三方登录"), value: String(localized: "已关联 Google"))
+                }
+
+                if emailBindingAvailable {
+                    Button {
+                        showBindEmail = true
+                    } label: {
+                        LabeledContent {
+                            Text(hasEmail ? (email ?? "") : String(localized: "未绑定"))
+                                .foregroundStyle(.secondary)
+                        } label: {
+                            Label {
+                                Text(hasEmail ? String(localized: "更换邮箱") : String(localized: "绑定邮箱"))
+                            } icon: {
+                                SettingsIconBadge(systemImage: "envelope.fill", color: .blue)
+                            }
+                        }
+                    }
+                    .foregroundStyle(.primary)
+                } else if hasEmail {
+                    LabeledContent {
+                        Text(email ?? "")
+                    } label: {
+                        Label {
+                            Text(String(localized: "绑定邮箱"))
+                        } icon: {
+                            SettingsIconBadge(systemImage: "envelope.fill", color: .blue)
+                        }
+                    }
+                }
+
+                Button {
+                    showChangePassword = true
+                } label: {
+                    Label {
+                        Text(hasPassword ? String(localized: "修改密码") : String(localized: "设置密码"))
+                    } icon: {
+                        SettingsIconBadge(systemImage: "key.fill", color: .purple)
+                    }
+                }
+                .foregroundStyle(.primary)
+
+                Button(role: .destructive) {
+                    showDeleteAccount = true
+                } label: {
+                    Label {
+                        Text(String(localized: "注销账号"))
+                    } icon: {
+                        SettingsIconBadge(systemImage: "person.crop.circle.badge.xmark", color: .red)
+                    }
+                }
+            } header: {
+                Text(String(localized: "账号与安全"))
+            } footer: {
+                Text(String(localized: "修改密码会让其他设备下线；注销账号会永久删除所有云端文件、外链和设备记录。"))
+            }
+
+            Section {
                 Button(String(localized: "退出登录"), role: .destructive) {
                     confirmLogout = true
                 }
@@ -187,6 +254,26 @@ struct PreferencesView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             localCacheBytes = store.localCacheSizeBytes()
+            await store.refreshAccountInfo()
+        }
+        .sheet(isPresented: $showChangePassword) {
+            ChangePasswordSheet(
+                store: store,
+                hasPassword: store.accountInfo?.hasPassword ?? true
+            )
+        }
+        .sheet(isPresented: $showBindEmail) {
+            BindEmailSheet(
+                store: store,
+                initialEmail: store.accountInfo?.email ?? store.user?.email ?? ""
+            )
+        }
+        .sheet(isPresented: $showDeleteAccount) {
+            DeleteAccountSheet(
+                store: store,
+                username: store.accountInfo?.username ?? store.user?.username ?? "",
+                hasPassword: store.accountInfo?.hasPassword ?? true
+            )
         }
         .confirmationDialog(String(localized: "清理已下载的本地缓存文件？"), isPresented: $confirmClearCache, titleVisibility: .visible) {
             Button(String(localized: "清理本地缓存"), role: .destructive) {
@@ -221,5 +308,307 @@ private struct SettingsIconBadge: View {
                 .foregroundStyle(.white)
         }
         .frame(width: 28, height: 28)
+    }
+}
+
+private struct ChangePasswordSheet: View {
+    let store: DropDrawerStore
+    let hasPassword: Bool
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var currentPassword: String = ""
+    @State private var newPassword: String = ""
+    @State private var confirmPassword: String = ""
+    @State private var submitting: Bool = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if hasPassword {
+                    Section {
+                        SecureField(String(localized: "当前密码"), text: $currentPassword)
+                            .textContentType(.password)
+                    }
+                }
+
+                Section {
+                    SecureField(String(localized: "新密码（至少 6 位）"), text: $newPassword)
+                        .textContentType(.newPassword)
+                    SecureField(String(localized: "确认新密码"), text: $confirmPassword)
+                        .textContentType(.newPassword)
+                } footer: {
+                    Text(hasPassword
+                         ? String(localized: "修改密码后，其他已登录设备需要重新登录。")
+                         : String(localized: "设置密码后，除了 Google 登录，也可使用用户名和密码登录。"))
+                }
+
+                if let errorMessage {
+                    Section {
+                        Text(errorMessage)
+                            .foregroundStyle(.red)
+                            .font(.footnote)
+                    }
+                }
+            }
+            .navigationTitle(hasPassword ? String(localized: "修改密码") : String(localized: "设置密码"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(String(localized: "取消")) { dismiss() }
+                        .disabled(submitting)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(String(localized: "保存")) {
+                        Task { await submit() }
+                    }
+                    .disabled(submitting)
+                }
+            }
+        }
+    }
+
+    private func submit() async {
+        if hasPassword && currentPassword.isEmpty {
+            errorMessage = String(localized: "请输入当前密码")
+            return
+        }
+        if newPassword.count < 6 {
+            errorMessage = String(localized: "新密码至少 6 位")
+            return
+        }
+        if newPassword != confirmPassword {
+            errorMessage = String(localized: "两次输入的新密码不一致")
+            return
+        }
+        submitting = true
+        errorMessage = nil
+        defer { submitting = false }
+        do {
+            try await store.changeOwnPassword(
+                currentPassword: hasPassword ? currentPassword : nil,
+                newPassword: newPassword
+            )
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct BindEmailSheet: View {
+    let store: DropDrawerStore
+    let initialEmail: String
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var email: String = ""
+    @State private var code: String = ""
+    @State private var cooldown: Int = 0
+    @State private var sending: Bool = false
+    @State private var submitting: Bool = false
+    @State private var infoMessage: String?
+    @State private var errorMessage: String?
+    @State private var cooldownTask: Task<Void, Never>?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField(String(localized: "邮箱地址"), text: $email)
+                        .keyboardType(.emailAddress)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .textContentType(.emailAddress)
+
+                    HStack {
+                        TextField(String(localized: "6 位验证码"), text: $code)
+                            .keyboardType(.numberPad)
+                            .textContentType(.oneTimeCode)
+                        Button {
+                            Task { await sendCode() }
+                        } label: {
+                            if cooldown > 0 {
+                                Text(String(localized: "\(cooldown)s 后重发"))
+                            } else {
+                                Text(String(localized: "发送验证码"))
+                            }
+                        }
+                        .disabled(sending || cooldown > 0 || email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                } footer: {
+                    Text(String(localized: "绑定后可用于邮箱登录和找回密码。"))
+                }
+
+                if let infoMessage {
+                    Section {
+                        Text(infoMessage)
+                            .foregroundStyle(.green)
+                            .font(.footnote)
+                    }
+                }
+
+                if let errorMessage {
+                    Section {
+                        Text(errorMessage)
+                            .foregroundStyle(.red)
+                            .font(.footnote)
+                    }
+                }
+            }
+            .navigationTitle(initialEmail.isEmpty ? String(localized: "绑定邮箱") : String(localized: "更换邮箱"))
+            .navigationBarTitleDisplayMode(.inline)
+            .onAppear {
+                if email.isEmpty { email = initialEmail }
+            }
+            .onDisappear {
+                cooldownTask?.cancel()
+            }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(String(localized: "取消")) { dismiss() }
+                        .disabled(submitting)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(String(localized: "保存")) {
+                        Task { await submit() }
+                    }
+                    .disabled(submitting || email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+    }
+
+    private func startCooldown() {
+        cooldownTask?.cancel()
+        cooldown = 60
+        cooldownTask = Task {
+            while cooldown > 0 && !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                if !Task.isCancelled {
+                    cooldown -= 1
+                }
+            }
+        }
+    }
+
+    private func sendCode() async {
+        sending = true
+        errorMessage = nil
+        infoMessage = nil
+        defer { sending = false }
+        do {
+            try await store.sendBindEmailCode(email: email)
+            startCooldown()
+            infoMessage = String(localized: "验证码已发送到邮箱")
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func submit() async {
+        submitting = true
+        errorMessage = nil
+        defer { submitting = false }
+        do {
+            try await store.confirmBindEmail(email: email, code: code)
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct DeleteAccountSheet: View {
+    let store: DropDrawerStore
+    let username: String
+    let hasPassword: Bool
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var confirmationInput: String = ""
+    @State private var submitting: Bool = false
+    @State private var errorMessage: String?
+
+    private var canSubmit: Bool {
+        if submitting { return false }
+        if hasPassword { return !confirmationInput.isEmpty }
+        return confirmationInput.trimmingCharacters(in: .whitespacesAndNewlines) == username && !username.isEmpty
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Label {
+                        Text(String(localized: "注销后将立即永久删除你的账号、全部抽屉记录、云端文件、外链分享与设备信息，且无法恢复。"))
+                            .font(.subheadline)
+                            .foregroundStyle(.red)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.red)
+                    }
+                }
+
+                Section {
+                    if hasPassword {
+                        SecureField(String(localized: "输入当前密码以确认"), text: $confirmationInput)
+                            .textContentType(.password)
+                    } else {
+                        TextField(String(localized: "输入用户名「\(username)」以确认"), text: $confirmationInput)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                    }
+                }
+
+                if let errorMessage {
+                    Section {
+                        Text(errorMessage)
+                            .foregroundStyle(.red)
+                            .font(.footnote)
+                    }
+                }
+
+                Section {
+                    Button(role: .destructive) {
+                        Task { await submit() }
+                    } label: {
+                        HStack {
+                            Spacer()
+                            if submitting {
+                                ProgressView()
+                            } else {
+                                Text(String(localized: "确认永久注销"))
+                                    .fontWeight(.semibold)
+                            }
+                            Spacer()
+                        }
+                    }
+                    .disabled(!canSubmit)
+                }
+            }
+            .navigationTitle(String(localized: "注销账号"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(String(localized: "取消")) { dismiss() }
+                        .disabled(submitting)
+                }
+            }
+        }
+    }
+
+    private func submit() async {
+        submitting = true
+        errorMessage = nil
+        defer { submitting = false }
+        do {
+            try await store.deleteOwnAccount(
+                password: hasPassword ? confirmationInput : nil,
+                confirmUsername: hasPassword ? nil : confirmationInput.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+            ThumbnailImageCache.shared.clear()
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 }

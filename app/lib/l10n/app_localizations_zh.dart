@@ -1996,4 +1996,105 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get nativePickFolderPrompt => '选择此目录';
+
+  @override
+  String get accountSecurity => '账号与安全';
+
+  @override
+  String get accountSectionFooter => '修改密码会让其他设备下线；注销账号会永久删除所有云端文件、外链和设备记录。';
+
+  @override
+  String get currentAccount => '当前账号';
+
+  @override
+  String get boundEmail => '绑定邮箱';
+
+  @override
+  String get emailNotBound => '未绑定';
+
+  @override
+  String get emailVerifiedTag => '已验证';
+
+  @override
+  String get googleAccountLinked => '已关联 Google';
+
+  @override
+  String get changePassword => '修改密码';
+
+  @override
+  String get setPassword => '设置密码';
+
+  @override
+  String get changePasswordSubtitle => '修改后其他设备需要重新登录';
+
+  @override
+  String get setPasswordSubtitle => '为 Google 账号设置登录密码';
+
+  @override
+  String get currentPassword => '当前密码';
+
+  @override
+  String get confirmNewPassword => '确认新密码';
+
+  @override
+  String get newPasswordHint => '至少 6 位';
+
+  @override
+  String get passwordsDoNotMatch => '两次输入的新密码不一致';
+
+  @override
+  String get passwordUpdated => '密码已更新，其他设备已下线';
+
+  @override
+  String get passwordSetSuccess => '密码已设置';
+
+  @override
+  String get bindEmail => '绑定邮箱';
+
+  @override
+  String get changeEmail => '更换邮箱';
+
+  @override
+  String get bindEmailSubtitle => '用于邮箱登录和找回密码';
+
+  @override
+  String get emailAddressLabel => '邮箱地址';
+
+  @override
+  String get verificationCodeLabel => '6 位验证码';
+
+  @override
+  String resendCodeCountdown(int seconds) {
+    return '${seconds}s 后重发';
+  }
+
+  @override
+  String get verificationCodeSent => '验证码已发送到邮箱';
+
+  @override
+  String get emailBoundSuccess => '邮箱绑定成功';
+
+  @override
+  String get deleteAccount => '注销账号';
+
+  @override
+  String get deleteAccountSubtitle => '永久删除账号与全部数据，无法恢复';
+
+  @override
+  String get deleteAccountWarning =>
+      '注销后将立即永久删除你的账号、全部抽屉记录、云端文件、外链分享与设备信息，且无法恢复。';
+
+  @override
+  String get enterPasswordToDelete => '输入当前密码以确认';
+
+  @override
+  String enterUsernameToDelete(String username) {
+    return '输入用户名「$username」以确认';
+  }
+
+  @override
+  String get confirmDeleteAccount => '确认永久注销';
+
+  @override
+  String get accountDeletedBanner => '账号已永久注销';
 }

@@ -2300,4 +2300,108 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get nativePickFolderPrompt => 'Choose Folder';
+
+  @override
+  String get accountSecurity => 'Account & Security';
+
+  @override
+  String get accountSectionFooter =>
+      'Changing your password signs out other devices. Deleting your account permanently removes all cloud files, share links, and devices.';
+
+  @override
+  String get currentAccount => 'Account';
+
+  @override
+  String get boundEmail => 'Email';
+
+  @override
+  String get emailNotBound => 'Not linked';
+
+  @override
+  String get emailVerifiedTag => 'Verified';
+
+  @override
+  String get googleAccountLinked => 'Google linked';
+
+  @override
+  String get changePassword => 'Change Password';
+
+  @override
+  String get setPassword => 'Set Password';
+
+  @override
+  String get changePasswordSubtitle => 'Signs out other devices after saving';
+
+  @override
+  String get setPasswordSubtitle => 'Add a password to your Google account';
+
+  @override
+  String get currentPassword => 'Current password';
+
+  @override
+  String get confirmNewPassword => 'Confirm new password';
+
+  @override
+  String get newPasswordHint => 'At least 6 characters';
+
+  @override
+  String get passwordsDoNotMatch => 'New passwords do not match';
+
+  @override
+  String get passwordUpdated =>
+      'Password updated; other devices were signed out';
+
+  @override
+  String get passwordSetSuccess => 'Password set';
+
+  @override
+  String get bindEmail => 'Link Email';
+
+  @override
+  String get changeEmail => 'Change Email';
+
+  @override
+  String get bindEmailSubtitle => 'Used for email sign-in and password reset';
+
+  @override
+  String get emailAddressLabel => 'Email address';
+
+  @override
+  String get verificationCodeLabel => '6-digit code';
+
+  @override
+  String resendCodeCountdown(int seconds) {
+    return 'Resend (${seconds}s)';
+  }
+
+  @override
+  String get verificationCodeSent => 'Verification code sent';
+
+  @override
+  String get emailBoundSuccess => 'Email linked';
+
+  @override
+  String get deleteAccount => 'Delete Account';
+
+  @override
+  String get deleteAccountSubtitle =>
+      'Permanently delete your account and all data';
+
+  @override
+  String get deleteAccountWarning =>
+      'This permanently deletes your account, drawer items, cloud files, share links, and devices. This cannot be undone.';
+
+  @override
+  String get enterPasswordToDelete => 'Enter your password to confirm';
+
+  @override
+  String enterUsernameToDelete(String username) {
+    return 'Type \"$username\" to confirm';
+  }
+
+  @override
+  String get confirmDeleteAccount => 'Delete Permanently';
+
+  @override
+  String get accountDeletedBanner => 'Account permanently deleted';
 }

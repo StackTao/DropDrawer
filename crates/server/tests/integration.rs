@@ -1732,6 +1732,114 @@ async fn test_login_and_passcode_guessing_is_throttled() {
 }
 
 #[tokio::test]
+async fn test_self_service_account_password_email_bind_and_delete() {
+    use dropdrawer_server::mailer::MemoryEmailSender;
+    use protocol::AccountInfo;
+
+    let (app, state, _tmp) = spawn_test_server().await;
+    let sink = MemoryEmailSender::new();
+    state.set_email_sender(Arc::new(sink.clone()));
+
+    let (st, reg): (StatusCode, AuthResponse) = send_json(
+        &app,
+        "POST",
+        "/api/auth/register",
+        None,
+        Some(json!({"username": "self_user", "password": "oldpassword"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+
+    // 1. Inspect account info via GET /api/auth/me.
+    let (st, info): (StatusCode, AccountInfo) =
+        send_json(&app, "GET", "/api/auth/me", Some(&reg.token), None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(info.username, "self_user");
+    assert!(info.has_password);
+    assert!(!info.email_verified);
+    assert!(info.email_binding_available);
+
+    // 2. Bind verified email via code.
+    let (st, _): (StatusCode, serde_json::Value) = send_json(
+        &app,
+        "POST",
+        "/api/auth/me/email/send-code",
+        Some(&reg.token),
+        Some(json!({"email": "self@example.com"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let emails = sink.take_sent();
+    assert_eq!(emails.len(), 1);
+    let code = emails[0].subject.rsplit('：').next().unwrap().trim().to_string();
+
+    let (st, bound): (StatusCode, AccountInfo) = send_json(
+        &app,
+        "POST",
+        "/api/auth/me/email/confirm",
+        Some(&reg.token),
+        Some(json!({"email": "self@example.com", "code": code})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(bound.email.as_deref(), Some("self@example.com"));
+    assert!(bound.email_verified);
+
+    // 3. Change password -> old token revoked, new token works.
+    let (st, _) = send_raw(
+        &app,
+        "POST",
+        "/api/auth/me/password",
+        Some(&reg.token),
+        Some(json!({"current_password": "wrong", "new_password": "newpassword123"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+
+    let (st, updated): (StatusCode, AuthResponse) = send_json(
+        &app,
+        "POST",
+        "/api/auth/me/password",
+        Some(&reg.token),
+        Some(json!({"current_password": "oldpassword", "new_password": "newpassword123"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+
+    // Old token must be rejected now.
+    let (st, _) = send_raw(&app, "GET", "/api/auth/me", Some(&reg.token), None).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+    // New token works.
+    let (st, _): (StatusCode, AccountInfo) =
+        send_json(&app, "GET", "/api/auth/me", Some(&updated.token), None).await;
+    assert_eq!(st, StatusCode::OK);
+
+    // 4. Delete own account (wrong password fails, right password deletes user & invalidates token).
+    let (st, _) = send_raw(
+        &app,
+        "POST",
+        "/api/auth/me/delete",
+        Some(&updated.token),
+        Some(json!({"password": "wrong"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+
+    let (st, _) = send_raw(
+        &app,
+        "POST",
+        "/api/auth/me/delete",
+        Some(&updated.token),
+        Some(json!({"password": "newpassword123"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+
+    let (st, _) = send_raw(&app, "GET", "/api/auth/me", Some(&updated.token), None).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
 async fn test_cloud_upload_deduplication_and_refcounted_deletion() {
     use sha2::{Digest, Sha256};
 

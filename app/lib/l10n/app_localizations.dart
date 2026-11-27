@@ -3549,6 +3549,198 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'选择此目录'**
   String get nativePickFolderPrompt;
+
+  /// No description provided for @accountSecurity.
+  ///
+  /// In zh, this message translates to:
+  /// **'账号与安全'**
+  String get accountSecurity;
+
+  /// No description provided for @accountSectionFooter.
+  ///
+  /// In zh, this message translates to:
+  /// **'修改密码会让其他设备下线；注销账号会永久删除所有云端文件、外链和设备记录。'**
+  String get accountSectionFooter;
+
+  /// No description provided for @currentAccount.
+  ///
+  /// In zh, this message translates to:
+  /// **'当前账号'**
+  String get currentAccount;
+
+  /// No description provided for @boundEmail.
+  ///
+  /// In zh, this message translates to:
+  /// **'绑定邮箱'**
+  String get boundEmail;
+
+  /// No description provided for @emailNotBound.
+  ///
+  /// In zh, this message translates to:
+  /// **'未绑定'**
+  String get emailNotBound;
+
+  /// No description provided for @emailVerifiedTag.
+  ///
+  /// In zh, this message translates to:
+  /// **'已验证'**
+  String get emailVerifiedTag;
+
+  /// No description provided for @googleAccountLinked.
+  ///
+  /// In zh, this message translates to:
+  /// **'已关联 Google'**
+  String get googleAccountLinked;
+
+  /// No description provided for @changePassword.
+  ///
+  /// In zh, this message translates to:
+  /// **'修改密码'**
+  String get changePassword;
+
+  /// No description provided for @setPassword.
+  ///
+  /// In zh, this message translates to:
+  /// **'设置密码'**
+  String get setPassword;
+
+  /// No description provided for @changePasswordSubtitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'修改后其他设备需要重新登录'**
+  String get changePasswordSubtitle;
+
+  /// No description provided for @setPasswordSubtitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'为 Google 账号设置登录密码'**
+  String get setPasswordSubtitle;
+
+  /// No description provided for @currentPassword.
+  ///
+  /// In zh, this message translates to:
+  /// **'当前密码'**
+  String get currentPassword;
+
+  /// No description provided for @confirmNewPassword.
+  ///
+  /// In zh, this message translates to:
+  /// **'确认新密码'**
+  String get confirmNewPassword;
+
+  /// No description provided for @newPasswordHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'至少 6 位'**
+  String get newPasswordHint;
+
+  /// No description provided for @passwordsDoNotMatch.
+  ///
+  /// In zh, this message translates to:
+  /// **'两次输入的新密码不一致'**
+  String get passwordsDoNotMatch;
+
+  /// No description provided for @passwordUpdated.
+  ///
+  /// In zh, this message translates to:
+  /// **'密码已更新，其他设备已下线'**
+  String get passwordUpdated;
+
+  /// No description provided for @passwordSetSuccess.
+  ///
+  /// In zh, this message translates to:
+  /// **'密码已设置'**
+  String get passwordSetSuccess;
+
+  /// No description provided for @bindEmail.
+  ///
+  /// In zh, this message translates to:
+  /// **'绑定邮箱'**
+  String get bindEmail;
+
+  /// No description provided for @changeEmail.
+  ///
+  /// In zh, this message translates to:
+  /// **'更换邮箱'**
+  String get changeEmail;
+
+  /// No description provided for @bindEmailSubtitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'用于邮箱登录和找回密码'**
+  String get bindEmailSubtitle;
+
+  /// No description provided for @emailAddressLabel.
+  ///
+  /// In zh, this message translates to:
+  /// **'邮箱地址'**
+  String get emailAddressLabel;
+
+  /// No description provided for @verificationCodeLabel.
+  ///
+  /// In zh, this message translates to:
+  /// **'6 位验证码'**
+  String get verificationCodeLabel;
+
+  /// No description provided for @resendCodeCountdown.
+  ///
+  /// In zh, this message translates to:
+  /// **'{seconds}s 后重发'**
+  String resendCodeCountdown(int seconds);
+
+  /// No description provided for @verificationCodeSent.
+  ///
+  /// In zh, this message translates to:
+  /// **'验证码已发送到邮箱'**
+  String get verificationCodeSent;
+
+  /// No description provided for @emailBoundSuccess.
+  ///
+  /// In zh, this message translates to:
+  /// **'邮箱绑定成功'**
+  String get emailBoundSuccess;
+
+  /// No description provided for @deleteAccount.
+  ///
+  /// In zh, this message translates to:
+  /// **'注销账号'**
+  String get deleteAccount;
+
+  /// No description provided for @deleteAccountSubtitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'永久删除账号与全部数据，无法恢复'**
+  String get deleteAccountSubtitle;
+
+  /// No description provided for @deleteAccountWarning.
+  ///
+  /// In zh, this message translates to:
+  /// **'注销后将立即永久删除你的账号、全部抽屉记录、云端文件、外链分享与设备信息，且无法恢复。'**
+  String get deleteAccountWarning;
+
+  /// No description provided for @enterPasswordToDelete.
+  ///
+  /// In zh, this message translates to:
+  /// **'输入当前密码以确认'**
+  String get enterPasswordToDelete;
+
+  /// No description provided for @enterUsernameToDelete.
+  ///
+  /// In zh, this message translates to:
+  /// **'输入用户名「{username}」以确认'**
+  String enterUsernameToDelete(String username);
+
+  /// No description provided for @confirmDeleteAccount.
+  ///
+  /// In zh, this message translates to:
+  /// **'确认永久注销'**
+  String get confirmDeleteAccount;
+
+  /// No description provided for @accountDeletedBanner.
+  ///
+  /// In zh, this message translates to:
+  /// **'账号已永久注销'**
+  String get accountDeletedBanner;
 }
 
 class _AppLocalizationsDelegate

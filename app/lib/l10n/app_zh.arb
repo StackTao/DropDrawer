@@ -1442,5 +1442,51 @@
   "nativePickFilesTitle": "选择要放入抽屉的文件或文件夹",
   "nativePickFilesPrompt": "放入抽屉",
   "nativePickFolderTitle": "选择默认下载保存目录",
-  "nativePickFolderPrompt": "选择此目录"
+  "nativePickFolderPrompt": "选择此目录",
+  "accountSecurity": "账号与安全",
+  "accountSectionFooter": "修改密码会让其他设备下线；注销账号会永久删除所有云端文件、外链和设备记录。",
+  "currentAccount": "当前账号",
+  "boundEmail": "绑定邮箱",
+  "emailNotBound": "未绑定",
+  "emailVerifiedTag": "已验证",
+  "googleAccountLinked": "已关联 Google",
+  "changePassword": "修改密码",
+  "setPassword": "设置密码",
+  "changePasswordSubtitle": "修改后其他设备需要重新登录",
+  "setPasswordSubtitle": "为 Google 账号设置登录密码",
+  "currentPassword": "当前密码",
+  "confirmNewPassword": "确认新密码",
+  "newPasswordHint": "至少 6 位",
+  "passwordsDoNotMatch": "两次输入的新密码不一致",
+  "passwordUpdated": "密码已更新，其他设备已下线",
+  "passwordSetSuccess": "密码已设置",
+  "bindEmail": "绑定邮箱",
+  "changeEmail": "更换邮箱",
+  "bindEmailSubtitle": "用于邮箱登录和找回密码",
+  "emailAddressLabel": "邮箱地址",
+  "verificationCodeLabel": "6 位验证码",
+  "resendCodeCountdown": "{seconds}s 后重发",
+  "@resendCodeCountdown": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "verificationCodeSent": "验证码已发送到邮箱",
+  "emailBoundSuccess": "邮箱绑定成功",
+  "deleteAccount": "注销账号",
+  "deleteAccountSubtitle": "永久删除账号与全部数据，无法恢复",
+  "deleteAccountWarning": "注销后将立即永久删除你的账号、全部抽屉记录、云端文件、外链分享与设备信息，且无法恢复。",
+  "enterPasswordToDelete": "输入当前密码以确认",
+  "enterUsernameToDelete": "输入用户名「{username}」以确认",
+  "@enterUsernameToDelete": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "confirmDeleteAccount": "确认永久注销",
+  "accountDeletedBanner": "账号已永久注销"
 }

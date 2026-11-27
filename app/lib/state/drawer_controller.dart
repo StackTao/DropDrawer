@@ -38,6 +38,7 @@ class DropDrawerController extends ChangeNotifier {
   String serverUrl = 'http://127.0.0.1:8080';
   String? token;
   UserProfile? user;
+  AccountInfo? accountInfo;
   String? deviceId;
   String deviceName = Platform.localHostname.replaceAll(
     RegExp(r'\.local$', caseSensitive: false),
@@ -360,6 +361,95 @@ class DropDrawerController extends ChangeNotifier {
     await api.resetPassword(email: email, code: code, newPassword: newPassword);
   }
 
+  Future<void> refreshAccountInfo() async {
+    final api = _api;
+    if (api == null) return;
+    try {
+      final info = await api.getAccountInfo();
+      if (identical(_api, api) && info != null) {
+        accountInfo = info;
+        user = UserProfile(
+          id: info.id,
+          username: info.username,
+          email: info.email,
+        );
+        notifyListeners();
+      }
+    } catch (e) {
+      if (identical(_api, api)) await _handleAuthFailure(e);
+    }
+  }
+
+  Future<void> changeOwnPassword({
+    String? currentPassword,
+    required String newPassword,
+  }) async {
+    final api = _api;
+    if (api == null) return;
+    final (tok, profile) = await api.changePassword(
+      currentPassword: currentPassword,
+      newPassword: newPassword,
+    );
+    if (!identical(_api, api)) return;
+    token = tok;
+    user = profile;
+    if (accountInfo != null) {
+      accountInfo = AccountInfo(
+        id: accountInfo!.id,
+        username: profile.username,
+        email: profile.email,
+        emailVerified: accountInfo!.emailVerified,
+        hasPassword: true,
+        googleLinked: accountInfo!.googleLinked,
+        emailBindingAvailable: accountInfo!.emailBindingAvailable,
+      );
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('auth_token', tok);
+    // Reconnect WS with the newly issued token_version so live sync stays up.
+    _closeWs();
+    unawaited(_connectWs());
+    notifyListeners();
+  }
+
+  Future<void> sendBindEmailCode(String email) async {
+    final api = _api;
+    if (api == null) return;
+    await api.sendBindEmailCode(email);
+  }
+
+  Future<void> confirmBindEmail({
+    required String email,
+    required String code,
+  }) async {
+    final api = _api;
+    if (api == null) return;
+    final info = await api.confirmBindEmail(email: email, code: code);
+    if (!identical(_api, api)) return;
+    accountInfo = info;
+    user = UserProfile(
+      id: info.id,
+      username: info.username,
+      email: info.email,
+    );
+    notifyListeners();
+  }
+
+  Future<void> deleteOwnAccount({
+    String? password,
+    String? confirmUsername,
+  }) async {
+    final api = _api;
+    if (api == null) return;
+    await api.deleteOwnAccount(
+      password: password,
+      confirmUsername: confirmUsername,
+    );
+    await logout();
+    statusBanner = l10n.accountDeletedBanner;
+    notifyListeners();
+  }
+
   Future<void> authenticate({
     required String url,
     required String username,
@@ -462,6 +552,7 @@ class DropDrawerController extends ChangeNotifier {
 
     token = null;
     user = null;
+    accountInfo = null;
     _api = null;
     devices = [];
     items = [];

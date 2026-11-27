@@ -1,0 +1,33 @@
+# DropDrawer prebuilt multi-arch Docker Compose (zero local compilation).
+# Usage:
+#   docker compose -f deploy/docker-compose.prebuilt.yml up -d
+#
+# To create your first administrator account (when DROPDRAWER_ADMIN_ENABLED=true):
+#   docker compose -f deploy/docker-compose.prebuilt.yml exec -T dropdrawer-server \
+#     dropdrawer-server admin-account yourname <<< 'YourStrongPassword123!'
+
+services:
+  dropdrawer-server:
+    image: ghcr.io/stacktao/dropdrawer-server:${DROPDRAWER_IMAGE_TAG:-latest}
+    container_name: dropdrawer-server
+    restart: unless-stopped
+    ports:
+      - "${DROPDRAWER_PORT:-8080}:8080"
+    environment:
+      - DROPDRAWER_BIND=0.0.0.0:8080
+      - DROPDRAWER_DB_PATH=/data/dropdrawer.db
+      - DROPDRAWER_LOCAL_STORAGE=/data/blobs
+      - DROPDRAWER_LOCAL_MAX_FILE_BYTES=${DROPDRAWER_LOCAL_MAX_FILE_BYTES:-}
+      - DROPDRAWER_LOCAL_USER_QUOTA_BYTES=${DROPDRAWER_LOCAL_USER_QUOTA_BYTES:-}
+      # Leave empty to auto-generate and persist in /data/jwt_secret.
+      - DROPDRAWER_JWT_SECRET=${DROPDRAWER_JWT_SECRET:-}
+      # Set to true after creating an admin account to enable /admin.
+      - DROPDRAWER_ADMIN_ENABLED=${DROPDRAWER_ADMIN_ENABLED:-false}
+      # Set to true when deployed behind Nginx / Caddy / Cloudflare reverse proxy.
+      - DROPDRAWER_TRUST_PROXY=${DROPDRAWER_TRUST_PROXY:-false}
+      - DROPDRAWER_ALLOW_REGISTRATION=${DROPDRAWER_ALLOW_REGISTRATION:-true}
+      - DROPDRAWER_TTL_CLEANUP_SECS=${DROPDRAWER_TTL_CLEANUP_SECS:-300}
+      - DROPDRAWER_CORS_ORIGINS=${DROPDRAWER_CORS_ORIGINS:-}
+      - RUST_LOG=${RUST_LOG:-info}
+    volumes:
+      - ./data/server:/data

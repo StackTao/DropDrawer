@@ -386,4 +386,27 @@ struct DropDrawerCoreTests {
         #expect(store.activeAnnouncement?.id == "a2")
         UserDefaults.standard.removePersistentDomain(forName: suite)
     }
+
+    @Test("AccountInfo decodes self-service account metadata")
+    func decodeAccountInfo() throws {
+        let json = """
+        {
+          "id": "u-1",
+          "username": "alice",
+          "email": "alice@example.com",
+          "email_verified": true,
+          "has_password": false,
+          "google_linked": true,
+          "email_binding_available": true
+        }
+        """
+        let info = try JSONDecoder().decode(AccountInfo.self, from: Data(json.utf8))
+        #expect(info.id == "u-1")
+        #expect(info.username == "alice")
+        #expect(info.email == "alice@example.com")
+        #expect(info.emailVerified == true)
+        #expect(info.hasPassword == false)
+        #expect(info.googleLinked == true)
+        #expect(info.emailBindingAvailable == true)
+    }
 }

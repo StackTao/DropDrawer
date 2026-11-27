@@ -1147,6 +1147,16 @@ void main() {
         addTearDown(tester.view.reset);
         final ctrl = _TestController(_FakeWindowService(mobile: mobile, windows: !mobile));
         addTearDown(ctrl.dispose);
+        ctrl.user = UserProfile(id: 'u1', username: 'alice', email: 'alice@example.com');
+        ctrl.accountInfo = const AccountInfo(
+          id: 'u1',
+          username: 'alice',
+          email: 'alice@example.com',
+          emailVerified: true,
+          hasPassword: true,
+          googleLinked: true,
+          emailBindingAvailable: true,
+        );
         await tester.pumpWidget(
           MaterialApp(
             theme: buildAppTheme(mobile: mobile, android: false),
@@ -1157,8 +1167,41 @@ void main() {
         );
         await tester.pump();
         expect(tester.takeException(), isNull, reason: 'mobile=$mobile');
-        expect(find.text('Language'), findsWidgets);
+        if (!mobile) {
+          expect(find.text('Language'), findsWidgets);
+        }
+        // Scroll through the whole preferences list to verify Account & Security
+        // and Windows integration render cleanly without overflow.
+        for (var i = 0; i < 4; i++) {
+          await tester.drag(find.byType(ListView), const Offset(0, -450));
+          await tester.pump();
+          expect(tester.takeException(), isNull, reason: 'mobile=$mobile step=$i');
+        }
+        if (mobile) {
+          await tester.drag(find.byType(ListView), const Offset(0, 1800));
+          await tester.pump();
+        }
+        expect(find.text('Account & Security'), findsWidgets);
       }
     });
+  });
+
+  test('AccountInfo parses self-service account metadata', () {
+    final info = AccountInfo.fromJson({
+      'id': 'u-1',
+      'username': 'alice',
+      'email': 'alice@example.com',
+      'email_verified': true,
+      'has_password': false,
+      'google_linked': true,
+      'email_binding_available': true,
+    });
+    expect(info.id, 'u-1');
+    expect(info.username, 'alice');
+    expect(info.email, 'alice@example.com');
+    expect(info.emailVerified, isTrue);
+    expect(info.hasPassword, isFalse);
+    expect(info.googleLinked, isTrue);
+    expect(info.emailBindingAvailable, isTrue);
   });
 }

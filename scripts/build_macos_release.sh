@@ -5,9 +5,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 INSTALL_TO_APPS=false
+NOTARIZE="${DROPDRAWER_NOTARIZE:-false}"
 for arg in "$@"; do
   if [[ "$arg" == "--install" ]]; then
     INSTALL_TO_APPS=true
+  elif [[ "$arg" == "--notarize" ]]; then
+    NOTARIZE=true
   fi
 done
 
@@ -57,8 +60,12 @@ fi
 
 if [[ -n "$SIGN_ID" ]]; then
   echo "  Using certificate: $SIGN_ID"
-  codesign --force --sign "$SIGN_ID" "$APP_BUNDLE/Contents/Frameworks/libdropdrawer_p2p.dylib"
-  codesign --force --deep --sign "$SIGN_ID" \
+  EXTRA_SIGN_FLAGS=()
+  if [[ "$NOTARIZE" == "true" ]]; then
+    EXTRA_SIGN_FLAGS+=(--options runtime --timestamp)
+  fi
+  codesign --force "${EXTRA_SIGN_FLAGS[@]}" --sign "$SIGN_ID" "$APP_BUNDLE/Contents/Frameworks/libdropdrawer_p2p.dylib"
+  codesign --force --deep "${EXTRA_SIGN_FLAGS[@]}" --sign "$SIGN_ID" \
     --entitlements "$ROOT_DIR/app/macos/Runner/Release.entitlements" \
     "$APP_BUNDLE"
 else
@@ -86,6 +93,28 @@ rm -rf "$STAGING_DIR"
 
 echo "Built Release app: $APP_BUNDLE"
 echo "Built DMG installer: $DMG_PATH"
+
+if [[ "$NOTARIZE" == "true" ]]; then
+  if [[ -n "$SIGN_ID" ]]; then
+    codesign --force --timestamp --sign "$SIGN_ID" "$DMG_PATH"
+  fi
+  echo "[Notarize] Submitting $DMG_PATH to Apple notarization service..."
+  if [[ -n "${APPLE_NOTARY_PROFILE:-}" ]]; then
+    xcrun notarytool submit "$DMG_PATH" --keychain-profile "$APPLE_NOTARY_PROFILE" --wait
+  elif [[ -n "${APPLE_ID:-}" && -n "${APPLE_TEAM_ID:-}" && -n "${APPLE_APP_PASSWORD:-}" ]]; then
+    xcrun notarytool submit "$DMG_PATH" \
+      --apple-id "$APPLE_ID" \
+      --team-id "$APPLE_TEAM_ID" \
+      --password "$APPLE_APP_PASSWORD" \
+      --wait
+  else
+    echo "error: notarization requested, set APPLE_NOTARY_PROFILE or APPLE_ID + APPLE_TEAM_ID + APPLE_APP_PASSWORD" >&2
+    exit 1
+  fi
+  xcrun stapler staple "$DMG_PATH"
+  xcrun stapler validate "$DMG_PATH"
+  echo "[Notarize] Stapled and verified: $DMG_PATH"
+fi
 
 if [[ "$INSTALL_TO_APPS" == true ]]; then
   echo "Installing to /Applications/DropDrawer.app..."
