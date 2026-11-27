@@ -1,5 +1,5 @@
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock, Weak};
 use std::time::{Duration, Instant};
 
@@ -7,7 +7,6 @@ use dashmap::DashMap;
 use protocol::{DeviceInfo, DrawerItem, StorageBackendConfig, WsEvent};
 use tokio::sync::{mpsc, Mutex, OwnedMutexGuard};
 
-use crate::admin::AdminAuthConfig;
 use crate::db::{hydrate_drawer_item, Database, StorageBackendRecord};
 use crate::google_login::{GoogleLogin, GoogleLoginConfig};
 use crate::mailer::{EmailSender, OutgoingEmail, SmtpEmailSender};
@@ -52,7 +51,7 @@ pub struct AppState {
     google_login: RwLock<Option<Arc<GoogleLogin>>>,
     email_sender: RwLock<Arc<dyn EmailSender>>,
     has_custom_email_sender: AtomicBool,
-    pub admin_auth: Option<AdminAuthConfig>,
+    pub admin_enabled: bool,
     /// Short-lived Google OAuth2 authorization flows keyed by `state` nonce.
     pub pending_google_oauth: DashMap<String, PendingGoogleOAuth>,
     /// Failed logins per client IP and normalized username.
@@ -65,8 +64,8 @@ pub struct AppState {
     pub failed_admin_logins: AttemptLimiter,
     /// Server-wide ceiling on failed admin token attempts (all IPs together).
     pub failed_admin_logins_global: AttemptLimiter,
-    /// Generation of admin sessions; bumping it signs every admin out.
-    admin_epoch: AtomicU64,
+    pub(crate) admin_challenges: AttemptLimiter,
+    pub(crate) admin_google_starts: AttemptLimiter,
     /// Mirrors `storage_policy.block_private_endpoints` into the HTTP client.
     network_guard: PrivateNetworkGuard,
     /// Serializes read-modify-write updates of the runtime settings.
@@ -139,7 +138,7 @@ impl AppState {
         if let Some(cfg) = &google_config {
             initial.google = GoogleProviderSettings::from_google_config(cfg);
         }
-        Self::with_full_config(db, jwt_secret, default_local_storage_dir, initial, None)
+        Self::with_full_config(db, jwt_secret, default_local_storage_dir, initial, false)
     }
 
     pub fn with_full_config(
@@ -147,7 +146,7 @@ impl AppState {
         jwt_secret: String,
         default_local_storage_dir: PathBuf,
         env_defaults: RuntimeSettings,
-        admin_auth: Option<AdminAuthConfig>,
+        admin_enabled: bool,
     ) -> Arc<Self> {
         // Persisted admin settings take precedence over env defaults once saved.
         let effective_settings = db
@@ -180,27 +179,19 @@ impl AppState {
             google_login: RwLock::new(google_login),
             email_sender: RwLock::new(Arc::new(SmtpEmailSender)),
             has_custom_email_sender: AtomicBool::new(false),
-            admin_auth,
+            admin_enabled,
             pending_google_oauth: DashMap::new(),
             failed_logins: AttemptLimiter::new(10, Duration::from_secs(15 * 60)),
             failed_share_lookups: AttemptLimiter::new(60, Duration::from_secs(60)),
             failed_passcodes: AttemptLimiter::new(10, Duration::from_secs(15 * 60)),
             failed_admin_logins: AttemptLimiter::new(8, Duration::from_secs(15 * 60)),
             failed_admin_logins_global: AttemptLimiter::new(60, Duration::from_secs(15 * 60)),
-            admin_epoch: AtomicU64::new(rand_epoch()),
+            admin_challenges: AttemptLimiter::new(30, Duration::from_secs(60)),
+            admin_google_starts: AttemptLimiter::new(15, Duration::from_secs(60)),
             settings_update: Mutex::new(()),
             started_at: Instant::now(),
             email_send_limiter: AttemptLimiter::new(10, Duration::from_secs(15 * 60)),
         })
-    }
-
-    pub fn admin_epoch(&self) -> u64 {
-        self.admin_epoch.load(Ordering::Relaxed)
-    }
-
-    /// Invalidate every admin session issued so far.
-    pub fn revoke_admin_sessions(&self) {
-        self.admin_epoch.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn runtime_settings(&self) -> RuntimeSettings {
@@ -533,11 +524,7 @@ impl AppState {
     }
 }
 
-fn rand_epoch() -> u64 {
-    use rand::RngCore;
-    // Keep it small enough to round-trip through JSON numbers exactly.
-    rand::rngs::OsRng.next_u64() >> 12
-}
+
 
 /// Absolute, lexically normalized form of `path` (`.`/`..` resolved without touching the filesystem).
 fn normalize_path(path: &Path) -> PathBuf {

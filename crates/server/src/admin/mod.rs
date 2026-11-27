@@ -1,16 +1,18 @@
-//! Built-in `/admin` console (Vaultwarden style: one server-side admin token).
+//! Built-in `/admin` console.
 //!
 //! Layout:
-//! - [`auth`]      admin token verification, session cookie, login rate limiting
+//! - [`auth`]      password verification, session cookie, login rate limiting
 //! - [`assets`]    the single-page console (`ui/`) with a strict CSP
 //! - [`dashboard`] overview statistics, system info, audit log, maintenance
 //! - [`settings`]  runtime settings & feature switches, SMTP test
 //! - [`users`]     accounts, per-user policy, devices, storage backends, items
 //! - [`invites`] / [`shares`] invite codes and public share moderation
 //! - [`accounts`]  named administrator accounts, own password / TOTP, backups
+//! - [`google`]    Google identity verification and administrator binding
+//! - [`turnstile`] login challenge verification
 //! - [`totp`]      RFC 6238 two-step verification codes
 //!
-//! The console is disabled (404) unless `DROPDRAWER_ADMIN_TOKEN` is set.
+//! The console is disabled (404) unless explicitly enabled.
 
 use std::convert::Infallible;
 use std::net::{IpAddr, SocketAddr};
@@ -27,6 +29,8 @@ use crate::state::AppState;
 
 mod accounts;
 mod assets;
+pub(crate) mod google;
+mod turnstile;
 mod auth;
 mod dashboard;
 mod invites;
@@ -35,7 +39,8 @@ mod shares;
 pub mod totp;
 mod users;
 
-pub use auth::{AdminAuthConfig, AdminSession, AdminTokenVerifier};
+pub use auth::AdminSession;
+pub use accounts::local_account_command;
 
 pub(crate) type ApiError = (StatusCode, String);
 pub(crate) type ApiResult<T> = Result<T, ApiError>;
@@ -46,7 +51,10 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/admin", get(assets::page))
         .route("/admin/assets/{file}", get(assets::asset))
+        .route("/api/admin/auth/config", get(turnstile::public_config))
         .route("/api/admin/login", post(auth::login))
+        .route("/api/admin/google/start", post(google::start))
+        .route("/api/admin/google/totp", post(google::finish_totp))
         .route("/api/admin/logout", post(auth::logout))
         .route("/api/admin/session", get(auth::session))
         .route("/api/admin/overview", get(dashboard::overview))

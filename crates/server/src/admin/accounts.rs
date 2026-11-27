@@ -65,7 +65,7 @@ fn require_account(state: &AppState, id: &str) -> ApiResult<AdminAccount> {
 /// Management endpoints never act on the caller's own account (use `/me` instead),
 /// so a super administrator cannot lock themselves out by accident.
 fn not_self(session: &AdminSession, id: &str) -> Result<(), ApiError> {
-    if session.account_id.as_deref() == Some(id) {
+    if session.account_id == id {
         return Err(bad_request("请在「我的账号」中修改自己的账号"));
     }
     Ok(())
@@ -206,10 +206,7 @@ pub(super) async fn delete(
 // ---- The signed-in administrator ------------------------------------------------
 
 fn own_account(state: &AppState, session: &AdminSession) -> ApiResult<AdminAccount> {
-    let id = session.account_id.as_deref().ok_or_else(|| {
-        bad_request("管理员密钥登录没有个人账号；请使用管理员账号登录后再设置")
-    })?;
-    require_account(state, id)
+    require_account(state, &session.account_id)
 }
 
 #[derive(Debug, Deserialize)]
@@ -382,4 +379,33 @@ pub(super) async fn backup(
         Body::from(bytes),
     )
         .into_response())
+}
+
+/// Manage bootstrap and recovery directly against the server's SQLite database.
+pub fn local_account_command(state: &AppState, args: &[String]) -> anyhow::Result<()> {
+    match args {
+        [command, username] if command == "admin-account" => {
+            let username = username.trim();
+            validate_admin_username(username).map_err(|(_, message)| anyhow::anyhow!(message))?;
+            let mut password = String::new();
+            std::io::stdin().read_line(&mut password)?;
+            let password = password.trim_end_matches(['\r', '\n']);
+            validate_admin_password(password).map_err(|(_, message)| anyhow::anyhow!(message))?;
+            let hash = crate::auth::hash_password(password)?;
+            if let Some(account) = state.db.find_admin_account(username)? {
+                state.db.set_admin_password(&account.id, &hash)?;
+            } else {
+                state.db.create_admin_account(&uuid::Uuid::new_v4().to_string(), username, &hash, AdminRole::Super)?;
+            }
+            println!("Administrator password saved");
+        }
+        [command] if command == "admin-disable-turnstile" => {
+            let mut settings = state.runtime_settings();
+            settings.admin_turnstile.enabled = false;
+            state.apply_and_persist_settings(settings)?;
+            println!("Turnstile disabled. Restart the service to load the updated settings.");
+        }
+        _ => anyhow::bail!("Usage: dropdrawer-server admin-account <username> | admin-disable-turnstile"),
+    }
+    Ok(())
 }

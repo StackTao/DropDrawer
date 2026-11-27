@@ -59,10 +59,6 @@
     <img class="auth-logo" src="/admin/assets/logo.svg" alt="" />
     <h1>DropDrawer Admin</h1>
     <p class="lead">登录服务器管理控制台</p>
-    <div class="segmented auth-tabs" role="tablist">
-      <button type="button" class="active" id="modeAccount" role="tab" aria-selected="true">管理员账号</button>
-      <button type="button" id="modeToken" role="tab" aria-selected="false">管理员密钥</button>
-    </div>
     <form id="loginForm" autocomplete="on">
       <div id="accountFields" class="auth-fields">
         <input id="loginUser" class="input" type="text" placeholder="用户名" autocomplete="username" aria-label="用户名" />
@@ -72,13 +68,12 @@
         <p class="auth-hint">已开启两步验证，请输入身份验证器中的 6 位验证码</p>
         <input id="loginTotp" class="input mono totp-input" type="text" inputmode="numeric" pattern="[0-9 ]*" maxlength="7" placeholder="000000" autocomplete="one-time-code" aria-label="两步验证码" />
       </div>
-      <div id="tokenFields" class="auth-fields" hidden>
-        <input id="loginToken" class="input" type="password" placeholder="DROPDRAWER_ADMIN_TOKEN" autocomplete="off" aria-label="管理员密钥" />
-      </div>
+      <div id="loginChallenge" hidden></div>
       <div id="loginError" class="auth-error" role="alert"></div>
       <button id="loginSubmit" class="btn primary block" type="submit">登录</button>
+      <button id="loginGoogle" class="btn block" type="button" hidden>使用 Google 登录</button>
+      <button id="loginBack" class="btn ghost block" type="button" hidden>返回登录</button>
     </form>
-    <p class="foot" id="loginFoot">管理员账号由超级管理员在控制台中创建。首次使用请切换到「管理员密钥」，用服务端环境变量 <code>DROPDRAWER_ADMIN_TOKEN</code> 登录。连续输错会被临时锁定。</p>
   </div>
 </div>
 

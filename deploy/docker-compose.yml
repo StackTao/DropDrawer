@@ -15,8 +15,9 @@ services:
       - DROPDRAWER_LOCAL_USER_QUOTA_BYTES=${DROPDRAWER_LOCAL_USER_QUOTA_BYTES:-}
       # Leave empty to have the server generate one and keep it in /data/jwt_secret.
       - DROPDRAWER_JWT_SECRET=${DROPDRAWER_JWT_SECRET:-}
-      # Vaultwarden-style admin console (/admin). Leave empty to keep /admin disabled.
-      # Accepts either a plaintext secret or an Argon2id PHC hash ($argon2id$...).
+      # Enable the console after provisioning a named administrator.
+      - DROPDRAWER_ADMIN_ENABLED=${DROPDRAWER_ADMIN_ENABLED:-}
+      # Legacy enable flag for upgrades. Its value no longer authenticates requests.
       - DROPDRAWER_ADMIN_TOKEN=${DROPDRAWER_ADMIN_TOKEN:-}
       # Set to false once every account you need has been created.
       - DROPDRAWER_ALLOW_REGISTRATION=${DROPDRAWER_ALLOW_REGISTRATION:-true}

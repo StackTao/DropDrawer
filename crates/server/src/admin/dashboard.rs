@@ -53,7 +53,6 @@ pub(super) struct SystemInfo {
     local_storage_dir: String,
     local_storage_bytes: Option<u64>,
     local_storage_files: Option<u64>,
-    admin_token_hashed: bool,
     smtp_ready: bool,
     google_ready: bool,
 }
@@ -77,7 +76,6 @@ pub(super) async fn system(
         local_storage_dir: state.default_local_storage_dir.to_string_lossy().to_string(),
         local_storage_bytes: usage.map(|(bytes, _)| bytes),
         local_storage_files: usage.map(|(_, files)| files),
-        admin_token_hashed: state.admin_auth.as_ref().is_some_and(|a| a.is_hashed()),
         smtp_ready: settings.smtp.is_usable() || state.has_custom_email_sender(),
         google_ready: state.google_login().is_some(),
     }))

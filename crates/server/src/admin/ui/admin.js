@@ -203,8 +203,8 @@
     }
     const resp = await fetch(path, opts);
     const text = await resp.text();
-    if (resp.status === 401 && !path.endsWith("/login") && !path.endsWith("/session")) {
-      showLogin("登录已过期，请重新输入管理员密钥");
+    if (resp.status === 401 && !path.endsWith("/login") && !path.endsWith("/session") && !path.endsWith("/google/totp")) {
+      showLogin("登录已过期，请重新登录");
       throw new ApiError(401, "管理员会话已失效");
     }
     if (!resp.ok) throw new ApiError(resp.status, text || resp.statusText);
@@ -362,7 +362,7 @@
     page: "overview",
     settings: null,
     draft: null,
-    secrets: { google: "", smtp: "" },
+    secrets: { google: "", smtp: "", turnstile: "" },
     overview: null,
     system: null,
     users: [],
@@ -393,7 +393,7 @@
 
   function isDirty() {
     if (!S.draft || !S.settings) return false;
-    return S.secrets.google !== "" || S.secrets.smtp !== "" || JSON.stringify(S.draft) !== JSON.stringify(S.settings);
+    return Object.values(S.secrets).some(Boolean) || JSON.stringify(S.draft) !== JSON.stringify(S.settings);
   }
 
   function updateSavebar() {
@@ -423,9 +423,16 @@
       default_user_local_quota_bytes: d.default_user_local_quota_bytes,
       google: {
         enabled: d.google.enabled,
+        admin_enabled: d.google.admin_enabled,
         client_id: d.google.client_id,
         client_secret: S.secrets.google || null,
         redirect_uri: d.google.redirect_uri,
+      },
+      admin_turnstile: {
+        enabled: d.admin_turnstile.enabled,
+        site_key: d.admin_turnstile.site_key,
+        secret_key: S.secrets.turnstile || null,
+        hostname: d.admin_turnstile.hostname,
       },
       smtp: {
         enabled: d.smtp.enabled,
@@ -449,7 +456,7 @@
   function acceptSettings(settings) {
     S.settings = settings;
     S.draft = clone(settings);
-    S.secrets = { google: "", smtp: "" };
+    S.secrets = { google: "", smtp: "", turnstile: "" };
     updateSavebar();
   }
 
@@ -561,9 +568,9 @@
     }
     replace(nav, items);
     if (S.session) {
-      $("meName").textContent = S.session.is_owner ? "密钥登录" : S.session.actor;
+      $("meName").textContent = S.session.actor;
       $("meRole").textContent = (ROLE_LABELS[S.session.role] || S.session.role) + (S.session.totp_enabled ? " · 两步验证" : "");
-      $("meAvatar").textContent = S.session.is_owner ? "K" : initials(S.session.actor);
+      $("meAvatar").textContent = initials(S.session.actor);
       $("meLink").classList.toggle("active", S.page === "me");
     }
     if (S.system) {
@@ -689,14 +696,8 @@
         h("dt", { text: "数据库" }), h("dd", { text: fmtBytes(sys.database_bytes) }),
         h("dt", { text: "本地存储" }), h("dd", { text: sys.local_storage_bytes == null ? "文件过多，未统计" : `${fmtBytes(sys.local_storage_bytes)} · ${fmtNum(sys.local_storage_files)} 个文件` }),
         h("dt", { text: "存储目录" }), h("dd", { class: "mono", text: sys.local_storage_dir }),
-        h("dt", { text: "SMTP" }), h("dd", null, sys.smtp_ready ? pill("就绪", "ok") : pill("未配置")),
-        h("dt", { text: "管理员密钥" }), h("dd", null, sys.admin_token_hashed ? pill("Argon2 哈希", "ok") : pill("明文", "warn")))
-        : h("div", { class: "skeleton" }),
-      sys && !sys.admin_token_hashed
-        ? h("div", { class: "callout warn" }, icon("alert"), h("div", null, "管理员密钥以明文配置。建议改为 Argon2 哈希（",
-          h("code", { text: "echo -n '密钥' | argon2 \"$(openssl rand -base64 16)\" -e -id" }), "）后填入 DROPDRAWER_ADMIN_TOKEN。"))
-        : null);
-    if (sys && !sys.admin_token_hashed) sysCard.lastChild.style.marginTop = "14px";
+        h("dt", { text: "SMTP" }), h("dd", null, sys.smtp_ready ? pill("就绪", "ok") : pill("未配置")))
+        : h("div", { class: "skeleton" }));
 
     const recent = h("div", { class: "card" },
       h("div", { class: "card-head" },
@@ -765,8 +766,9 @@
     const login = h("div", { class: "group" },
       row({ title: "账号密码登录", desc: "关闭后只能使用 Google 等第三方方式登录，至少要保留一种登录方式。", control: draftSwitch("password_login_enabled", { label: "账号密码登录" }) }),
       row({ title: "邮箱找回密码", desc: "允许用户通过邮箱验证码自助重置密码，重置后该账号的其他会话会全部下线。", badges: !smtpReady ? pill("SMTP 未就绪", "warn") : null, control: draftSwitch("features.password_reset_enabled", { label: "邮箱找回密码" }) }),
-      row({ title: "Google 登录", desc: "客户端登录页显示「使用 Google 登录」。", control: draftSwitch("google.enabled", { rerender: true, label: "Google 登录" }) }),
-      google.enabled ? h("div", { class: "row stack sub" },
+      row({ title: "客户端 Google 登录", desc: "在 DropDrawer 客户端显示 Google 登录入口。", control: draftSwitch("google.enabled", { rerender: true, label: "客户端 Google 登录" }) }),
+      isSuper() ? row({ title: "管理端 Google 登录", desc: "使用与现有管理员用户名相同的 Gmail 或 Google Workspace 邮箱登录。", control: draftSwitch("google.admin_enabled", { rerender: true, label: "管理端 Google 登录" }) }) : null,
+      isSuper() && (google.enabled || google.admin_enabled) ? h("div", { class: "row stack sub" },
         h("div", { class: "fields" },
           field("Client ID", draftText("google.client_id", { placeholder: "xxxx.apps.googleusercontent.com" })),
           field("Client Secret", secretInput("google", google.has_client_secret, "GOCSPX-…"), google.has_client_secret ? pill("已保存", "ok") : null)),
@@ -778,9 +780,19 @@
         control: draftSwitch("features.google_signup_enabled", { disabled: !google.enabled, label: "Google 自动创建账号" }),
       }));
 
+    const turnstile = d.admin_turnstile;
+    const adminSecurity = isSuper() ? h("div", { class: "group" },
+      row({ title: "Cloudflare Turnstile", desc: "管理台使用密码或 Google 登录前，须通过人机验证。", control: draftSwitch("admin_turnstile.enabled", { rerender: true, label: "Cloudflare Turnstile" }) }),
+      turnstile.enabled ? h("div", { class: "row stack sub" },
+        h("div", { class: "fields" },
+          field("站点密钥", draftText("admin_turnstile.site_key")),
+          field("服务端密钥", secretInput("turnstile", turnstile.has_secret_key, "留空保留已保存密钥"))),
+        field("主机名", draftText("admin_turnstile.hostname", { placeholder: location.hostname }))) : null) : null;
+
     return h("div", { class: "page" },
       sectionTitle("新用户注册"), registration,
       sectionTitle("登录方式"), login,
+      adminSecurity ? sectionTitle("管理端人机验证") : null, adminSecurity,
       sectionTitle("邀请码", "注册需要邀请码时使用；可设置使用次数与有效期"), renderInvites());
   }
 
@@ -1498,7 +1510,7 @@
       return sel;
     };
 
-    const isMe = (a) => S.session && S.session.actor === a.username && !S.session.is_owner;
+    const isMe = (a) => S.session && S.session.actor === a.username;
     const list = table([
       {
         label: "管理员", render: (a) => h("div", { class: "user-cell" },
@@ -1542,10 +1554,10 @@
           }),
         ]),
       },
-    ], S.admins, { emptyIcon: "badge", emptyText: "还没有管理员账号，当前只能用管理员密钥登录" });
+    ], S.admins, { emptyIcon: "badge", emptyText: "还没有管理员账号" });
 
     return h("div", { class: "page" },
-      callout(null, "超级管理员可以管理管理员账号与下载备份；管理员可以修改设置和治理用户；只读管理员只能查看。管理员密钥（DROPDRAWER_ADMIN_TOKEN）始终拥有超级管理员权限，适合作为应急入口。"),
+      callout(null, "超级管理员可以管理管理员账号与下载备份；管理员可以修改设置和治理用户；只读管理员只能查看。如需用 Google 登录，管理员用户名须与 Google 邮箱一致。"),
       h("div", { class: "card" }, h("div", { class: "inline-form" }, field("用户名", name), field("初始密码", pwd), field("角色", role), create)),
       list);
   }
@@ -1556,12 +1568,6 @@
   function renderMe() {
     const sess = S.session;
     if (!sess) return h("div", { class: "page" });
-    if (sess.is_owner) {
-      return h("div", { class: "page" },
-        callout(null, "你正在使用管理员密钥（DROPDRAWER_ADMIN_TOKEN）登录，这个身份没有个人账号，密码与两步验证不适用。建议在「管理员」页为自己创建一个超级管理员账号并开启两步验证，日常用账号登录，密钥只作应急使用。"),
-        isSuper() ? h("div", null, h("a", { class: "btn primary", href: "#/admins" }, icon("badge"), "前往管理员页")) : null);
-    }
-
     const current = h("input", { class: "input", type: "password", autocomplete: "current-password", id: "me-cur" });
     const next = h("input", { class: "input", type: "password", autocomplete: "new-password", id: "me-new", placeholder: "至少 10 位" });
     const changePwd = btn("修改密码", {
@@ -1660,7 +1666,8 @@
     while (overlayStack.length) closeOverlay(overlayStack[overlayStack.length - 1]);
     $("loginView").hidden = false;
     $("loginError").textContent = message || "";
-    setLoginStep(loginMode === "token" ? "token" : "account");
+    setLoginStep("account");
+    void loadLoginOptions();
   }
 
   async function loadSession() {
@@ -1682,48 +1689,111 @@
     booted = true;
   }
 
-  // Login: "account" (username + password), "totp" (second step), or "token".
   let loginMode = "account";
+  let loginOptions = null;
+  let loginOptionsPromise = null;
+  let turnstileId = null;
+  let challengeToken = null;
+
+  function syncLoginOptions() {
+    $("loginGoogle").hidden = loginMode !== "account" || !loginOptions?.google_enabled;
+    $("loginChallenge").hidden = loginMode === "google-totp" || !loginOptions?.turnstile_site_key;
+  }
 
   function setLoginStep(step) {
     loginMode = step;
-    $("accountFields").hidden = step !== "account";
-    $("totpFields").hidden = step !== "totp";
-    $("tokenFields").hidden = step !== "token";
-    const tokenMode = step === "token";
-    $("modeToken").classList.toggle("active", tokenMode);
-    $("modeAccount").classList.toggle("active", !tokenMode);
-    $("modeToken").setAttribute("aria-selected", String(tokenMode));
-    $("modeAccount").setAttribute("aria-selected", String(!tokenMode));
-    $("loginSubmit").textContent = step === "totp" ? "验证并登录" : "登录";
-    const focus = { account: $("loginUser").value ? "loginPassword" : "loginUser", totp: "loginTotp", token: "loginToken" }[step];
+    const needsCode = step !== "account";
+    $("accountFields").hidden = needsCode;
+    $("totpFields").hidden = !needsCode;
+    $("loginBack").hidden = !needsCode;
+    $("loginSubmit").textContent = needsCode ? "验证并登录" : "登录";
+    syncLoginOptions();
+    const focus = needsCode ? "loginTotp" : ($("loginUser").value ? "loginPassword" : "loginUser");
     setTimeout(() => $(focus).focus(), 30);
   }
 
-  $("modeAccount").addEventListener("click", () => { $("loginError").textContent = ""; setLoginStep("account"); });
-  $("modeToken").addEventListener("click", () => { $("loginError").textContent = ""; setLoginStep("token"); });
+  function refreshChallenge() {
+    challengeToken = null;
+    if (turnstileId !== null) window.turnstile.reset(turnstileId);
+  }
+
+  function loadLoginOptions() {
+    return loginOptionsPromise ??= api("/api/admin/auth/config").then((options) => {
+      loginOptions = options;
+      syncLoginOptions();
+      if (!options.turnstile_site_key) return;
+      const script = document.createElement("script");
+      script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+      const failure = () => { $("loginError").textContent = "人机验证加载失败，请刷新后重试"; };
+      script.addEventListener("error", failure, { once: true });
+      script.addEventListener("load", () => {
+        if (!window.turnstile) return failure();
+        window.turnstile.ready(() => {
+          turnstileId = window.turnstile.render("#loginChallenge", {
+            sitekey: options.turnstile_site_key,
+            action: "admin_login",
+            size: "flexible",
+            callback: (token) => { challengeToken = token; },
+            "expired-callback": () => refreshChallenge(),
+            "error-callback": () => { challengeToken = null; },
+          });
+        });
+      }, { once: true });
+      document.head.append(script);
+    }).catch(() => { $("loginError").textContent = "无法加载登录配置，请刷新后重试"; });
+  }
+
+  $("loginBack").addEventListener("click", () => {
+    $("loginError").textContent = "";
+    $("loginTotp").value = "";
+    setLoginStep("account");
+    refreshChallenge();
+  });
+
+  $("loginGoogle").addEventListener("click", async () => {
+    const button = $("loginGoogle");
+    button.disabled = true;
+    $("loginError").textContent = "";
+    try {
+      const result = await api("/api/admin/google/start", { method: "POST", body: { turnstile_token: challengeToken } });
+      location.assign(result.authorization_url);
+    } catch (err) {
+      $("loginError").textContent = err.message || "无法开始 Google 登录";
+      refreshChallenge();
+    } finally {
+      button.disabled = false;
+    }
+  });
 
   $("loginForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const button = $("loginSubmit");
-    const body = loginMode === "token"
-      ? { token: $("loginToken").value }
-      : { username: $("loginUser").value.trim(), password: $("loginPassword").value, totp_code: loginMode === "totp" ? $("loginTotp").value.replace(/\s+/g, "") : null };
+    const code = $("loginTotp").value.replace(/\s+/g, "");
+    const googleTotp = loginMode === "google-totp";
+    const body = googleTotp ? { code } : {
+      username: $("loginUser").value.trim(),
+      password: $("loginPassword").value,
+      totp_code: loginMode === "totp" ? code : null,
+      turnstile_token: challengeToken,
+    };
+    button.disabled = true;
     button.classList.add("busy");
     $("loginError").textContent = "";
     try {
-      await api("/api/admin/login", { method: "POST", body });
-      for (const id of ["loginToken", "loginPassword", "loginTotp"]) $(id).value = "";
-      if (loginMode === "totp") setLoginStep("account");
+      await api(googleTotp ? "/api/admin/google/totp" : "/api/admin/login", { method: "POST", body });
+      $("loginPassword").value = "";
+      $("loginTotp").value = "";
       await showApp();
     } catch (err) {
       if (err.message === "TOTP_REQUIRED") {
         setLoginStep("totp");
       } else {
         $("loginError").textContent = err.message || "登录失败";
-        if (loginMode === "totp") { $("loginTotp").value = ""; $("loginTotp").focus(); }
+        if (loginMode !== "account") { $("loginTotp").value = ""; $("loginTotp").focus(); }
       }
     } finally {
+      if (!googleTotp) refreshChallenge();
+      button.disabled = false;
       button.classList.remove("busy");
     }
   });
@@ -1734,15 +1804,21 @@
     S.draft = null;
     S.settings = null;
     S.session = null;
-    document.body.classList.remove("readonly");
-    showLogin();
+    location.replace("/admin");
   });
 
   (async function boot() {
+    const googleResult = new URLSearchParams(location.search).get("google");
+    if (googleResult) history.replaceState(null, "", "/admin");
+    if (googleResult === "totp") {
+      showLogin();
+      setLoginStep("google-totp");
+      return;
+    }
     try {
       await api("/api/admin/session");
     } catch {
-      showLogin();
+      showLogin(googleResult === "failed" ? "Google 登录失败。请确认 Google 邮箱与现有管理员账号一致，或使用密码登录。" : "");
       return;
     }
     await showApp();

@@ -90,6 +90,10 @@ pub(super) fn migrate(conn: &Connection) -> rusqlite::Result<()> {
              token_version INTEGER NOT NULL DEFAULT 0,
              created_at TEXT NOT NULL,
              last_login_at TEXT
+         );
+         CREATE TABLE IF NOT EXISTS admin_google_identities (
+             account_id TEXT PRIMARY KEY REFERENCES admin_accounts(id) ON DELETE CASCADE,
+             subject TEXT NOT NULL UNIQUE
          );",
     )
 }
@@ -161,6 +165,23 @@ impl Database {
         )
         .optional()
         .map_err(Into::into)
+    }
+
+    /// Pin a verified Google subject to a provisioned account, or match its
+    /// existing binding. The unique constraints cover concurrent first logins.
+    pub(crate) fn bind_admin_google_identity(&self, account_id: &str, subject: &str) -> anyhow::Result<bool> {
+        let conn = self.lock_conn();
+        conn.execute(
+            "INSERT OR IGNORE INTO admin_google_identities (account_id, subject)
+             SELECT id, ?2 FROM admin_accounts WHERE id = ?1 AND disabled = 0",
+            params![account_id, subject],
+        )?;
+        conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM admin_google_identities
+             WHERE account_id = ?1 AND subject = ?2)",
+            params![account_id, subject],
+            |r| r.get(0),
+        ).map_err(Into::into)
     }
 
     pub fn update_admin_account(

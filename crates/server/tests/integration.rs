@@ -1987,13 +1987,11 @@ async fn test_cloud_upload_deduplication_and_refcounted_deletion() {
 #[tokio::test]
 async fn test_admin_console_auth_hot_settings_invites_and_user_governance() {
     use dropdrawer_server::{
-        admin::AdminAuthConfig,
-        auth::hash_password,
         settings::RuntimeSettings,
     };
     use protocol::AuthPublicConfig;
 
-    // 1. Without DROPDRAWER_ADMIN_TOKEN, /admin is disabled (404).
+    // 1. The console is disabled by default.
     let (disabled_app, _, _tmp0) = spawn_test_server().await;
     let (st, _) = send_raw(&disabled_app, "GET", "/admin", None, None).await;
     assert_eq!(st, StatusCode::NOT_FOUND);
@@ -2007,18 +2005,16 @@ async fn test_admin_console_auth_hot_settings_invites_and_user_governance() {
     .await;
     assert_eq!(st, StatusCode::NOT_FOUND);
 
-    // 2. With Argon2-hashed admin token (Vaultwarden style), /admin is enabled.
+    // 2. The explicitly enabled console accepts a provisioned account.
     let tmp = TempDir::new().unwrap();
     let db = Database::open(tmp.path().join("admin.db")).unwrap();
-    let admin_secret = "super-strong-admin-token-42";
-    let admin_hash = hash_password(admin_secret).unwrap();
-    let admin_auth = AdminAuthConfig::from_token(Some(&admin_hash));
+    create_test_admin(&db);
     let state = AppState::with_full_config(
         db,
         "test-jwt-secret".to_string(),
         tmp.path().join("blobs"),
         RuntimeSettings::default(),
-        admin_auth,
+        true,
     );
     let app = build_router(state.clone());
 
@@ -2026,7 +2022,7 @@ async fn test_admin_console_auth_hot_settings_invites_and_user_governance() {
     assert_eq!(st, StatusCode::OK);
     assert!(String::from_utf8_lossy(&page).contains("DropDrawer Admin"));
 
-    // Wrong admin token rejected; valid token returns admin JWT.
+    // Removed key login and old key-based sessions both fail.
     let (st, _) = send_raw(
         &app,
         "POST",
@@ -2035,6 +2031,9 @@ async fn test_admin_console_auth_hot_settings_invites_and_user_governance() {
         Some(json!({"token": "wrong-token"})),
     )
     .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    let legacy = dropdrawer_server::auth::create_admin_jwt(&state.jwt_secret, None, 0).unwrap();
+    let (st, _) = send_raw(&app, "GET", "/api/admin/session", Some(&legacy), None).await;
     assert_eq!(st, StatusCode::UNAUTHORIZED);
 
     let (st, login_json): (StatusCode, serde_json::Value) = send_json(
@@ -2042,7 +2041,7 @@ async fn test_admin_console_auth_hot_settings_invites_and_user_governance() {
         "POST",
         "/api/admin/login",
         None,
-        Some(json!({"token": admin_secret})),
+        Some(test_admin_credentials()),
     )
     .await;
     assert_eq!(st, StatusCode::OK);
@@ -2278,7 +2277,6 @@ async fn test_admin_console_auth_hot_settings_invites_and_user_governance() {
 #[tokio::test]
 async fn test_email_verification_registration_domain_rules_and_password_reset() {
     use dropdrawer_server::{
-        admin::AdminAuthConfig,
         mailer::MemoryEmailSender,
         settings::RuntimeSettings,
     };
@@ -2286,12 +2284,13 @@ async fn test_email_verification_registration_domain_rules_and_password_reset() 
 
     let tmp = TempDir::new().unwrap();
     let db = Database::open(tmp.path().join("email.db")).unwrap();
+    create_test_admin(&db);
     let state = AppState::with_full_config(
         db,
         "test-jwt-secret".to_string(),
         tmp.path().join("blobs"),
         RuntimeSettings::default(),
-        AdminAuthConfig::from_token(Some("plain-admin-secret")),
+        true,
     );
     let sink = MemoryEmailSender::new();
     state.set_email_sender(Arc::new(sink.clone()));
@@ -2302,7 +2301,7 @@ async fn test_email_verification_registration_domain_rules_and_password_reset() 
         "POST",
         "/api/admin/login",
         None,
-        Some(json!({"token": "plain-admin-secret"})),
+        Some(test_admin_credentials()),
     )
     .await;
     let admin_jwt = admin_login["token"].as_str().unwrap().to_string();
@@ -2505,16 +2504,31 @@ fn admin_settings_payload() -> serde_json::Value {
     })
 }
 
+fn create_test_admin(db: &Database) {
+    use dropdrawer_server::{auth::hash_password, db::AdminRole};
+    db.create_admin_account(
+        "test-super-id",
+        "test.super@gmail.com",
+        &hash_password("test-super-password").unwrap(),
+        AdminRole::Super,
+    ).unwrap();
+}
+
+fn test_admin_credentials() -> serde_json::Value {
+    json!({"username": "test.super@gmail.com", "password": "test-super-password"})
+}
+
 fn admin_test_server() -> (Router, Arc<AppState>, TempDir) {
-    use dropdrawer_server::{admin::AdminAuthConfig, settings::RuntimeSettings};
+    use dropdrawer_server::settings::RuntimeSettings;
     let tmp = TempDir::new().unwrap();
     let db = Database::open(tmp.path().join("admin-policy.db")).unwrap();
+    create_test_admin(&db);
     let state = AppState::with_full_config(
         db,
         "test-jwt-secret".to_string(),
         tmp.path().join("blobs"),
         RuntimeSettings::default(),
-        AdminAuthConfig::from_token(Some("plain-admin-secret")),
+        true,
     );
     (build_router(state.clone()), state, tmp)
 }
@@ -2525,11 +2539,84 @@ async fn admin_login(app: &Router) -> String {
         "POST",
         "/api/admin/login",
         None,
-        Some(json!({"token": "plain-admin-secret"})),
+        Some(test_admin_credentials()),
     )
     .await;
     assert_eq!(st, StatusCode::OK);
     body["token"].as_str().unwrap().to_string()
+}
+
+#[tokio::test]
+async fn admin_google_flow_is_browser_bound_and_separate_from_client_login() {
+    let (app, state, _tmp) = admin_test_server();
+    let mut config = state.runtime_settings();
+    config.google.admin_enabled = true;
+    config.google.client_id = "test-client".into();
+    config.google.client_secret = "test-secret".into();
+    config.google.redirect_uri = "https://drop.example.test/api/auth/google/callback".into();
+    state.apply_and_persist_settings(config).unwrap();
+
+    let browser_request = Request::post("/api/admin/google/start")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from("{}")).unwrap();
+    let response = app.clone().oneshot(browser_request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let cookie = response.headers()[header::SET_COOKIE].to_str().unwrap();
+    assert!(cookie.contains("SameSite=Lax") && cookie.contains("HttpOnly") && cookie.contains("Secure"));
+    let cookie = cookie.split(';').next().unwrap().to_owned();
+    let bytes = axum::body::to_bytes(response.into_body(), 8192).await.unwrap();
+    let response: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let url = url::Url::parse(response["authorization_url"].as_str().unwrap()).unwrap();
+    assert_eq!(url.host_str(), Some("accounts.google.com"));
+    let params: HashMap<_, _> = url.query_pairs().collect();
+    assert_eq!(params["code_challenge_method"], "S256");
+    assert_eq!(params["redirect_uri"], "https://drop.example.test/api/auth/google/callback");
+    let flow_id = &params["state"];
+    let callback = format!("/api/auth/google/callback?state={flow_id}&error=access_denied");
+
+    let response = app.clone().oneshot(Request::get(&callback).body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(response.headers()[header::LOCATION], "/admin?google=failed");
+    assert!(!response.headers().contains_key(header::SET_COOKIE));
+    let response = app.clone().oneshot(Request::get(&callback).header(header::COOKIE, cookie)
+        .body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert!(!response.headers().contains_key(header::SET_COOKIE));
+
+    let (status, _) = send_raw(&app, "POST", "/api/auth/google/start", None, None).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    let (status, _) = send_raw(&app, "POST", "/api/admin/login", None, Some(test_admin_credentials())).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn enabled_turnstile_requires_a_challenge_for_both_admin_login_options() {
+    let (app, state, _tmp) = admin_test_server();
+    let mut config = state.runtime_settings();
+    config.google.admin_enabled = true;
+    config.google.client_id = "test-client".into();
+    config.google.client_secret = "test-secret".into();
+    config.google.redirect_uri = "https://drop.example.test/api/auth/google/callback".into();
+    config.admin_turnstile = dropdrawer_server::settings::AdminTurnstileSettings {
+        enabled: true,
+        hostname: "drop.example.test".into(),
+        site_key: "public-test-key".into(),
+        secret_key: "private-test-key".into(),
+    };
+    state.apply_and_persist_settings(config).unwrap();
+
+    let (status, config): (_, serde_json::Value) =
+        send_json(&app, "GET", "/api/admin/auth/config", None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(config, json!({"google_enabled": true, "turnstile_site_key": "public-test-key"}));
+    for (uri, payload) in [("/api/admin/login", test_admin_credentials()), ("/api/admin/google/start", json!({}))] {
+        let (status, body) = send_raw(&app, "POST", uri, None, Some(payload)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(String::from_utf8_lossy(&body).contains("人机验证"));
+    }
+    let response = app.oneshot(Request::get("/admin").body(Body::empty()).unwrap()).await.unwrap();
+    let csp = response.headers()[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+    assert!(csp.contains("frame-src https://challenges.cloudflare.com"));
+    assert!(csp.contains("script-src 'self' https://challenges.cloudflare.com"));
 }
 
 async fn put_settings(app: &Router, admin: &str, patch: serde_json::Value) -> StatusCode {
@@ -3130,7 +3217,7 @@ async fn test_admin_accounts_roles_totp_and_backup() {
     let (st, _) = send_raw(&app, "GET", "/api/admin/users", Some(&auditor), None).await;
     assert_eq!(st, StatusCode::UNAUTHORIZED);
 
-    // Account logout only ends that account's sessions, not the owner's.
+    // Account logout only ends sessions for that administrator.
     let (st, _) = send_raw(&app, "POST", "/api/admin/logout", Some(&lead2), None).await;
     assert_eq!(st, StatusCode::OK);
     let (st, _) = send_raw(&app, "GET", "/api/admin/session", Some(&lead2), None).await;

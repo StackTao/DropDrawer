@@ -22,11 +22,15 @@ const DISABLED_HTML: &str = include_str!("ui/disabled.html");
 const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; \
 connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
-fn respond(status: StatusCode, content_type: &'static str, body: &'static str) -> Response {
+const TURNSTILE_CSP: &str = "default-src 'none'; script-src 'self' https://challenges.cloudflare.com; \
+style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src https://challenges.cloudflare.com; \
+font-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+
+fn respond(status: StatusCode, content_type: &'static str, body: &'static str, csp: &'static str) -> Response {
     let headers = [
         (header::CONTENT_TYPE, HeaderValue::from_static(content_type)),
         (header::CACHE_CONTROL, HeaderValue::from_static("no-cache")),
-        (header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(CSP)),
+        (header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(csp)),
         (header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY")),
         (header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff")),
         (header::REFERRER_POLICY, HeaderValue::from_static("no-referrer")),
@@ -39,10 +43,11 @@ fn respond(status: StatusCode, content_type: &'static str, body: &'static str) -
 }
 
 pub(super) async fn page(State(state): State<Arc<AppState>>) -> Response {
-    if state.admin_auth.is_none() {
-        return respond(StatusCode::NOT_FOUND, "text/html; charset=utf-8", DISABLED_HTML);
+    if !state.admin_enabled {
+        return respond(StatusCode::NOT_FOUND, "text/html; charset=utf-8", DISABLED_HTML, CSP);
     }
-    respond(StatusCode::OK, "text/html; charset=utf-8", INDEX_HTML)
+    let csp = if state.runtime_settings().admin_turnstile.enabled { TURNSTILE_CSP } else { CSP };
+    respond(StatusCode::OK, "text/html; charset=utf-8", INDEX_HTML, csp)
 }
 
 pub(super) async fn asset(State(state): State<Arc<AppState>>, Path(file): Path<String>) -> Response {
@@ -50,8 +55,8 @@ pub(super) async fn asset(State(state): State<Arc<AppState>>, Path(file): Path<S
     let (content_type, body) = match file.as_str() {
         "admin.css" => ("text/css; charset=utf-8", ADMIN_CSS),
         "logo.svg" => ("image/svg+xml", LOGO_SVG),
-        "admin.js" if state.admin_auth.is_some() => ("text/javascript; charset=utf-8", ADMIN_JS),
+        "admin.js" if state.admin_enabled => ("text/javascript; charset=utf-8", ADMIN_JS),
         _ => return StatusCode::NOT_FOUND.into_response(),
     };
-    respond(StatusCode::OK, content_type, body)
+    respond(StatusCode::OK, content_type, body, CSP)
 }

@@ -2,14 +2,14 @@
 
 use std::sync::Arc;
 
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{Json, extract::State, http::StatusCode};
 use serde::Deserialize;
 
-use super::{audit, internal_err, AdminSession, ApiResult};
+use super::{AdminSession, ApiResult, audit, internal_err};
 use crate::mailer::build_test_email;
 use crate::settings::{
-    is_valid_email, normalize_domain_list, GoogleProviderSettings, RuntimeSettings,
-    SanitizedRuntimeSettings, SmtpSettings, UpdateSettingsRequest, UpdateSmtpInput,
+    AdminTurnstileSettings, GoogleProviderSettings, RuntimeSettings, SanitizedRuntimeSettings,
+    SmtpSettings, UpdateSettingsRequest, UpdateSmtpInput, is_valid_email, normalize_domain_list,
 };
 use crate::state::AppState;
 
@@ -67,10 +67,26 @@ fn merge_settings(
         .unwrap_or_else(|| current.google.client_secret.clone());
     next.google = GoogleProviderSettings {
         enabled: req.google.enabled,
+        admin_enabled: req
+            .google
+            .admin_enabled
+            .unwrap_or(current.google.admin_enabled),
         client_id: req.google.client_id.trim().to_owned(),
         client_secret: google_secret,
         redirect_uri: req.google.redirect_uri.trim().to_owned(),
     };
+    if let Some(input) = req.admin_turnstile {
+        next.admin_turnstile = AdminTurnstileSettings {
+            enabled: input.enabled,
+            site_key: input.site_key.trim().to_owned(),
+            secret_key: input
+                .secret_key
+                .map(|secret| secret.trim().to_owned())
+                .filter(|secret| !secret.is_empty())
+                .unwrap_or_else(|| current.admin_turnstile.secret_key.clone()),
+            hostname: input.hostname.trim().to_ascii_lowercase(),
+        };
+    }
     let smtp_enabled = req.smtp.enabled;
     next.smtp = smtp_from_input(req.smtp, smtp_enabled, &current.smtp.password);
 
@@ -103,11 +119,12 @@ fn merge_settings(
 }
 
 fn validate(state: &AppState, next: &RuntimeSettings) -> Result<(), (StatusCode, String)> {
-    if next.google.enabled {
+    if next.google.enabled || next.google.admin_enabled {
         next.google
             .to_google_config()
             .map_err(|e| bad_request(format!("Google 配置无效: {e}")))?;
     }
+    super::turnstile::validate_settings(&next.admin_turnstile)?;
     next.smtp
         .validate()
         .map_err(|e| bad_request(e.to_string()))?;
@@ -169,6 +186,14 @@ pub(super) async fn update_settings(
     let next = merge_settings(&current, req)?;
     validate(&state, &next)?;
 
+    if next.google.admin_enabled != current.google.admin_enabled
+        || next.google.client_id != current.google.client_id
+        || next.google.client_secret != current.google.client_secret
+        || next.google.redirect_uri != current.google.redirect_uri
+        || next.admin_turnstile != current.admin_turnstile
+    {
+        admin.require_super()?;
+    }
     let google_secret_changed = next.google.client_secret != current.google.client_secret;
     let smtp_password_changed = next.smtp.password != current.smtp.password;
     state
@@ -181,6 +206,10 @@ pub(super) async fn update_settings(
     for (flag, name) in [
         (google_secret_changed, "google.client_secret"),
         (smtp_password_changed, "smtp.password"),
+        (
+            next.admin_turnstile.secret_key != current.admin_turnstile.secret_key,
+            "admin_turnstile.secret_key",
+        ),
     ] {
         if flag {
             if !changed.is_empty() {

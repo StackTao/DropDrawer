@@ -24,13 +24,35 @@
 | 变量 | 默认值 | 用途 |
 | --- | --- | --- |
 | `DROPDRAWER_JWT_SECRET` | 自动生成并持久化 | 签发会话的随机密钥。自定义值至少 32 字符，空值使用数据库同目录的 `jwt_secret`。 |
-| `DROPDRAWER_ADMIN_TOKEN` | 空 | 启用 `/admin` 并提供超级管理员登录密钥。推荐 Argon2 PHC 哈希，在 `.env` 中用单引号保留哈希中的 `$`。 |
+| `DROPDRAWER_ADMIN_ENABLED` | `false` | 设为 `true` 启用 `/admin`。旧配置中的 `DROPDRAWER_ADMIN_TOKEN` 仅在未显式配置此开关时作为启用兼容标志，密钥登录已移除。 |
 | `DROPDRAWER_ALLOW_REGISTRATION` | `true` | 新部署默认允许注册。设为 `false` 可关闭。 |
 | `DROPDRAWER_GOOGLE_CLIENT_ID` | 空 | 用于 Google 账号登录的 OAuth Web 客户端 ID。 |
 | `DROPDRAWER_GOOGLE_CLIENT_SECRET` | 空 | 上述 OAuth Web 客户端的密钥。 |
 | `DROPDRAWER_GOOGLE_REDIRECT_URI` | 空 | 上述客户端注册的完整回调地址，路径为 `/api/auth/google/callback`。 |
 
-启用 Google 账号登录需要填齐三项。Google Drive 存储授权由用户在客户端单独配置。管理员在控制台保存运行时设置后，SQLite 中的设置会覆盖对应的环境变量默认值。[管理端架构](ARCHITECTURE.md#管理控制台-admin)
+### 管理员账号与恢复
+
+使用服务器本机命令创建第一个超级管理员。密码通过标准输入读取：
+
+```bash
+IFS= read -r -s admin_password
+printf '%s\n' "$admin_password" | dropdrawer-server admin-account 'admin@example.com'
+unset admin_password
+```
+
+使用相同的服务端环境与数据库路径。Docker 部署可将命令替换为
+`docker compose -f deploy/docker-compose.yml run --rm --no-deps -T dropdrawer-server admin-account 'admin@example.com'`。
+如果账号已存在，命令会更新密码并吊销该账号的旧会话。原角色与两步验证设置继续有效。
+
+### Google 登录与 Turnstile
+
+超级管理员在 `/admin` 的登录设置中维护同一组 Google OAuth Web Client ID、密钥和回调地址。客户端和管理端可分别开启 Google 登录。两者复用 `/api/auth/google/callback`，Google Cloud Console 中的原回调地址继续有效。
+
+管理端只允许已有管理员使用与用户名相同的已验证 Gmail 或 Google Workspace 邮箱登录，首次成功匹配后绑定 Google 账号的唯一标识。账号密码可继续使用，开启了两步验证的管理员仍要输入验证码。
+
+超级管理员可在管理端设置 Turnstile 站点密钥、服务端密钥和允许的主机名。验证覆盖管理端的密码和 Google 登录入口。Cloudflare 不可用或配置有误时，可以在服务器本机运行 `dropdrawer-server admin-disable-turnstile` 后重启服务恢复登录。Docker 部署使用与上文相同的 `docker compose run` 方式执行该命令。
+
+兼容旧部署的 Google 环境变量仅作为首次配置的默认值。确认配置已保存到管理台后，可以移除这些环境变量。Google Drive 存储授权由用户在客户端单独配置。管理台保存的运行时设置存放在 SQLite。[管理端架构](ARCHITECTURE.md#管理控制台-admin)
 
 ## SMTP
 

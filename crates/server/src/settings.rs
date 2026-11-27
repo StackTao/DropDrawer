@@ -29,6 +29,8 @@ pub struct GoogleProviderSettings {
     #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
+    pub admin_enabled: bool,
+    #[serde(default)]
     pub client_id: String,
     #[serde(default)]
     pub client_secret: String,
@@ -40,6 +42,7 @@ impl GoogleProviderSettings {
     pub fn from_google_config(cfg: &GoogleLoginConfig) -> Self {
         Self {
             enabled: true,
+            admin_enabled: false,
             client_id: cfg.client_id().to_owned(),
             client_secret: cfg.client_secret().to_owned(),
             redirect_uri: cfg.redirect_uri().to_owned(),
@@ -47,12 +50,36 @@ impl GoogleProviderSettings {
     }
 
     pub fn to_google_config(&self) -> anyhow::Result<Option<GoogleLoginConfig>> {
-        if !self.enabled {
+        if !self.enabled && !self.admin_enabled {
             return Ok(None);
         }
         GoogleLoginConfig::from_parts(&self.client_id, &self.client_secret, &self.redirect_uri)
             .map(Some)
     }
+}
+
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminTurnstileSettings {
+    pub enabled: bool,
+    pub site_key: String,
+    pub secret_key: String,
+    pub hostname: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SanitizedAdminTurnstileSettings {
+    pub enabled: bool,
+    pub site_key: String,
+    pub has_secret_key: bool,
+    pub hostname: String,
+}
+
+#[derive(Deserialize)]
+pub struct UpdateAdminTurnstileInput {
+    pub enabled: bool,
+    pub site_key: String,
+    pub secret_key: Option<String>,
+    pub hostname: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -352,7 +379,7 @@ fn positive(v: Option<u64>) -> Option<u64> {
     v.filter(|&n| n > 0)
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RuntimeSettings {
     #[serde(default)]
     pub registration_mode: RegistrationMode,
@@ -370,6 +397,8 @@ pub struct RuntimeSettings {
     pub default_user_local_quota_bytes: Option<u64>,
     #[serde(default)]
     pub google: GoogleProviderSettings,
+    #[serde(default)]
+    pub admin_turnstile: AdminTurnstileSettings,
     #[serde(default)]
     pub smtp: SmtpSettings,
     #[serde(default)]
@@ -403,6 +432,7 @@ impl Default for RuntimeSettings {
             local_max_file_bytes: None,
             default_user_local_quota_bytes: None,
             google: GoogleProviderSettings::default(),
+            admin_turnstile: AdminTurnstileSettings::default(),
             smtp: SmtpSettings::default(),
             extra_providers: Vec::new(),
             features: FeatureFlags::default(),
@@ -508,9 +538,16 @@ impl RuntimeSettings {
             default_user_local_quota_bytes: self.default_user_local_quota_bytes,
             google: SanitizedGoogleProviderSettings {
                 enabled: self.google.enabled,
+                admin_enabled: self.google.admin_enabled,
                 client_id: self.google.client_id.clone(),
                 has_client_secret: !self.google.client_secret.trim().is_empty(),
                 redirect_uri: self.google.redirect_uri.clone(),
+            },
+            admin_turnstile: SanitizedAdminTurnstileSettings {
+                enabled: self.admin_turnstile.enabled,
+                site_key: self.admin_turnstile.site_key.clone(),
+                has_secret_key: !self.admin_turnstile.secret_key.is_empty(),
+                hostname: self.admin_turnstile.hostname.clone(),
             },
             smtp: SanitizedSmtpSettings {
                 enabled: self.smtp.enabled,
@@ -558,6 +595,7 @@ impl RuntimeSettings {
 #[derive(Debug, Clone, Serialize)]
 pub struct SanitizedGoogleProviderSettings {
     pub enabled: bool,
+    pub admin_enabled: bool,
     pub client_id: String,
     pub has_client_secret: bool,
     pub redirect_uri: String,
@@ -585,6 +623,7 @@ pub struct SanitizedRuntimeSettings {
     pub local_max_file_bytes: Option<u64>,
     pub default_user_local_quota_bytes: Option<u64>,
     pub google: SanitizedGoogleProviderSettings,
+    pub admin_turnstile: SanitizedAdminTurnstileSettings,
     pub smtp: SanitizedSmtpSettings,
     pub features: FeatureFlags,
     pub share_policy: SharePolicy,
@@ -594,9 +633,10 @@ pub struct SanitizedRuntimeSettings {
     pub client_policy: ClientPolicy,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Deserialize)]
 pub struct UpdateGoogleProviderInput {
     pub enabled: bool,
+    pub admin_enabled: Option<bool>,
     #[serde(default)]
     pub client_id: String,
     /// Leave `None` or empty string to keep existing secret unchanged.
@@ -626,7 +666,7 @@ pub struct UpdateSmtpInput {
     pub from_name: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Deserialize)]
 pub struct UpdateSettingsRequest {
     pub registration_mode: RegistrationMode,
     pub password_login_enabled: bool,
@@ -640,6 +680,7 @@ pub struct UpdateSettingsRequest {
     #[serde(default)]
     pub default_user_local_quota_bytes: Option<u64>,
     pub google: UpdateGoogleProviderInput,
+    pub admin_turnstile: Option<UpdateAdminTurnstileInput>,
     pub smtp: UpdateSmtpInput,
     /// Omitted sections keep their current values (older admin pages / scripts).
     #[serde(default)]

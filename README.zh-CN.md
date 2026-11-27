@@ -128,7 +128,7 @@ curl -fsS http://localhost:8080/health
 
 ### 管理控制台
 
-设置 `DROPDRAWER_ADMIN_TOKEN` 后访问服务器的 `/admin`，即可管理用户、存储、登录、文件保留和分享策略。管理员密钥、SMTP、存储配额、Google 登录和反向代理配置见[服务端环境变量](docs/CONFIGURATION.md)。
+设置 `DROPDRAWER_ADMIN_ENABLED=true` 并创建管理员账号后访问服务器的 `/admin`，即可管理用户、存储、登录、文件保留和分享策略。管理员账号、Google 登录、Turnstile、SMTP、存储配额和反向代理配置见[服务端环境变量](docs/CONFIGURATION.md)。
 
 ## 从源码构建
 

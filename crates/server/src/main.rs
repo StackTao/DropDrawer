@@ -6,7 +6,7 @@ use std::{
 };
 
 use dropdrawer_server::{
-    admin::{AdminAuthConfig, TrustProxy},
+    admin::{self, TrustProxy},
     db::Database,
     google_login::GoogleLoginConfig,
     routes::build_router_with_cors,
@@ -65,8 +65,13 @@ async fn main() -> anyhow::Result<()> {
     if let Some(cfg) = &google_config {
         env_defaults.google = GoogleProviderSettings::from_google_config(cfg);
     }
-    let admin_auth = AdminAuthConfig::from_token(get("DROPDRAWER_ADMIN_TOKEN").as_deref());
-    if admin_auth.is_some() {
+    let admin_enabled = get("DROPDRAWER_ADMIN_ENABLED")
+        .filter(|value| !value.trim().is_empty())
+        .map_or_else(
+            || get("DROPDRAWER_ADMIN_TOKEN").is_some_and(|value| !value.trim().is_empty()),
+            |value| matches!(value.trim().to_ascii_lowercase().as_str(), "true" | "1"),
+        );
+    if admin_enabled {
         tracing::info!("Admin console enabled at /admin");
     }
 
@@ -76,8 +81,12 @@ async fn main() -> anyhow::Result<()> {
         jwt_secret,
         PathBuf::from(local_storage),
         env_defaults,
-        admin_auth,
+        admin_enabled,
     );
+    let args: Vec<_> = env::args().skip(1).collect();
+    if !args.is_empty() {
+        return admin::local_account_command(&state, &args);
+    }
     let effective = state.runtime_settings();
     if effective.google.enabled {
         tracing::info!("Google sign-in is enabled");

@@ -128,7 +128,7 @@ To enable Google sign-in, follow the [Google sign-in setup](docs/GOOGLE_SIGN_IN.
 
 ### Admin console
 
-Set `DROPDRAWER_ADMIN_TOKEN` and open `/admin` on your server to manage users, storage, sign-in, retention, and share policies. See the [server environment reference (Chinese)](docs/CONFIGURATION.md) for the admin token, SMTP, quotas, Google sign-in, and reverse proxy settings.
+Set `DROPDRAWER_ADMIN_ENABLED=true`, create an administrator account, and open `/admin` on your server to manage users, storage, sign-in, retention, and share policies. See the [server environment reference (Chinese)](docs/CONFIGURATION.md) for account setup, Google sign-in, Turnstile, SMTP, quotas, and reverse proxy settings.
 
 ## Build from source
 

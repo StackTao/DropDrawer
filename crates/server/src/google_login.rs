@@ -7,7 +7,7 @@ use std::{
 use axum::{
     Json,
     extract::{Query, State},
-    http::{StatusCode, header},
+    http::{HeaderMap, StatusCode, header},
     response::{Html, IntoResponse, Response},
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -23,8 +23,8 @@ use uuid::Uuid;
 use crate::{auth::issue_user_token, state::AppState};
 
 const CALLBACK_PATH: &str = "/api/auth/google/callback";
-const LIFETIME: Duration = Duration::from_secs(300);
-const MAX_ATTEMPTS: usize = 1024;
+pub(crate) const LIFETIME: Duration = Duration::from_secs(300);
+pub(crate) const MAX_ATTEMPTS: usize = 1024;
 type LoginError = (StatusCode, &'static str);
 const UNAVAILABLE: LoginError = (
     StatusCode::SERVICE_UNAVAILABLE,
@@ -118,7 +118,8 @@ impl GoogleLoginConfig {
 }
 
 pub(crate) struct GoogleLogin {
-    config: GoogleLoginConfig,
+    pub(crate) config: GoogleLoginConfig,
+    pub(crate) admin_attempts: Mutex<HashMap<Uuid, crate::admin::google::AdminAttempt>>,
     attempts: Mutex<HashMap<Uuid, Attempt>>,
 }
 
@@ -129,15 +130,40 @@ struct Attempt {
     result: Option<Result<AuthResponse, LoginError>>,
 }
 
-struct Proof {
+pub(crate) struct Proof {
     verifier: String,
     nonce: String,
+}
+
+impl Proof {
+    pub(crate) fn new() -> Self {
+        Self { verifier: random_secret(), nonce: random_secret() }
+    }
+
+    pub(crate) fn authorization_url(&self, config: &GoogleLoginConfig, flow_id: Uuid) -> Url {
+        let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(self.verifier.as_bytes()));
+        let mut url = Url::parse("https://accounts.google.com/o/oauth2/v2/auth")
+            .expect("Google authorization URL");
+        url.query_pairs_mut().extend_pairs([
+            ("client_id", config.client_id.as_str()),
+            ("redirect_uri", config.redirect_uri.as_str()),
+            ("response_type", "code"),
+            ("scope", "openid email"),
+            ("state", &flow_id.to_string()),
+            ("nonce", &self.nonce),
+            ("code_challenge", &challenge),
+            ("code_challenge_method", "S256"),
+            ("prompt", "select_account"),
+        ]);
+        url
+    }
 }
 
 impl GoogleLogin {
     pub(crate) fn new(config: GoogleLoginConfig) -> Self {
         Self {
             config,
+            admin_attempts: Mutex::new(HashMap::new()),
             attempts: Mutex::new(HashMap::new()),
         }
     }
@@ -169,27 +195,14 @@ pub(crate) async fn privacy_notice() -> &'static str {
 }
 
 pub(crate) async fn start(State(state): State<Arc<AppState>>) -> Result<Response, LoginError> {
+    if !state.runtime_settings().google.enabled {
+        return Err(UNAVAILABLE);
+    }
     let google = state.google_login().ok_or(UNAVAILABLE)?;
-    let proof = Proof {
-        verifier: random_secret(),
-        nonce: random_secret(),
-    };
-    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(proof.verifier.as_bytes()));
+    let proof = Proof::new();
     let flow_id = Uuid::new_v4();
     let poll_key = random_secret();
-    let mut authorization_url = Url::parse("https://accounts.google.com/o/oauth2/v2/auth")
-        .expect("Google authorization URL");
-    authorization_url.query_pairs_mut().extend_pairs([
-        ("client_id", google.config.client_id.as_str()),
-        ("redirect_uri", google.config.redirect_uri.as_str()),
-        ("response_type", "code"),
-        ("scope", "openid email"),
-        ("state", &flow_id.to_string()),
-        ("nonce", &proof.nonce),
-        ("code_challenge", &challenge),
-        ("code_challenge_method", "S256"),
-        ("prompt", "select_account"),
-    ]);
+    let authorization_url = proof.authorization_url(&google.config, flow_id);
     let mut attempts = google.attempts.lock().await;
     attempts.retain(|_, attempt| attempt.started.elapsed() < LIFETIME);
     if attempts.len() >= MAX_ATTEMPTS {
@@ -223,6 +236,9 @@ pub(crate) async fn poll(
     State(state): State<Arc<AppState>>,
     Json(req): Json<PollRequest>,
 ) -> Result<Response, LoginError> {
+    if !state.runtime_settings().google.enabled {
+        return Err(UNAVAILABLE);
+    }
     let google = state.google_login().ok_or(UNAVAILABLE)?;
     let mut attempts = google.attempts.lock().await;
     let attempt = attempts
@@ -244,6 +260,8 @@ pub(crate) async fn poll(
 pub(crate) async fn callback(
     State(state): State<Arc<AppState>>,
     Query(query): Query<CallbackQuery>,
+    headers: HeaderMap,
+    crate::admin::ClientIp(ip): crate::admin::ClientIp,
 ) -> Response {
     let Some(google) = state.google_login() else {
         return browser_page(Err(UNAVAILABLE));
@@ -251,6 +269,13 @@ pub(crate) async fn callback(
     let Some(flow_id) = query.state else {
         return browser_page(Err(EXPIRED));
     };
+    let code = query.code.as_deref().filter(|_| query.error.is_none());
+    if let Some(response) = crate::admin::google::callback(&state, &google, &headers, &ip, flow_id, code).await {
+        return response;
+    }
+    if !state.runtime_settings().google.enabled {
+        return browser_page(Err(UNAVAILABLE));
+    }
     let proof = google
         .attempts
         .lock()
@@ -283,10 +308,11 @@ struct GoogleToken {
 }
 
 #[derive(Deserialize)]
-struct GoogleClaims {
-    sub: String,
+pub(crate) struct GoogleClaims {
+    pub(crate) sub: String,
     nonce: String,
-    email: String,
+    pub(crate) email: String,
+    pub(crate) hd: Option<String>,
     email_verified: bool,
     azp: Option<String>,
 }
@@ -321,7 +347,7 @@ async fn complete(
     Ok(AuthResponse { token, user })
 }
 
-async fn verify_google_identity(
+pub(crate) async fn verify_google_identity(
     http: &reqwest::Client,
     config: &GoogleLoginConfig,
     code: &str,
@@ -377,7 +403,7 @@ async fn verify_google_identity(
     Ok(claims)
 }
 
-fn random_secret() -> String {
+pub(crate) fn random_secret() -> String {
     let mut bytes = [0; 32];
     OsRng.fill_bytes(&mut bytes);
     URL_SAFE_NO_PAD.encode(bytes)

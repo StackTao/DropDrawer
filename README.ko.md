@@ -126,7 +126,7 @@ curl -fsS http://localhost:8080/health
 
 ### 관리 콘솔
 
-`DROPDRAWER_ADMIN_TOKEN`을 설정한 뒤 서버의 `/admin`을 열면 사용자, 저장소, 로그인, 보존 기간, 공유 정책을 관리할 수 있습니다. 관리자 토큰, SMTP, 저장소 할당량, Google 로그인 및 리버스 프록시 설정은 [서버 환경 변수(중국어)](docs/CONFIGURATION.md)에서 확인하세요.
+`DROPDRAWER_ADMIN_ENABLED=true`를 설정하고 관리자 계정을 만든 뒤 서버의 `/admin`을 열면 사용자, 저장소, 로그인, 보존 기간, 공유 정책을 관리할 수 있습니다. 관리자 계정, Google 로그인, Turnstile, SMTP, 저장소 할당량 및 리버스 프록시 설정은 [서버 환경 변수(중국어)](docs/CONFIGURATION.md)에서 확인하세요.
 
 ## 소스에서 빌드
 

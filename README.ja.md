@@ -126,7 +126,7 @@ curl -fsS http://localhost:8080/health
 
 ### 管理コンソール
 
-`DROPDRAWER_ADMIN_TOKEN` を設定してサーバーの `/admin` を開くと、ユーザー、ストレージ、ログイン、保存期間、共有ポリシーを管理できます。管理トークン、SMTP、ストレージ容量、Google ログイン、リバースプロキシの設定は[サーバー環境変数（中国語）](docs/CONFIGURATION.md)を参照してください。
+`DROPDRAWER_ADMIN_ENABLED=true` を設定して管理者アカウントを作成し、サーバーの `/admin` を開くと、ユーザー、ストレージ、ログイン、保存期間、共有ポリシーを管理できます。管理者アカウント、Google ログイン、Turnstile、SMTP、ストレージ容量、リバースプロキシの設定は[サーバー環境変数（中国語）](docs/CONFIGURATION.md)を参照してください。
 
 ## ソースからビルド
 
