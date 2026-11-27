@@ -1723,13 +1723,16 @@
       syncLoginOptions();
       if (!options.turnstile_site_key) return;
       const script = document.createElement("script");
-      script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
-      const failure = () => { $("loginError").textContent = "人机验证加载失败，请刷新后重试"; };
+      script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=dropDrawerTurnstileLoaded";
+      const failure = () => {
+        delete window.dropDrawerTurnstileLoaded;
+        $("loginError").textContent = "人机验证加载失败，请刷新后重试";
+      };
       script.addEventListener("error", failure, { once: true });
-      script.addEventListener("load", () => {
-        if (!window.turnstile) return failure();
-        window.turnstile.ready(() => {
-          turnstileId = window.turnstile.render("#loginChallenge", {
+      window.dropDrawerTurnstileLoaded = () => {
+        delete window.dropDrawerTurnstileLoaded;
+        try {
+          turnstileId = window.turnstile.render($("loginChallenge"), {
             sitekey: options.turnstile_site_key,
             action: "admin_login",
             size: matchMedia("(max-width: 420px)").matches ? "compact" : "flexible",
@@ -1737,8 +1740,10 @@
             "expired-callback": () => refreshChallenge(),
             "error-callback": () => { challengeToken = null; },
           });
-        });
-      }, { once: true });
+        } catch {
+          failure();
+        }
+      };
       document.head.append(script);
     }).catch(() => { $("loginError").textContent = "无法加载登录配置，请刷新后重试"; });
   }
