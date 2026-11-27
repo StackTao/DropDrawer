@@ -105,6 +105,19 @@ public final class P2PBridge: Sendable {
         return try callJSON(dropdrawer_p2p_register_file, payload: Req(item_id: itemId, path: path))
     }
 
+    public struct BrowserShareOffer: Codable, Sendable {
+        let session_id: String
+        let item_id: String
+        let size: UInt64
+        let blake3_hash: String?
+        let sdp: String
+        let start_token: String
+    }
+
+    public func prepareBrowserShare(_ offer: BrowserShareOffer) throws -> String {
+        try callJSON(dropdrawer_p2p_prepare_browser_share, payload: offer)
+    }
+
     public func authorizeToken(
         itemId: String,
         token: String,

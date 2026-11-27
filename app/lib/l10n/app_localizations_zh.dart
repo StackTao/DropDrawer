@@ -1127,6 +1127,10 @@ class AppLocalizationsZh extends AppLocalizations {
   String get sharedContent => '分享内容';
 
   @override
+  String get browserShareNeedsSender =>
+      '没有云端副本的文件需要局域网直传。请保持发送端 DropDrawer 在线。';
+
+  @override
   String uploadBeforeShareNote(
     int pendingUploadCount,
     Object defaultStorageBackendName,

@@ -1,3 +1,4 @@
+mod browser_share;
 pub mod ffi;
 mod transfers;
 
@@ -183,6 +184,8 @@ pub struct P2pNode {
     transfers: Arc<Transfers>,
     accept_task: tokio::task::JoinHandle<()>,
     relay_probe: Arc<relay_probe::RelayProbe>,
+    browser_share_permits: Arc<Semaphore>,
+    browser_share_shutdown: tokio_util::sync::CancellationToken,
 }
 
 impl P2pNode {
@@ -257,6 +260,8 @@ impl P2pNode {
             transfers,
             accept_task,
             relay_probe,
+            browser_share_permits: Arc::new(Semaphore::new(3)),
+            browser_share_shutdown: tokio_util::sync::CancellationToken::new(),
         }))
     }
 
@@ -724,6 +729,7 @@ impl P2pNode {
     }
 
     pub async fn shutdown(&self) {
+        self.browser_share_shutdown.cancel();
         self.accept_task.abort();
         self.endpoint.close().await;
     }

@@ -23,6 +23,10 @@ tracing.workspace = true
 blake3.workspace = true
 dashmap = "6"
 iroh = "1"
+# webrtc-util 0.12 uses nix 0.26. The lockfile retains libc 0.2.189 and
+# mio 1.2.4 until nix no longer needs the macOS-only socket bindings on iOS.
+webrtc = "0.14"
+tokio-util.workspace = true
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"

@@ -46,6 +46,7 @@ public final class DropDrawerStore {
     public var clientConfig: ClientConfig?
     public var dismissedAnnouncementId: String?
 
+    public var browserShareEnabled: Bool { clientConfig?.features.browserShareEnabled ?? false }
     public var canCreateShares: Bool { clientConfig?.features.shareCreateEnabled ?? true }
     public var canUploadToCloud: Bool { clientConfig?.features.cloudUploadEnabled ?? true }
     public var shareRequiresPasscode: Bool { clientConfig?.features.shareRequiresPasscode ?? false }
@@ -766,6 +767,9 @@ public final class DropDrawerStore {
 
     private func publishNodeAddress(task: URLSessionWebSocketTask, force: Bool) {
         guard p2pReady, wsTask === task, let info = try? p2p.nodeInfo() else { return }
+        if force {
+            sendWSJSON(task: task, type: "browser_share_ready", payload: [:])
+        }
         let visibleIds = Set(items.map(\.id))
         let readyFiles = info.readyFiles.filter { visibleIds.contains($0.key) }
         if force || readyFiles != publishedFiles {
@@ -864,6 +868,23 @@ public final class DropDrawerStore {
             items.removeAll { $0.id == itemId }
             cleanupLocalFile(for: itemId)
             if p2pReady { _ = try? p2p.unregisterFile(itemId: itemId) }
+        case "browser_share_offer":
+            guard p2pReady, let socket = wsTask,
+                  let payload = payload as? [String: Any],
+                  let data = try? JSONSerialization.data(withJSONObject: payload),
+                  let offer = try? JSONDecoder().decode(P2PBridge.BrowserShareOffer.self, from: data)
+            else { return }
+            let bridge = p2p
+            Task {
+                let answer = await Task.detached {
+                    try? bridge.prepareBrowserShare(offer)
+                }.value
+                guard wsTask === socket else { return }
+                sendWSJSON(task: socket, type: "browser_share_answer", payload: [
+                    "session_id": offer.session_id,
+                    "sdp": answer.map { $0 as Any } ?? NSNull(),
+                ])
+            }
         case "authorize_p2p_token":
             guard p2pReady,
                   let dict = payload as? [String: Any],
@@ -1350,8 +1371,8 @@ public final class DropDrawerStore {
            (passcode ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             throw APIError.message(String(localized: "服务器要求外链必须设置提取码", bundle: Bundle.module))
         }
-        // Ensure files are uploaded to cloud before creating public share links.
-        for item in targetItems where !item.isText && !item.cloudReady {
+        // Older servers require a cloud copy before creating a file share.
+        for item in targetItems where !browserShareEnabled && !item.isText && !item.cloudReady {
             if let local = localFileURL(for: item.id) {
                 await cacheItemToCloud(itemId: item.id, fileURL: local)
             }

@@ -204,6 +204,22 @@ pub unsafe extern "C" fn dropdrawer_p2p_download_file(req_json: *const c_char) -
 }
 
 /// # Safety
+/// A non-null `req_json` must point to a readable NUL-terminated string
+/// for the duration of this call. Call from a background thread.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dropdrawer_p2p_prepare_browser_share(req_json: *const c_char) -> *mut c_char {
+    let res = (|| -> Result<_, String> {
+        let node = current_node()?;
+        let raw = unsafe { parse_c_str(req_json)? };
+        let request = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+        runtime()
+            .block_on(node.prepare_browser_share(request))
+            .map_err(|e| e.to_string())
+    })();
+    to_c_json(res)
+}
+
+/// # Safety
 /// A non-null `transfer_id` must point to a readable NUL-terminated string
 /// for the duration of this call.
 #[unsafe(no_mangle)]

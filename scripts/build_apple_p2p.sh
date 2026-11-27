@@ -64,6 +64,7 @@ char *dropdrawer_p2p_start(const char *config_json);
 char *dropdrawer_p2p_node_info(void);
 char *dropdrawer_p2p_register_file(const char *req_json);
 char *dropdrawer_p2p_authorize_token(const char *req_json);
+char *dropdrawer_p2p_prepare_browser_share(const char *req_json);
 char *dropdrawer_p2p_unregister_file(const char *item_id);
 char *dropdrawer_p2p_download_file(const char *req_json);
 char *dropdrawer_p2p_cancel_transfer(const char *transfer_id);

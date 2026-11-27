@@ -1,6 +1,16 @@
 {
   "sourceLanguage": "zh-Hans",
   "strings": {
+    "没有云端副本的文件需要局域网直传。请保持发送端 DropDrawer 在线。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Files without a cloud copy are sent over the local network. Keep DropDrawer open on the sending device."
+          }
+        }
+      }
+    },
     "%@\n提取码：%@": {
       "localizations": {
         "en": {

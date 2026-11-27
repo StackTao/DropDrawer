@@ -1,3 +1,4 @@
+pub(crate) mod browser_share;
 mod google_drive_oauth;
 
 use self::google_drive_oauth::{google_oauth_callback, start_google_oauth};
@@ -133,8 +134,16 @@ pub fn build_router_with_cors(state: Arc<AppState>, allowed_origins: Option<&[St
         .route("/api/shares/{code}", delete(delete_share_link))
         // Public share landing page & unauthenticated download API
         .route("/s/{code}", get(public_share_page))
+        .route("/api/share-peer.js", get(|| async {
+            ([
+                (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
+                (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            ], include_str!("routes/public_share_peer.js"))
+        }))
         .route("/api/s/{code}/meta", get(public_share_meta))
         .route("/api/s/{code}/download", get(public_share_download))
+        .route("/api/s/{code}/peer", post(browser_share::offer))
+        .route("/api/s/{code}/peer/{session}/claim", post(browser_share::claim))
         // Real-time WebSocket
         .route("/ws", get(ws_upgrade))
         .layer(cors)
@@ -1780,12 +1789,6 @@ fn create_share_for_items(
             .map_err(internal_err)?
             .ok_or_else(|| (StatusCode::NOT_FOUND, t!("抽屉条目不存在", "Drawer item not found").to_string()))?;
 
-        if item.kind == DrawerItemKind::File && !item.cloud_ready {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                tf!("文件「{}」尚未上传到云盘/服务器，请先转存云端后再创建外链", "“{}” hasn't been uploaded to the cloud or server yet. Save it to the cloud before creating a link", item.name),
-            ));
-        }
         items.push(item);
     }
 
@@ -1923,6 +1926,8 @@ struct PublicShareQuery {
     passcode: Option<String>,
     #[serde(default)]
     item_id: Option<String>,
+    #[serde(default)]
+    peer_session: Option<String>,
 }
 
 /// How long after signing in a passwordless (Google-only) account may change
@@ -1998,13 +2003,15 @@ async fn validate_share_access(
     state: &AppState,
     share: &crate::db::ShareLinkRow,
     passcode: Option<&str>,
+    check_limit: bool,
 ) -> Result<(), (StatusCode, String)> {
     if let Some(exp) = share.expires_at
         && exp <= Utc::now()
     {
         return Err((StatusCode::GONE, t!("该分享链接已过期", "This share link has expired").to_string()));
     }
-    if let Some(max) = share.max_downloads
+    if check_limit
+        && let Some(max) = share.max_downloads
         && share.download_count >= max
     {
         return Err((StatusCode::GONE, t!("该分享链接已达到下载次数上限", "This share link has reached its download limit").to_string()));
@@ -2076,6 +2083,7 @@ async fn public_share_meta(
                 "name": it.name,
                 "kind": it.kind,
                 "size": it.size,
+                "cloud_ready": it.cloud_ready,
                 "text_content": if !locked && it.kind == DrawerItemKind::Text {
                     it.text_content.clone()
                 } else {
@@ -2110,7 +2118,13 @@ async fn public_share_download(
     let share = lookup_public_share(&state, &ip, &code)?;
     policy::ensure_share_access(&state, &share.user_id)?;
 
-    validate_share_access(&state, &share, query.passcode.as_deref()).await?;
+    let retry_session = match (&query.peer_session, &query.item_id) {
+        (Some(session), Some(item)) if state.browser_shares.can_fallback(session, &code, item).await => {
+            Some(session.as_str())
+        }
+        _ => None,
+    };
+    validate_share_access(&state, &share, query.passcode.as_deref(), retry_session.is_none()).await?;
 
     let items = state
         .db
@@ -2148,7 +2162,7 @@ async fn public_share_download(
     let (Some(backend_id), Some(storage_path)) =
         (item.storage_backend_id.as_deref(), item.storage_path.as_deref())
     else {
-        return Err((StatusCode::BAD_REQUEST, t!("文件尚未缓存到云端", "The file isn't cached in the cloud yet").to_string()));
+        return Err((StatusCode::SERVICE_UNAVAILABLE, t!("文件没有云端副本，请从分享页尝试局域网下载", "This file has no cloud copy. Try a LAN download from the share page").to_string()));
     };
 
     let backend = state
@@ -2158,19 +2172,22 @@ async fn public_share_download(
         .ok_or_else(|| (StatusCode::NOT_FOUND, t!("存储策略不存在", "Storage not found").to_string()))?;
 
     let provider = provider_for(&state, &backend).await?;
-    let incremented = state
-        .db
-        .increment_share_download(&code)
-        .map_err(internal_err)?;
-    if !incremented {
+    let resolved = provider.resolve_download(storage_path).await.map_err(internal_err)?;
+    let reserved = match retry_session {
+        Some(session) => state.browser_shares.take_fallback(session, &code, &item.id).await,
+        None => false,
+    };
+    if reserved {
+        let share_now = lookup_public_share(&state, &ip, &code)?;
+        policy::ensure_share_access(&state, &share_now.user_id)?;
+        if share_now.expires_at.is_some_and(|expires| expires <= Utc::now()) {
+            return Err((StatusCode::GONE, t!("该分享链接已过期", "This share link has expired").to_string()));
+        }
+    } else if !state.db.increment_share_download(&code).map_err(internal_err)? {
         return Err((StatusCode::GONE, t!("该分享链接已达到下载次数上限", "This share link has reached its download limit").to_string()));
     }
 
-    match provider
-        .resolve_download(storage_path)
-        .await
-        .map_err(internal_err)?
-    {
+    match resolved {
         DownloadResolution::DirectUrl(url) => Ok(Redirect::temporary(&url).into_response()),
         DownloadResolution::Stream {
             stream,
@@ -2226,7 +2243,7 @@ async fn public_share_page(Path(code): Path<String>) -> impl IntoResponse {
         .replace("__BRAND__", t!("DropDrawer 外链分享", "DropDrawer share"))
         .replace("__LOADING__", t!("正在加载分享信息...", "Loading the share…"))
         .replace("__SHARE_CODE__", &safe_code);
-    ([(header::VARY, "Accept-Language")], Html(html))
+    ([(header::VARY, "Accept-Language"), (header::REFERRER_POLICY, "no-referrer")], Html(html))
 }
 
 fn generate_short_code() -> String {
@@ -2301,6 +2318,7 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>, claims: Claims, devi
             return;
         }
         state.ready_files.remove(&key);
+        state.browser_share_devices.remove(&key);
         state.connections.insert(key.clone(), tx.clone());
 
         if let (Ok(devices), Ok(items)) = (
@@ -2348,6 +2366,20 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>, claims: Claims, devi
             Message::Text(text) => match serde_json::from_str::<WsClientCommand>(&text) {
                 Ok(WsClientCommand::Ping) => {
                     let _ = tx.send(WsEvent::Pong);
+                }
+                Ok(WsClientCommand::BrowserShareReady {}) => {
+                    let _presence = state.presence_changes.lock().await;
+                    if !is_current() {
+                        break;
+                    }
+                    state.browser_share_devices.insert(key.clone());
+                }
+                Ok(WsClientCommand::BrowserShareAnswer { session_id, sdp }) => {
+                    let _presence = state.presence_changes.lock().await;
+                    if !is_current() {
+                        break;
+                    }
+                    state.browser_shares.answer(&session_id, &key, sdp).await;
                 }
                 Ok(WsClientCommand::UpdateReadyFiles { files }) => {
                     let _presence = state.presence_changes.lock().await;
@@ -2398,6 +2430,7 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>, claims: Claims, devi
         .is_some()
     {
         state.ready_files.remove(&key);
+        state.browser_share_devices.remove(&key);
         if let Ok(Some(mut dev)) = state.db.get_device(&device_id, &user_id) {
             dev.online = false;
             state.broadcast_user(&user_id, WsEvent::DeviceUpdated(dev));

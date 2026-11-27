@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:ffi/ffi.dart';
 import 'package:path/path.dart' as p;
@@ -65,6 +66,7 @@ class P2pFfiBridge {
   _VoidToStrDart? _nodeInfo;
   _StrInOutDart? _registerFile;
   _StrInOutDart? _authorizeToken;
+  _StrInOutDart? _prepareBrowserShare;
   _StrInOutDart? _unregisterFile;
   _StrInOutDart? _downloadFile;
   _StrInOutDart? _cancelTransfer;
@@ -73,6 +75,7 @@ class P2pFfiBridge {
   _FreeStrDart? _freeString;
 
   bool get isAvailable => _lib != null;
+  bool get supportsBrowserShare => _prepareBrowserShare != null;
 
   bool loadLibrary() {
     if (_lib != null) return true;
@@ -128,6 +131,13 @@ class P2pFfiBridge {
     _nodeInfo = lib.lookupFunction<_VoidToStrNative, _VoidToStrDart>('dropdrawer_p2p_node_info');
     _registerFile = lib.lookupFunction<_StrInOutNative, _StrInOutDart>('dropdrawer_p2p_register_file');
     _authorizeToken = lib.lookupFunction<_StrInOutNative, _StrInOutDart>('dropdrawer_p2p_authorize_token');
+    try {
+      _prepareBrowserShare = lib.lookupFunction<_StrInOutNative, _StrInOutDart>(
+        'dropdrawer_p2p_prepare_browser_share',
+      );
+    } on ArgumentError {
+      _prepareBrowserShare = null;
+    }
     _unregisterFile = lib.lookupFunction<_StrInOutNative, _StrInOutDart>('dropdrawer_p2p_unregister_file');
     _downloadFile = lib.lookupFunction<_StrInOutNative, _StrInOutDart>('dropdrawer_p2p_download_file');
     _cancelTransfer = lib.lookupFunction<_StrInOutNative, _StrInOutDart>('dropdrawer_p2p_cancel_transfer');
@@ -178,6 +188,9 @@ class P2pFfiBridge {
     final res = _callJson(_registerFile!, {'item_id': itemId, 'path': path});
     return RegisteredP2pFile.fromJson(res['data'] as Map<String, dynamic>);
   }
+
+  Future<String> prepareBrowserShare(Map<String, dynamic> request) =>
+      Isolate.run(() => _prepareBrowserShareInWorker(request));
 
   void authorizeToken({
     required String itemId,
@@ -248,4 +261,13 @@ class P2pFfiBridge {
       } catch (_) {}
     }
   }
+}
+
+String _prepareBrowserShareInWorker(Map<String, dynamic> request) {
+  final bridge = P2pFfiBridge();
+  if (!bridge.loadLibrary() || !bridge.supportsBrowserShare) {
+    throw StateError('Browser share is unavailable');
+  }
+  return bridge._callJson(bridge._prepareBrowserShare!, request)['data']
+      as String;
 }

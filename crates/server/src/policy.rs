@@ -88,6 +88,7 @@ pub fn client_config(state: &AppState, user_id: &str) -> Result<protocol::Client
     Ok(protocol::ClientConfig {
         server_version: env!("CARGO_PKG_VERSION").to_string(),
         features: protocol::ClientFeatures {
+            browser_share_enabled: true,
             share_create_enabled: f.share_create_enabled && !user.share_blocked,
             cloud_upload_enabled: f.cloud_upload_enabled && !user.upload_blocked,
             share_requires_passcode: settings.share_policy.require_passcode,

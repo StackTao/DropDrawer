@@ -2051,6 +2051,12 @@ abstract class AppLocalizations {
   /// **'分享内容'**
   String get sharedContent;
 
+  /// No description provided for @browserShareNeedsSender.
+  ///
+  /// In zh, this message translates to:
+  /// **'没有云端副本的文件需要局域网直传。请保持发送端 DropDrawer 在线。'**
+  String get browserShareNeedsSender;
+
   /// No description provided for @uploadBeforeShareNote.
   ///
   /// In zh, this message translates to:

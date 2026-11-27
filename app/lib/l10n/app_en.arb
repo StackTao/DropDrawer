@@ -325,6 +325,7 @@
   "timesAtCap": "{n, plural, =1{1 time (max)} other{{n} times (max)}}",
   "bundleItemsSize": "{itemsLength, plural, =1{Bundle of 1 item · {value}} other{Bundle of {itemsLength} items · {value}}}",
   "sharedContent": "Shared content",
+  "browserShareNeedsSender": "Files without a cloud copy are sent over the local network. Keep DropDrawer open on the sending device.",
   "uploadBeforeShareNote": "{pendingUploadCount, plural, =1{1 file will be uploaded to “{defaultStorageBackendName}” first. Anyone with the link can download it in a browser without signing in.} other{{pendingUploadCount} files will be uploaded to “{defaultStorageBackendName}” first. Anyone with the link can download them in a browser without signing in.}}",
   "anyoneWithTheLinkCanDownload": "Anyone with the link can download in a browser without signing in.",
   "andMoreItems": "{value, plural, =1{and 1 more item} other{and {value} more items}}",

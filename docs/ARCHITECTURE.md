@@ -83,6 +83,8 @@ DropDrawer 将**控制面**与**数据面**解耦：
 - **公网外链分享**：
   - 管理接口：`POST /api/drawer/items/{id}/share`（单文件）、`POST /api/shares`（多选打包）、`GET /api/shares`、`DELETE /api/shares/{code}`
   - 公开访问：`GET /s/{code}`（内置响应式下载页，支持单文件与多文件打包）、`GET /api/s/{code}/meta`、`GET /api/s/{code}/download?item_id=&passcode=`
+  - 局域网直传：浏览器先通过 `POST /api/s/{code}/peer` 协商 WebRTC DataChannel。服务端经鉴权 WebSocket 通知在线的文件来源，发送端只公布私网地址，文件数据通过加密 DataChannel 直传。
+  - 下载授权：连接后调用 `POST /api/s/{code}/peer/{session}/claim` 消耗一次下载额度并领取文件专用令牌。直连失败时，有云端副本可回退到 HTTP 下载。同一次直连中断后的云端回退可复用一次额度。纯 P2P 文件可以直接建链接，无需先上传。
 
 ### 管理控制台 (`/admin`)
 - **启用与登录**：设置 `DROPDRAWER_ADMIN_ENABLED=true` 并通过本机命令创建管理员。账号可使用密码或已启用的 Google 登录，可配置 RFC 6238 TOTP；验证码一次性使用。会话为 12 小时 JWT，浏览器使用 `HttpOnly` 和 `SameSite=Strict` cookie。账号会话在退出、改密、停用或改角色后失效。同一 IP 的失败阈值为 15 分钟内 8 次，全站阈值为 60 次。开启 Turnstile 后，密码登录和 Google 授权启动都需要服务端验证挑战。配置与恢复方式见[服务端环境变量](CONFIGURATION.md#登录与管理控制台)。

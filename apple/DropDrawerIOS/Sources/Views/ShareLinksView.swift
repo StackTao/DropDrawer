@@ -58,9 +58,12 @@ struct ShareLinksView: View {
         }
     }
     private var totalBytes: Int64 { targetItems.reduce(0) { $0 + $1.size } }
-    private var pendingUploadCount: Int {
+    private var filesWithoutCloud: Int {
         targetItems.filter { !$0.isText && !$0.cloudReady }.count
     }
+
+    private var needsOnlineSender: Bool { store.browserShareEnabled && filesWithoutCloud > 0 }
+    private var pendingUploadCount: Int { store.browserShareEnabled ? 0 : filesWithoutCloud }
 
     var body: some View {
         List {
@@ -129,7 +132,9 @@ struct ShareLinksView: View {
         } header: {
             Text(isBundle ? String(localized: "打包 \(targetItems.count) 项 · \(formatBytes(totalBytes))") : String(localized: "分享内容"))
         } footer: {
-            if pendingUploadCount > 0 {
+            if needsOnlineSender {
+                Text(String(localized: "没有云端副本的文件需要局域网直传。请保持发送端 DropDrawer 在线。"))
+            } else if pendingUploadCount > 0 {
                 Text(String(localized: "生成前会先把 \(pendingUploadCount) 个文件上传到「\(store.defaultStorageBackendName)」，拿到链接的人用浏览器即可下载，无需登录。"))
             } else {
                 Text(String(localized: "拿到链接的人用浏览器即可下载，无需登录。"))

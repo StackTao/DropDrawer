@@ -531,6 +531,14 @@ pub enum WsEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         requester_node_id: Option<String>,
     },
+    BrowserShareOffer {
+        session_id: String,
+        item_id: String,
+        size: u64,
+        blake3_hash: Option<String>,
+        sdp: String,
+        start_token: String,
+    },
     Pong,
 }
 
@@ -538,6 +546,11 @@ pub enum WsEvent {
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum WsClientCommand {
     Ping,
+    BrowserShareReady {},
+    BrowserShareAnswer {
+        session_id: String,
+        sdp: Option<String>,
+    },
     UpdateReadyFiles {
         files: std::collections::BTreeMap<String, String>,
     },
@@ -579,6 +592,8 @@ fn default_true() -> bool {
 /// every field defaults to the permissive value.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientFeatures {
+    #[serde(default)]
+    pub browser_share_enabled: bool,
     #[serde(default = "default_true")]
     pub share_create_enabled: bool,
     #[serde(default = "default_true")]
@@ -599,6 +614,7 @@ pub struct ClientFeatures {
 impl Default for ClientFeatures {
     fn default() -> Self {
         Self {
+            browser_share_enabled: false,
             share_create_enabled: true,
             cloud_upload_enabled: true,
             share_requires_passcode: false,

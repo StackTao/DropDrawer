@@ -1272,6 +1272,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sharedContent => 'Shared content';
 
   @override
+  String get browserShareNeedsSender =>
+      'Files without a cloud copy are sent over the local network. Keep DropDrawer open on the sending device.';
+
+  @override
   String uploadBeforeShareNote(
     int pendingUploadCount,
     Object defaultStorageBackendName,

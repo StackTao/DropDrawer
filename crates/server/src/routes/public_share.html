@@ -36,13 +36,16 @@
     font-size: 13.5px; font-weight: 600; text-decoration: none;
     background: #f5f5f7; color: #111113; transition: opacity .15s;
   }
-  button.secondary, a.mini-btn {
+  button.secondary, button.mini-btn {
     background: rgba(255,255,255,0.1); color: #f5f5f7; width: auto; padding: 0 12px;
     height: 30px; font-size: 12px; border-radius: 8px; text-decoration: none;
     display: inline-flex; align-items: center; justify-content: center; border: none; cursor: pointer;
     flex-shrink: 0;
   }
-  button:hover, a.btn:hover, a.mini-btn:hover { opacity: 0.88; }
+  button:hover, a.btn:hover, button.mini-btn:hover { opacity: 0.88; }
+  button:disabled { opacity: .55; cursor: wait; }
+  .download-status { color: rgba(235,235,245,.75); font-size: 12px; margin-top: 6px; }
+  .download-status:empty { display: none; }
   pre.text-box {
     background: rgba(0,0,0,0.32); border: 1px solid rgba(255,255,255,0.1);
     border-radius: 10px; padding: 12px; white-space: pre-wrap; word-break: break-word;
@@ -71,9 +74,11 @@
   <div class="brand"><img class="logo" src="/admin/assets/logo.svg" alt="" /><span>__BRAND__</span></div>
   <div id="app">__LOADING__</div>
 </div>
+<script src="/api/share-peer.js"></script>
 <script>
 const code = "__SHARE_CODE__";
 const EN = document.documentElement.lang === "en";
+const shareApi = "/api/s/" + encodeURIComponent(code);
 const LOCALE = EN ? "en" : "zh-CN";
 const T = EN ? {
   cantOpen: "Can't open this share",
@@ -92,7 +97,11 @@ const T = EN ? {
   wrongPasscode: "Incorrect passcode. Try again",
   copiedToClipboard: "Copied to clipboard",
   copied: "Copied",
-  downloadsStarted: n => `Started ${n} download${n === 1 ? "" : "s"}`,
+  connecting: "Connecting to the sender…",
+  transferring: n => `LAN transfer · ${n}%`,
+  saved: "Sent to your browser’s downloads",
+  cloud: "Downloading from the cloud copy",
+  waiting: "Waiting for the sender. Ask them to keep DropDrawer open and join the same local network, then retry.",
 } : {
   cantOpen: "无法访问该分享",
   count: n => `共 ${n} 项 · `,
@@ -110,7 +119,11 @@ const T = EN ? {
   wrongPasscode: "提取码不正确，请重试",
   copiedToClipboard: "已复制到剪贴板",
   copied: "已复制",
-  downloadsStarted: n => `已触发 ${n} 个文件下载`,
+  connecting: "正在连接发送端…",
+  transferring: n => `局域网直传 · ${n}%`,
+  saved: "已交给浏览器保存",
+  cloud: "正在从云端副本下载",
+  waiting: "等待发送端。请让发送方保持 DropDrawer 在线，双方连接到同一局域网后重试。",
 };
 let currentPasscode = new URLSearchParams(location.search).get("p") || "";
 
@@ -125,12 +138,12 @@ function esc(s) {
   return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 }
 
-function buildDlUrl(itemId) {
+function buildDlUrl(itemId, session) {
   const params = new URLSearchParams();
   if (itemId) params.set("item_id", itemId);
   if (currentPasscode) params.set("passcode", currentPasscode);
-  const qs = params.toString();
-  return "/api/s/" + encodeURIComponent(code) + "/download" + (qs ? ("?" + qs) : "");
+  if (session) params.set("peer_session", session);
+  return shareApi + "/download?" + params.toString();
 }
 
 async function load(errMsg) {
@@ -162,8 +175,8 @@ async function load(errMsg) {
     return;
   }
 
+  window._bundleItems = items;
   if (items.length > 1) {
-    window._bundleItems = items;
     const fileItems = items.filter(it => it.kind === "file");
     const rowsHtml = items.map((it, idx) => {
       if (it.kind === "text") {
@@ -182,8 +195,9 @@ async function load(errMsg) {
           <div class="bundle-info">
             <div class="bundle-title">${esc(it.name)}</div>
             <div class="bundle-sub">${T.file} · ${fmtBytes(it.size)}</div>
+            <div class="download-status" id="status-${idx}" role="status"></div>
           </div>
-          <a class="mini-btn" href="${buildDlUrl(it.id)}">${T.download}</a>
+          <button class="mini-btn" id="download-${idx}" onclick="downloadFile(${idx})">${T.download}</button>
         </div>
       `;
     }).join("");
@@ -211,7 +225,8 @@ async function load(errMsg) {
   el.innerHTML = `
     <p class="name">${esc(d.name)}</p>
     <p class="meta">${fmtBytes(d.size)}${limitInfo}${expInfo}</p>
-    <a class="btn" href="${buildDlUrl(null)}">${T.downloadFile}</a>
+    <button id="download-0" onclick="downloadFile(0)">${T.downloadFile}</button>
+    <div class="download-status" id="status-0" role="status"></div>
   `;
 }
 
@@ -248,19 +263,46 @@ function copyBundleText(idx, btn) {
   if (btn) btn.textContent = T.copied;
 }
 
-function downloadAllFiles(btn) {
-  const files = (window._bundleItems || []).filter(it => it.kind === "file");
-  files.forEach((it, i) => {
-    setTimeout(() => {
-      const a = document.createElement("a");
-      a.href = buildDlUrl(it.id);
-      a.download = it.name;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    }, i * 380);
-  });
-  if (btn) btn.textContent = T.downloadsStarted(files.length);
+async function downloadFile(idx) {
+  const item = window._bundleItems[idx];
+  const button = document.getElementById("download-" + idx);
+  const status = document.getElementById("status-" + idx);
+  if (!item || button.disabled) return;
+  button.disabled = true;
+  status.textContent = T.connecting;
+  const attempt = {};
+  try {
+    await window.receiveLanShare(shareApi, item, currentPasscode,
+      percent => { status.textContent = T.transferring(percent); }, attempt);
+    status.textContent = T.saved;
+  } catch (error) {
+    if (error.accessDenied) {
+      status.textContent = error.message || T.cantOpen;
+    } else if (item.cloud_ready) {
+      status.textContent = T.cloud;
+      const link = document.createElement("a");
+      link.href = buildDlUrl(item.id, attempt.session);
+      link.download = item.name;
+      document.body.append(link);
+      link.click();
+      link.remove();
+    } else {
+      status.textContent = T.waiting;
+    }
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function downloadAllFiles(button) {
+  button.disabled = true;
+  try {
+    for (const [idx, item] of window._bundleItems.entries()) {
+      if (item.kind === "file") await downloadFile(idx);
+    }
+  } finally {
+    button.disabled = false;
+  }
 }
 
 load();

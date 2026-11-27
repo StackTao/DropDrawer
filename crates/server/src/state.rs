@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock, Weak};
 use std::time::{Duration, Instant};
 
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use protocol::{DeviceInfo, DrawerItem, StorageBackendConfig, WsEvent};
 use tokio::sync::{mpsc, Mutex, OwnedMutexGuard};
 
@@ -43,6 +43,8 @@ pub struct AppState {
     /// Active WebSocket connections keyed by `(user_id, device_id)`.
     pub connections: DashMap<(String, String), mpsc::UnboundedSender<WsEvent>>,
     pub(crate) ready_files: DashMap<(String, String), std::collections::BTreeMap<String, String>>,
+    pub(crate) browser_share_devices: DashSet<(String, String)>,
+    pub(crate) browser_shares: crate::routes::browser_share::Sessions,
     // Order connection replacement, removal and the corresponding presence events.
     pub(crate) presence_changes: Mutex<()>,
     item_mutations: DashMap<String, Weak<Mutex<()>>>,
@@ -172,6 +174,8 @@ impl AppState {
             default_local_storage_dir,
             connections: DashMap::new(),
             ready_files: DashMap::new(),
+            browser_share_devices: DashSet::new(),
+            browser_shares: Default::default(),
             presence_changes: Mutex::new(()),
             item_mutations: DashMap::new(),
             storage_locks: DashMap::new(),
@@ -299,6 +303,7 @@ impl AppState {
         for key in keys {
             self.connections.remove(&key);
             self.ready_files.remove(&key);
+            self.browser_share_devices.remove(&key);
         }
     }
 

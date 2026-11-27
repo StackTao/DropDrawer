@@ -182,6 +182,9 @@ class DropDrawerController extends ChangeNotifier {
   ClientConfig? clientConfig;
   String? _dismissedAnnouncementId;
 
+  bool get browserShareEnabled =>
+      clientConfig?.features.browserShareEnabled ?? false;
+
   bool get canCreateShares => clientConfig?.features.shareCreateEnabled ?? true;
   bool get canUploadToCloud => clientConfig?.features.cloudUploadEnabled ?? true;
   bool get shareRequiresPasscode => clientConfig?.features.shareRequiresPasscode ?? false;
@@ -867,10 +870,30 @@ class DropDrawerController extends ChangeNotifier {
     });
   }
 
+  Future<void> _answerBrowserShare(
+    WebSocketChannel channel,
+    Map<String, dynamic> request,
+  ) async {
+    String? answer;
+    try {
+      answer = await p2p.prepareBrowserShare(request);
+    } catch (_) {
+      // The browser can use its cloud fallback if the local file is unavailable.
+    }
+    if (!identical(_ws, channel)) return;
+    channel.sink.add(jsonEncode({
+      'type': 'browser_share_answer',
+      'payload': {'session_id': request['session_id'], 'sdp': answer},
+    }));
+  }
+
   void _publishNodeAddress(WebSocketChannel channel, {bool force = false}) {
     if (!p2pReady || !identical(_ws, channel)) return;
     try {
       final info = p2p.nodeInfo();
+      if (force && p2p.supportsBrowserShare) {
+        channel.sink.add('{"type":"browser_share_ready","payload":{}}');
+      }
       final visible = {for (final item in items) item.id};
       final files = Map<String, String>.fromEntries(
         info.readyFiles.entries.where((entry) => visible.contains(entry.key)),
@@ -1019,6 +1042,13 @@ class DropDrawerController extends ChangeNotifier {
           try {
             p2p.unregisterFile(itemId);
           } catch (_) {}
+        }
+        break;
+      case 'browser_share_offer':
+        final channel = _ws;
+        if (channel != null && p2pReady && p2p.supportsBrowserShare &&
+            payload is Map<String, dynamic>) {
+          unawaited(_answerBrowserShare(channel, payload));
         }
         break;
       case 'authorize_p2p_token':
@@ -1782,7 +1812,7 @@ class DropDrawerController extends ChangeNotifier {
   }
 
   /// Creates a public share link for one or multiple drawer items (single file/text or multi-item bundle).
-  /// Any selected P2P-only local file not yet cached on cloud/server is uploaded automatically first.
+  /// Older servers require a cloud copy before creating a file share.
   Future<ShareLinkInfo> createShareLinkForItems(
     List<DrawerItem> targets, {
     String? title,
@@ -1801,7 +1831,7 @@ class DropDrawerController extends ChangeNotifier {
     }
 
     for (final item in targets) {
-      if (item.kind == 'file' && !item.cloudReady) {
+      if (!browserShareEnabled && item.kind == 'file' && !item.cloudReady) {
         final localPath = localFilePaths[item.id];
         if (localPath == null || !File(localPath).existsSync()) {
           throw StateError(

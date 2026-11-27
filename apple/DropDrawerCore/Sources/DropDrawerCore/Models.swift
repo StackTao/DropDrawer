@@ -732,6 +732,7 @@ public func formatBytes(_ bytes: Int64) -> String {
 /// Effective server switches for the signed-in account (`GET /api/client/config`).
 /// Missing fields default to the permissive value so older servers keep working.
 public struct ClientFeatures: Codable, Sendable, Equatable {
+    public var browserShareEnabled: Bool
     public var shareCreateEnabled: Bool
     public var cloudUploadEnabled: Bool
     public var shareRequiresPasscode: Bool
@@ -742,6 +743,7 @@ public struct ClientFeatures: Codable, Sendable, Equatable {
     public var disabledStorageKinds: [String]
 
     enum CodingKeys: String, CodingKey {
+        case browserShareEnabled = "browser_share_enabled"
         case shareCreateEnabled = "share_create_enabled"
         case cloudUploadEnabled = "cloud_upload_enabled"
         case shareRequiresPasscode = "share_requires_passcode"
@@ -752,6 +754,7 @@ public struct ClientFeatures: Codable, Sendable, Equatable {
     }
 
     public init(
+        browserShareEnabled: Bool = false,
         shareCreateEnabled: Bool = true,
         cloudUploadEnabled: Bool = true,
         shareRequiresPasscode: Bool = false,
@@ -760,6 +763,7 @@ public struct ClientFeatures: Codable, Sendable, Equatable {
         maxItemTtlHours: Int? = nil,
         disabledStorageKinds: [String] = []
     ) {
+        self.browserShareEnabled = browserShareEnabled
         self.shareCreateEnabled = shareCreateEnabled
         self.cloudUploadEnabled = cloudUploadEnabled
         self.shareRequiresPasscode = shareRequiresPasscode
@@ -771,6 +775,7 @@ public struct ClientFeatures: Codable, Sendable, Equatable {
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        browserShareEnabled = try c.decodeIfPresent(Bool.self, forKey: .browserShareEnabled) ?? false
         shareCreateEnabled = try c.decodeIfPresent(Bool.self, forKey: .shareCreateEnabled) ?? true
         cloudUploadEnabled = try c.decodeIfPresent(Bool.self, forKey: .cloudUploadEnabled) ?? true
         shareRequiresPasscode = try c.decodeIfPresent(Bool.self, forKey: .shareRequiresPasscode) ?? false

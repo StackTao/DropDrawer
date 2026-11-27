@@ -309,8 +309,10 @@ class _ShareViewState extends State<ShareView> {
     final items = widget.targetItems;
     final material = usesMaterialChrome(context);
     final isBundle = items.length > 1;
-    final pendingUploadCount =
+    final filesWithoutCloud =
         items.where((it) => it.kind == 'file' && !it.cloudReady).length;
+    final needsOnlineSender = c.browserShareEnabled && filesWithoutCloud > 0;
+    final pendingUploadCount = c.browserShareEnabled ? 0 : filesWithoutCloud;
     final totalBytes = items.fold<int>(0, (sum, it) => sum + it.size);
 
     Future<void> choose(
@@ -340,9 +342,11 @@ class _ShareViewState extends State<ShareView> {
         if (items.isNotEmpty) ...[
           PhoneSection(
             header: isBundle ? l10n.bundleItemsSize(items.length, formatBytes(totalBytes)) : l10n.sharedContent,
-            footer: pendingUploadCount > 0
-                ? l10n.uploadBeforeShareNote(pendingUploadCount, c.defaultStorageBackendName)
-                : l10n.anyoneWithTheLinkCanDownload,
+            footer: needsOnlineSender
+                ? l10n.browserShareNeedsSender
+                : pendingUploadCount > 0
+                    ? l10n.uploadBeforeShareNote(pendingUploadCount, c.defaultStorageBackendName)
+                    : l10n.anyoneWithTheLinkCanDownload,
             children: [
               for (final item in items.take(8))
                 PhoneRow(
@@ -536,8 +540,10 @@ class _ShareViewState extends State<ShareView> {
   ) {
     final isBundle = items.length > 1;
     final totalBytes = items.fold<int>(0, (sum, it) => sum + it.size);
-    final pendingUploadCount =
+    final filesWithoutCloud =
         items.where((it) => it.kind == 'file' && !it.cloudReady).length;
+    final needsOnlineSender = c.browserShareEnabled && filesWithoutCloud > 0;
+    final pendingUploadCount = c.browserShareEnabled ? 0 : filesWithoutCloud;
     final primary = items.first;
 
     return Container(
@@ -590,7 +596,9 @@ class _ShareViewState extends State<ShareView> {
                     Text(
                       pendingUploadCount > 0
                           ? l10n.sizeUploadBeforeShare(formatBytes(totalBytes), pendingUploadCount, c.defaultStorageBackendName)
-                          : l10n.sizeReadyNoSignIn(formatBytes(totalBytes)),
+                          : needsOnlineSender
+                              ? formatBytes(totalBytes)
+                              : l10n.sizeReadyNoSignIn(formatBytes(totalBytes)),
                       style: TextStyle(
                         fontSize: 10.5,
                         color: MacPalette.textTertiary,
@@ -603,6 +611,14 @@ class _ShareViewState extends State<ShareView> {
               ),
             ],
           ),
+          if (needsOnlineSender)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                l10n.browserShareNeedsSender,
+                style: TextStyle(fontSize: 11, color: MacPalette.textSecondary),
+              ),
+            ),
           if (isBundle) ...[
             const SizedBox(height: 8),
             Container(

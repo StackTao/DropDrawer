@@ -104,6 +104,7 @@ class AuthPublicConfig {
 /// Effective server switches for the signed-in user (`GET /api/client/config`).
 /// Defaults are permissive so older servers without the endpoint keep working.
 class ClientFeatures {
+  final bool browserShareEnabled;
   final bool shareCreateEnabled;
   final bool cloudUploadEnabled;
   final bool shareRequiresPasscode;
@@ -115,6 +116,7 @@ class ClientFeatures {
   final List<String> disabledStorageKinds;
 
   const ClientFeatures({
+    this.browserShareEnabled = false,
     this.shareCreateEnabled = true,
     this.cloudUploadEnabled = true,
     this.shareRequiresPasscode = false,
@@ -125,6 +127,7 @@ class ClientFeatures {
   });
 
   factory ClientFeatures.fromJson(Map<String, dynamic> json) => ClientFeatures(
+        browserShareEnabled: json['browser_share_enabled'] as bool? ?? false,
         shareCreateEnabled: json['share_create_enabled'] as bool? ?? true,
         cloudUploadEnabled: json['cloud_upload_enabled'] as bool? ?? true,
         shareRequiresPasscode: json['share_requires_passcode'] as bool? ?? false,

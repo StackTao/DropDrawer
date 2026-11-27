@@ -788,6 +788,7 @@
     }
   },
   "sharedContent": "分享内容",
+  "browserShareNeedsSender": "没有云端副本的文件需要局域网直传。请保持发送端 DropDrawer 在线。",
   "uploadBeforeShareNote": "生成前会先把 {pendingUploadCount} 个文件上传到「{defaultStorageBackendName}」，拿到链接的人用浏览器即可下载，无需登录。",
   "@uploadBeforeShareNote": {
     "placeholders": {

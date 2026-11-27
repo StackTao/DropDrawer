@@ -16,6 +16,7 @@ Pod::Spec.new do |s|
       '-Wl,-u,_dropdrawer_p2p_node_info ' \
       '-Wl,-u,_dropdrawer_p2p_register_file ' \
       '-Wl,-u,_dropdrawer_p2p_authorize_token ' \
+      '-Wl,-u,_dropdrawer_p2p_prepare_browser_share ' \
       '-Wl,-u,_dropdrawer_p2p_unregister_file ' \
       '-Wl,-u,_dropdrawer_p2p_download_file ' \
       '-Wl,-u,_dropdrawer_p2p_cancel_transfer ' \

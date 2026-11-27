@@ -945,6 +945,199 @@ async fn test_native_google_drive_resumable_upload_download_delete_and_s3() {
 }
 
 #[tokio::test]
+async fn browser_share_without_upload_and_with_single_use_cloud_fallback() {
+    use futures_util::SinkExt;
+    use std::time::Duration;
+    use tokio_tungstenite::{connect_async, tungstenite::Message};
+
+    let (app, state, _tmp) = spawn_test_server().await;
+    let (_, auth): (_, AuthResponse) = send_json(
+        &app,
+        "POST",
+        "/api/auth/register",
+        None,
+        Some(json!({"username": "browser-share", "password": "test-password"})),
+    )
+    .await;
+    let token = Some(auth.token.as_str());
+    let (_, device): (_, DeviceInfo) = send_json(
+        &app,
+        "POST",
+        "/api/devices",
+        token,
+        Some(json!({"name": "Sender", "platform": "macos", "iroh_node_id": "test-node"})),
+    )
+    .await;
+    let (_, item): (_, DrawerItem) = send_json(
+        &app,
+        "POST",
+        "/api/drawer/items",
+        token,
+        Some(
+            json!({"device_id": device.id, "kind": "file", "name": "share.bin",
+            "size": 4, "transfer_mode": "p2p_only"}),
+        ),
+    )
+    .await;
+    let (status, share): (_, ShareLinkInfo) = send_json(
+        &app,
+        "POST",
+        &format!("/api/drawer/items/{}/share", item.id),
+        token,
+        Some(json!({"passcode": "8421", "max_downloads": 1})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let base = format!("/api/s/{}", share.code);
+    let (_, meta): (_, serde_json::Value) = send_json(
+        &app,
+        "GET",
+        &format!("{base}/meta?passcode=8421"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(meta["items"][0]["cloud_ready"], false);
+    let offer_path = format!("{base}/peer");
+    let offer = json!({"item_id": item.id, "passcode":"8421",
+        "sdp": "v=0\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\na=candidate:test\r\n"});
+    let (status, _) = send_raw(&app, "POST", &offer_path, None, Some(offer.clone())).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        state
+            .db
+            .get_share_link(&share.code)
+            .unwrap()
+            .unwrap()
+            .download_count,
+        0
+    );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let router = app.clone();
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let (mut sender, _) = connect_async(format!(
+        "ws://127.0.0.1:{port}/ws?token={}&device_id={}",
+        auth.token, device.id
+    ))
+    .await
+    .unwrap();
+
+    let session = tokio::time::timeout(Duration::from_secs(4), async {
+        sender
+            .send(Message::text(
+                r#"{"type":"browser_share_ready","payload":{}}"#,
+            ))
+            .await
+            .unwrap();
+        sender
+            .send(Message::text(r#"{"type":"ping"}"#))
+            .await
+            .unwrap();
+        while let Some(Ok(Message::Text(text))) = sender.next().await {
+            if serde_json::from_str::<serde_json::Value>(&text).unwrap()["type"] == "pong" {
+                break;
+            }
+        }
+        let signal = async {
+            while let Some(Ok(Message::Text(text))) = sender.next().await {
+                let event: serde_json::Value = serde_json::from_str(&text).unwrap();
+                if event["type"] != "browser_share_offer" {
+                    continue;
+                }
+                let session = &event["payload"];
+                assert_eq!(session["item_id"], item.id);
+                assert!(!session["sdp"].as_str().unwrap().contains("a=candidate:"));
+                sender
+                    .send(Message::text(
+                        json!({"type":"browser_share_answer", "payload":{
+                            "session_id":session["session_id"],
+                        "sdp":"v=0\r\na=ice-lite:ice-lite\r\na=candidate:1 1 udp 100 192.168.1.3 7777 typ host\r\n",
+                        }})
+                        .to_string(),
+                    ))
+                    .await
+                    .unwrap();
+                return session["start_token"].clone();
+            }
+            panic!("sender closed before seeing the browser offer")
+        };
+        let ((status, answer), start_token) = tokio::join!(
+            send_json::<serde_json::Value>(&app, "POST", &offer_path, None, Some(offer)),
+            signal
+        );
+        assert_eq!(status, StatusCode::OK);
+        (answer["session"].as_str().unwrap().to_owned(), start_token)
+    })
+    .await
+    .unwrap();
+
+    let claim_path = format!("{base}/peer/{}/claim", session.0);
+    let claim = |passcode| Some(json!({"item_id":item.id, "passcode":passcode}));
+    let (status, _) = send_raw(&app, "POST", &claim_path, None, claim("9999")).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(
+        state
+            .db
+            .get_share_link(&share.code)
+            .unwrap()
+            .unwrap()
+            .download_count,
+        0
+    );
+    let (status, grant): (_, serde_json::Value) =
+        send_json(&app, "POST", &claim_path, None, claim("8421")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(grant["start_token"], session.1);
+    let (status, _) = send_raw(&app, "POST", &claim_path, None, claim("8421")).await;
+    assert_eq!(status, StatusCode::GONE);
+
+    // If a cloud copy appears, the same download can fall back once.
+    let (_, plan): (_, UploadPlan) = send_json(
+        &app,
+        "POST",
+        &format!("/api/drawer/items/{}/upload-plan", item.id),
+        token,
+        Some(json!({})),
+    )
+    .await;
+    let UploadPlan::ServerStreamPut { url, .. } = plan else {
+        panic!("expected local disk upload");
+    };
+    let request = Request::builder()
+        .method("PUT")
+        .uri(url)
+        .header(header::AUTHORIZATION, format!("Bearer {}", auth.token))
+        .body(Body::from("test"))
+        .unwrap();
+    assert_eq!(
+        app.clone().oneshot(request).await.unwrap().status(),
+        StatusCode::OK
+    );
+    let fallback_path = format!(
+        "{base}/download?item_id={}&passcode=8421&peer_session={}",
+        item.id, session.0
+    );
+    let (status, bytes) = send_raw(&app, "GET", &fallback_path, None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(&bytes[..], b"test");
+    let (status, _) = send_raw(&app, "GET", &fallback_path, None, None).await;
+    assert_eq!(status, StatusCode::GONE);
+    assert_eq!(
+        state
+            .db
+            .get_share_link(&share.code)
+            .unwrap()
+            .unwrap()
+            .download_count,
+        1
+    );
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
 async fn test_public_share_link_passcode_limit_and_revoke() {
     let (app, state, _tmp) = spawn_test_server().await;
 
