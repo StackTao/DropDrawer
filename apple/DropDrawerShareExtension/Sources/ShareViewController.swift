@@ -150,7 +150,7 @@ private struct ShareProgressView: View {
     var body: some View {
         VStack(spacing: 12) {
             ProgressView()
-            Text("正在发送到 DropDrawer…")
+            Text(String(localized: "正在发送到 DropDrawer…"))
                 .font(.subheadline.weight(.medium))
         }
         .padding(24)

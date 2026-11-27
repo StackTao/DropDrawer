@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="transfer_notification_title">DropDrawer is transferring</string>
+    <string name="transfer_channel_name">File transfers</string>
+    <string name="transfer_channel_description">Keeps uploads and downloads connected in the background and shows their progress</string>
+    <string name="share_file_chooser">Share file</string>
+    <string name="share_text_chooser">Share text</string>
+</resources>

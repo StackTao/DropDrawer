@@ -7,9 +7,20 @@ use tokio_util::io::ReaderStream;
 
 use super::{ByteStream, DownloadResolution, PutResult, StorageProvider};
 
-#[derive(Debug, thiserror::Error)]
-#[error("文件超过服务器本地盘的单文件上传上限（{0} 字节）")]
+#[derive(Debug)]
 pub(crate) struct LocalUploadTooLarge(u64);
+
+impl std::fmt::Display for LocalUploadTooLarge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let limit = self.0;
+        f.write_str(&tf!(
+            "文件超过服务器本地盘的单文件上传上限（{limit} 字节）",
+            "The file exceeds the server's local storage upload limit ({limit} bytes)"
+        ))
+    }
+}
+
+impl std::error::Error for LocalUploadTooLarge {}
 
 impl LocalUploadTooLarge {
     pub(crate) fn check(max_file_bytes: Option<u64>, size: u64) -> Result<(), Self> {

@@ -1,0 +1,42 @@
+{
+  "sourceLanguage": "zh-Hans",
+  "strings": {
+    "NSLocalNetworkUsageDescription": {
+      "comment": "Local network permission prompt",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Used for direct P2P file transfers between devices on your local network."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用于局域网设备间 P2P 直连传输文件。"
+          }
+        }
+      }
+    },
+    "NSPhotoLibraryAddUsageDescription": {
+      "comment": "Photo library add permission prompt",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Used to save images and videos you receive to your photo library."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用于将收到的图片或视频保存到系统相册。"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

@@ -293,11 +293,10 @@ impl StorageProvider for GoogleDriveProvider {
                 .map(|b| b / 1e9)
                 .unwrap_or(0.0);
             if limit_gb > 0.0 {
-                return Ok(format!(
-                    "Google Drive ({email}) · 已用 {used_gb:.2} GB / {limit_gb:.1} GB"
+                return Ok(tf!("Google Drive ({email}) · 已用 {used_gb:.2} GB / {limit_gb:.1} GB", "Google Drive ({email}) · {used_gb:.2} GB of {limit_gb:.1} GB used"
                 ));
             }
         }
-        Ok(format!("Google Drive ({email}) 已连接"))
+        Ok(tf!("Google Drive ({email}) 已连接", "Google Drive ({email}) connected"))
     }
 }

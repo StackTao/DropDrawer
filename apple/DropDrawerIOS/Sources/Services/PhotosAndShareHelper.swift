@@ -36,7 +36,7 @@ enum MediaExportHelper {
                 try? FileManager.default.removeItem(at: temp)
                 return
             } catch {
-                store.showToast("读取剪贴板图片失败")
+                store.showToast(String(localized: "读取剪贴板图片失败"))
                 return
             }
         }
@@ -44,7 +44,7 @@ enum MediaExportHelper {
             await store.addText(text)
             return
         }
-        store.showToast("剪贴板为空")
+        store.showToast(String(localized: "剪贴板为空"))
     }
 }
 

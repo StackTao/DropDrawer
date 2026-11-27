@@ -41,7 +41,7 @@ struct DropDrawerIOSApp: App {
     private func handleIncomingURL(_ url: URL) async {
         if url.isFileURL {
             guard store.isLoggedIn else {
-                store.showToast("请先登录以同步分享的文件")
+                store.showToast(String(localized: "请先登录以同步分享的文件"))
                 return
             }
             await store.addFiles([url])

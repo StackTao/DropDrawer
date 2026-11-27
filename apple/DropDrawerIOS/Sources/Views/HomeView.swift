@@ -43,9 +43,9 @@ struct HomeView: View {
                 }
 
                 if !isSelecting && !sortedOutgoingTransfers.isEmpty {
-                    Section("正在向其他设备发送") {
+                    Section(String(localized: "正在向其他设备发送")) {
                         ForEach(sortedOutgoingTransfers, id: \.id) { entry in
-                            let itemName = store.items.first(where: { $0.id == entry.progress.itemId })?.name ?? "文件"
+                            let itemName = store.items.first(where: { $0.id == entry.progress.itemId })?.name ?? String(localized: "文件")
                             VStack(alignment: .leading, spacing: 6) {
                                 HStack(spacing: 10) {
                                     Image(systemName: "arrow.up.circle.fill")
@@ -73,7 +73,7 @@ struct HomeView: View {
                                             .foregroundStyle(.secondary)
                                     }
                                     .buttonStyle(.borderless)
-                                    .accessibilityLabel("取消发送")
+                                    .accessibilityLabel(String(localized: "取消发送"))
                                 }
                                 ProgressView(value: entry.progress.indicatorValue)
                                     .tint(.accentColor)
@@ -86,9 +86,9 @@ struct HomeView: View {
                 if store.items.isEmpty && store.pendingDrops.isEmpty {
                     Section {
                         ContentUnavailableView {
-                            Label("暂无内容", systemImage: "tray")
+                            Label(String(localized: "暂无内容"), systemImage: "tray")
                         } description: {
-                            Text("点上方快捷按钮发送照片、文件或剪贴板，也可在其他 App 中「分享 → DropDrawer」。")
+                            Text(String(localized: "点上方快捷按钮发送照片、文件或剪贴板，也可在其他 App 中「分享 → DropDrawer」。"))
                         }
                         .padding(.vertical, 12)
                         .listRowBackground(Color.clear)
@@ -103,7 +103,7 @@ struct HomeView: View {
                                     Text(pending.name)
                                         .font(.body)
                                         .lineLimit(1)
-                                    Text("正在加入…")
+                                    Text(String(localized: "正在加入…"))
                                         .font(.footnote)
                                         .foregroundStyle(.secondary)
                                 }
@@ -122,7 +122,7 @@ struct HomeView: View {
                                 Button(role: .destructive) {
                                     Task { await store.deleteItem(item.id) }
                                 } label: {
-                                    Label("移出", systemImage: "trash")
+                                    Label(String(localized: "移出"), systemImage: "trash")
                                 }
                             }
                             .contextMenu {
@@ -131,7 +131,7 @@ struct HomeView: View {
                         }
                     } header: {
                         HStack {
-                            Text("最近传输 · \(store.items.count) 项")
+                            Text(String(localized: "最近传输 · \(store.items.count) 项", locale: AppLanguage.locale))
                             Spacer()
                         }
                         .textCase(nil)
@@ -142,7 +142,7 @@ struct HomeView: View {
             .refreshable {
                 await store.refreshAll()
             }
-            .navigationTitle(isSelecting ? "已选 \(selectedIds.count) 项" : "")
+            .navigationTitle(isSelecting ? String(localized: "已选 \(selectedIds.count) 项", locale: AppLanguage.locale) : "")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar(isSelecting ? .hidden : .visible, for: .tabBar)
             .toolbar {
@@ -150,7 +150,7 @@ struct HomeView: View {
                     ToolbarItem(placement: .topBarLeading) {
                         let allIds = Set(store.items.map(\.id))
                         let allSelected = !allIds.isEmpty && allIds.isSubset(of: selectedIds)
-                        Button(allSelected ? "取消全选" : "全选") {
+                        Button(allSelected ? String(localized: "取消全选") : String(localized: "全选")) {
                             if allSelected {
                                 selectedIds.subtract(allIds)
                             } else {
@@ -159,7 +159,7 @@ struct HomeView: View {
                         }
                     }
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button("完成") {
+                        Button(String(localized: "完成")) {
                             withAnimation {
                                 editMode = .inactive
                                 selectedIds.removeAll()
@@ -175,7 +175,7 @@ struct HomeView: View {
                                 selectedIds.removeAll()
                                 path.append(.shares(targets))
                             } label: {
-                                Label("打包外链", systemImage: "link")
+                                Label(String(localized: "打包外链"), systemImage: "link")
                             }
                             .disabled(selectedIds.isEmpty)
                         }
@@ -188,7 +188,7 @@ struct HomeView: View {
                             selectedIds.removeAll()
                             Task { await store.batchDelete(itemIds: ids) }
                         } label: {
-                            Label("移出 (\(selectedIds.count))", systemImage: "trash")
+                            Label(String(localized: "移出 (\(selectedIds.count))"), systemImage: "trash")
                         }
                         .disabled(selectedIds.isEmpty)
                     }
@@ -201,7 +201,7 @@ struct HomeView: View {
                                 Circle()
                                     .fill(store.wsConnected ? (store.p2pReady ? Color.green : Color.accentColor) : Color.red)
                                     .frame(width: 7, height: 7)
-                                Text(store.wsConnected ? "\(store.onlineDeviceCount) 台在线" : "连接中…")
+                                Text(store.wsConnected ? String(localized: "\(store.onlineDeviceCount) 台在线") : String(localized: "连接中…"))
                                     .font(.subheadline.weight(.medium))
                                     .foregroundStyle(.primary)
                             }
@@ -211,7 +211,7 @@ struct HomeView: View {
 
                     if !store.items.isEmpty {
                         ToolbarItem(placement: .topBarTrailing) {
-                            Button("选择") {
+                            Button(String(localized: "选择")) {
                                 withAnimation { editMode = .active }
                             }
                         }
@@ -220,23 +220,23 @@ struct HomeView: View {
                                 Button {
                                     Task { await store.downloadAllPending() }
                                 } label: {
-                                    Label("全部下载", systemImage: "arrow.down.circle")
+                                    Label(String(localized: "全部下载"), systemImage: "arrow.down.circle")
                                 }
                                 Button {
                                     Task { await store.refreshAll() }
                                 } label: {
-                                    Label("刷新列表", systemImage: "arrow.clockwise")
+                                    Label(String(localized: "刷新列表"), systemImage: "arrow.clockwise")
                                 }
                                 Divider()
                                 Button(role: .destructive) {
                                     confirmClearAll = true
                                 } label: {
-                                    Label("清空全部", systemImage: "trash")
+                                    Label(String(localized: "清空全部"), systemImage: "trash")
                                 }
                             } label: {
                                 Image(systemName: "ellipsis")
                             }
-                            .accessibilityLabel("更多")
+                            .accessibilityLabel(String(localized: "更多"))
                         }
                     }
                 }
@@ -250,7 +250,7 @@ struct HomeView: View {
                             path.append(.shares([item]))
                         }
                     } else {
-                        ContentUnavailableView("条目已移出", systemImage: "tray")
+                        ContentUnavailableView(String(localized: "条目已移出"), systemImage: "tray")
                     }
                 case .shares(let targets):
                     ShareLinksView(store: store, targetItems: targets)
@@ -280,16 +280,16 @@ struct HomeView: View {
                 Task { await importPickedPhotos(toLoad) }
             }
             .confirmationDialog(
-                "清空全部内容？",
+                String(localized: "清空全部内容？"),
                 isPresented: $confirmClearAll,
                 titleVisibility: .visible
             ) {
-                Button("清空全部 (\(store.items.count) 项)", role: .destructive) {
+                Button(String(localized: "清空全部 (\(store.items.count) 项)"), role: .destructive) {
                     Task { await store.batchDelete(clearAll: true) }
                 }
-                Button("取消", role: .cancel) {}
+                Button(String(localized: "取消"), role: .cancel) {}
             } message: {
-                Text("将清理列表中的 \(store.items.count) 项内容及其在服务器或网盘的副本。本机原文件会保留。")
+                Text(String(localized: "将清理列表中的 \(store.items.count) 项内容及其在服务器或网盘的副本。本机原文件会保留。", locale: AppLanguage.locale))
             }
         }
     }
@@ -298,21 +298,21 @@ struct HomeView: View {
         Section {
             HStack(spacing: 10) {
                 QuickActionTile(
-                    title: "照片",
+                    title: String(localized: "照片"),
                     systemImage: "photo.fill",
                     tint: .blue
                 ) {
                     showPhotosPicker = true
                 }
                 QuickActionTile(
-                    title: "文件",
+                    title: String(localized: "文件"),
                     systemImage: "doc.fill",
                     tint: .indigo
                 ) {
                     showFileImporter = true
                 }
                 QuickActionTile(
-                    title: "粘贴",
+                    title: String(localized: "粘贴"),
                     systemImage: "doc.on.clipboard.fill",
                     tint: .teal
                 ) {
@@ -329,29 +329,29 @@ struct HomeView: View {
         if item.isText {
             Button {
                 UIPasteboard.general.string = item.textContent ?? item.name
-                store.showToast("已复制到剪贴板")
+                store.showToast(String(localized: "已复制到剪贴板"))
             } label: {
-                Label("复制文本", systemImage: "doc.on.doc")
+                Label(String(localized: "复制文本"), systemImage: "doc.on.doc")
             }
         } else if let local = store.localFileURL(for: item.id) {
             ShareLink(item: local) {
-                Label("分享…", systemImage: "square.and.arrow.up")
+                Label(String(localized: "分享…"), systemImage: "square.and.arrow.up")
             }
             if item.canSaveToPhotos {
                 Button {
                     Task {
                         let ok = await MediaExportHelper.saveToPhotos(fileURL: local)
-                        store.showToast(ok ? "已保存到相册" : "保存相册失败")
+                        store.showToast(ok ? String(localized: "已保存到相册") : String(localized: "保存相册失败"))
                     }
                 } label: {
-                    Label("保存到相册", systemImage: "square.and.arrow.down")
+                    Label(String(localized: "保存到相册"), systemImage: "square.and.arrow.down")
                 }
             }
         } else {
             Button {
                 Task { await store.downloadItem(item) }
             } label: {
-                Label("下载", systemImage: "arrow.down.circle")
+                Label(String(localized: "下载"), systemImage: "arrow.down.circle")
             }
         }
 
@@ -359,7 +359,7 @@ struct HomeView: View {
             Button {
                 path.append(.shares([item]))
             } label: {
-                Label("创建外链", systemImage: "link")
+                Label(String(localized: "创建外链"), systemImage: "link")
             }
         }
 
@@ -367,7 +367,7 @@ struct HomeView: View {
             Button {
                 Task { await store.cacheItemToCloud(itemId: item.id, fileURL: local) }
             } label: {
-                Label("存到云盘", systemImage: "icloud.and.arrow.up")
+                Label(String(localized: "存到云盘"), systemImage: "icloud.and.arrow.up")
             }
         }
 
@@ -377,7 +377,7 @@ struct HomeView: View {
                 selectedIds.insert(item.id)
             }
         } label: {
-            Label("选择", systemImage: "checkmark.circle")
+            Label(String(localized: "选择"), systemImage: "checkmark.circle")
         }
 
         Divider()
@@ -385,7 +385,7 @@ struct HomeView: View {
         Button(role: .destructive) {
             Task { await store.deleteItem(item.id) }
         } label: {
-            Label("移出", systemImage: "trash")
+            Label(String(localized: "移出"), systemImage: "trash")
         }
     }
 
@@ -468,7 +468,7 @@ struct SearchTabView: View {
                     ContentUnavailableView.search(text: searchText)
                         .listRowBackground(Color.clear)
                 } else {
-                    Section("匹配结果（\(results.count)）") {
+                    Section(String(localized: "匹配结果（\(results.count)）")) {
                         ForEach(results) { item in
                             HomeItemRow(
                                 store: store,
@@ -481,9 +481,9 @@ struct SearchTabView: View {
                 }
             }
             .listStyle(.insetGrouped)
-            .navigationTitle("搜索")
+            .navigationTitle(String(localized: "搜索"))
             .navigationBarTitleDisplayMode(.inline)
-            .searchable(text: $searchText, prompt: "搜索文件名、文本或来源设备")
+            .searchable(text: $searchText, prompt: String(localized: "搜索文件名、文本或来源设备"))
             .searchScopes($filterKind) {
                 ForEach(ItemFilterKind.allCases) { scope in
                     Text(scope.title).tag(scope)
@@ -497,7 +497,7 @@ struct SearchTabView: View {
                             path.append(.shares([item]))
                         }
                     } else {
-                        ContentUnavailableView("条目已移出", systemImage: "tray")
+                        ContentUnavailableView(String(localized: "条目已移出"), systemImage: "tray")
                     }
                 case .shares(let targets):
                     ShareLinksView(store: store, targetItems: targets)
@@ -616,11 +616,11 @@ struct HomeItemRow: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.borderless)
-            .accessibilityLabel("取消传输")
+            .accessibilityLabel(String(localized: "取消传输"))
         } else if item.isText {
             Button {
                 UIPasteboard.general.string = item.textContent ?? item.name
-                store.showToast("已复制到剪贴板")
+                store.showToast(String(localized: "已复制到剪贴板"))
             } label: {
                 Image(systemName: "doc.on.doc")
                     .font(.body)
@@ -658,10 +658,10 @@ struct HomeItemRow: View {
             DateParsing.formatRelative(item.createdAt),
         ]
         if let dev = item.cleanOwnerDeviceName {
-            parts.append("来自 \(dev)")
+            parts.append(String(localized: "来自 \(dev)"))
         }
         if !item.isText && !store.canDownloadP2P(item) && !item.cloudReady {
-            parts.append("来源离线")
+            parts.append(String(localized: "来源离线"))
         }
         return parts.joined(separator: " · ")
     }

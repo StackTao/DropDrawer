@@ -230,6 +230,15 @@ class DrawerWindowService {
     } catch (_) {}
   }
 
+  /// Sends tray/menu/panel/alert titles in the UI language to the macOS and
+  /// Windows runners, which fall back to Chinese until this arrives.
+  Future<void> setNativeStrings(Map<String, String> strings) async {
+    if (!supportsEdgeDrawer) return;
+    try {
+      await _channel.invokeMethod('setNativeStrings', strings);
+    } catch (_) {}
+  }
+
   /// Starts/updates/stops the Android dataSync Foreground Service so cloud
   /// uploads & downloads continue uninterrupted when the app is backgrounded.
   Future<void> updateMobileTransferService({

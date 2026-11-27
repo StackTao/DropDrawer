@@ -34,7 +34,7 @@ impl EmailSender for SmtpEmailSender {
             .from_address
             .trim()
             .parse()
-            .map_err(|e| anyhow::anyhow!("发件人邮箱地址无效: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("{}", tf!("发件人邮箱地址无效: {e}", "Invalid sender email address: {e}")))?;
         let from_name = smtp.from_name.trim();
         let from_mailbox = Mailbox::new(
             (!from_name.is_empty()).then(|| from_name.to_string()),
@@ -45,7 +45,7 @@ impl EmailSender for SmtpEmailSender {
             .to
             .trim()
             .parse()
-            .map_err(|e| anyhow::anyhow!("收件人邮箱地址无效: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("{}", tf!("收件人邮箱地址无效: {e}", "Invalid recipient email address: {e}")))?;
         let to_mailbox = Mailbox::new(None, to_addr);
 
         let message = Message::builder()
@@ -65,20 +65,20 @@ impl EmailSender for SmtpEmailSender {
                             .body(email.html_body.clone()),
                     ),
             )
-            .map_err(|e| anyhow::anyhow!("构建邮件内容失败: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("{}", tf!("构建邮件内容失败: {e}", "Couldn't build the email: {e}")))?;
 
         let host = smtp.host.trim();
         let mut builder = match smtp.security {
             SmtpSecurity::StartTls => {
                 let tls = TlsParameters::new(host.to_string())
-                    .map_err(|e| anyhow::anyhow!("初始化 STARTTLS 失败: {e}"))?;
+                    .map_err(|e| anyhow::anyhow!("{}", tf!("初始化 STARTTLS 失败: {e}", "Couldn't start STARTTLS: {e}")))?;
                 AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(host)
                     .port(smtp.port)
                     .tls(Tls::Required(tls))
             }
             SmtpSecurity::Tls => {
                 let tls = TlsParameters::new(host.to_string())
-                    .map_err(|e| anyhow::anyhow!("初始化 SMTPS TLS 失败: {e}"))?;
+                    .map_err(|e| anyhow::anyhow!("{}", tf!("初始化 SMTPS TLS 失败: {e}", "Couldn't start SMTPS TLS: {e}")))?;
                 AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(host)
                     .port(smtp.port)
                     .tls(Tls::Wrapper(tls))
@@ -100,7 +100,7 @@ impl EmailSender for SmtpEmailSender {
         mailer
             .send(message)
             .await
-            .map_err(|e| anyhow::anyhow!("SMTP 发送失败: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("{}", tf!("SMTP 发送失败: {e}", "SMTP delivery failed: {e}")))?;
         Ok(())
     }
 }
@@ -133,23 +133,31 @@ impl EmailSender for MemoryEmailSender {
 
 pub fn build_verification_email(to: &str, code: &str, purpose: &str) -> OutgoingEmail {
     let (title, action) = match purpose {
-        "reset_password" => ("重置密码验证码", "重置你的 DropDrawer 账号密码"),
-        _ => ("注册邮箱验证码", "完成 DropDrawer 新账号注册"),
+        "reset_password" => (t!("重置密码验证码", "Password reset code"), t!("重置你的 DropDrawer 账号密码", "reset the password of your DropDrawer account")),
+        _ => (t!("注册邮箱验证码", "Email verification code"), t!("完成 DropDrawer 新账号注册", "finish creating your DropDrawer account")),
     };
-    let subject = format!("[DropDrawer] {title}：{code}");
-    let text_body = format!(
-        "你好，\n\n你正在{action}。你的 6 位验证码是：{code}\n\n验证码 10 分钟内有效，请勿向他人泄露。如非本人操作，请忽略此邮件。\n\n— DropDrawer"
+    let subject = tf!("[DropDrawer] {title}：{code}", "[DropDrawer] {title}: {code}");
+    let text_body = tf!("你好，\n\n你正在{action}。你的 6 位验证码是：{code}\n\n验证码 10 分钟内有效，请勿向他人泄露。如非本人操作，请忽略此邮件。\n\n— DropDrawer", "Hello,\n\nYou're trying to {action}. Your 6-digit code is: {code}\n\nThe code is valid for 10 minutes. Don't share it with anyone. If this wasn't you, you can ignore this email.\n\n— DropDrawer"
+    );
+    let lang = crate::i18n::current().html_tag();
+    let intro = tf!(
+        "你正在{action}，请在客户端输入以下 6 位验证码：",
+        "You're trying to {action}. Enter this 6-digit code in the app:"
+    );
+    let footer = t!(
+        "验证码 10 分钟内有效，最多可验证 5 次。如非本人操作请忽略此邮件。",
+        "The code is valid for 10 minutes and can be tried up to 5 times. If this wasn't you, ignore this email."
     );
     let html_body = format!(
         r#"<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="{lang}">
 <body style="margin:0;padding:24px;background:#0e1015;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',sans-serif;color:#f5f5f7;">
   <div style="max-width:460px;margin:0 auto;background:#1c1c20;border:1px solid rgba(255,255,255,0.12);border-radius:16px;padding:28px;">
     <div style="font-size:15px;font-weight:600;color:#38bdf8;margin-bottom:14px;">DropDrawer</div>
     <h2 style="margin:0 0 10px;font-size:19px;color:#ffffff;">{title}</h2>
-    <p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:rgba(235,235,245,0.75);">你正在{action}，请在客户端输入以下 6 位验证码：</p>
+    <p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:rgba(235,235,245,0.75);">{intro}</p>
     <div style="text-align:center;font-size:32px;font-weight:700;letter-spacing:8px;padding:16px 20px;border-radius:12px;background:#0f172a;color:#ffffff;border:1px solid rgba(56,189,248,0.35);">{code}</div>
-    <p style="margin:20px 0 0;font-size:12px;color:rgba(235,235,245,0.5);">验证码 10 分钟内有效，最多可验证 5 次。如非本人操作请忽略此邮件。</p>
+    <p style="margin:20px 0 0;font-size:12px;color:rgba(235,235,245,0.5);">{footer}</p>
   </div>
 </body>
 </html>"#
@@ -163,19 +171,25 @@ pub fn build_verification_email(to: &str, code: &str, purpose: &str) -> Outgoing
 }
 
 pub fn build_test_email(to: &str) -> OutgoingEmail {
+    let lang = crate::i18n::current().html_tag();
+    let heading = t!("SMTP 邮件配置测试成功", "SMTP is working");
+    let body = t!(
+        "如果你收到了这封邮件，说明服务器 SMTP 发信通道工作正常，可以放心启用邮箱验证码注册与自助找回密码功能。",
+        "If you received this email, the server can send mail, so email verification at sign-up and password reset by email are ready to turn on."
+    );
     OutgoingEmail {
         to: to.trim().to_string(),
-        subject: "[DropDrawer] SMTP 邮件服务测试成功".to_string(),
-        text_body: "你好，这是一封来自 DropDrawer 管理端的测试邮件。如果你收到了这封邮件，说明 SMTP 发信配置已正常工作。".to_string(),
-        html_body: r#"<!DOCTYPE html>
-<html lang="zh-CN">
+        subject: t!("[DropDrawer] SMTP 邮件服务测试成功", "[DropDrawer] SMTP test succeeded").to_string(),
+        text_body: t!("你好，这是一封来自 DropDrawer 管理端的测试邮件。如果你收到了这封邮件，说明 SMTP 发信配置已正常工作。", "Hello, this is a test email from the DropDrawer admin console. If you received it, your SMTP settings work.").to_string(),
+        html_body: format!(r#"<!DOCTYPE html>
+<html lang="{lang}">
 <body style="margin:0;padding:24px;background:#0e1015;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',sans-serif;color:#f5f5f7;">
   <div style="max-width:460px;margin:0 auto;background:#1c1c20;border:1px solid rgba(255,255,255,0.12);border-radius:16px;padding:28px;">
     <div style="font-size:15px;font-weight:600;color:#38bdf8;margin-bottom:12px;">DropDrawer Admin</div>
-    <h2 style="margin:0 0 10px;font-size:18px;color:#ffffff;">SMTP 邮件配置测试成功</h2>
-    <p style="margin:0;font-size:14px;line-height:1.6;color:rgba(235,235,245,0.75);">如果你收到了这封邮件，说明服务器 SMTP 发信通道工作正常，可以放心启用邮箱验证码注册与自助找回密码功能。</p>
+    <h2 style="margin:0 0 10px;font-size:18px;color:#ffffff;">{heading}</h2>
+    <p style="margin:0;font-size:14px;line-height:1.6;color:rgba(235,235,245,0.75);">{body}</p>
   </div>
 </body>
-</html>"#.to_string(),
+</html>"#),
     }
 }

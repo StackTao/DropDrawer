@@ -26,7 +26,7 @@ pub(super) fn validate_settings(config: &AdminTurnstileSettings) -> ApiResult<()
     {
         return Err((
             StatusCode::BAD_REQUEST,
-            "请填写 Turnstile 站点密钥、服务端密钥和主机名".to_owned(),
+            t!("请填写 Turnstile 站点密钥、服务端密钥和主机名", "Enter the Turnstile site key, secret key and host names").to_owned(),
         ));
     }
     Ok(())
@@ -77,7 +77,7 @@ pub(super) async fn verify(state: &AppState, ip: &str, token: Option<&str>) -> A
     let rejected = || {
         (
             StatusCode::BAD_REQUEST,
-            "请完成 Cloudflare 人机验证后重试".to_owned(),
+            t!("请完成 Cloudflare 人机验证后重试", "Complete the Cloudflare check and try again").to_owned(),
         )
     };
     let token = token
@@ -86,7 +86,7 @@ pub(super) async fn verify(state: &AppState, ip: &str, token: Option<&str>) -> A
     if state.admin_challenges.is_blocked(ip) {
         return Err((
             StatusCode::TOO_MANY_REQUESTS,
-            "人机验证请求过多，请稍后再试".to_owned(),
+            t!("人机验证请求过多，请稍后再试", "Too many human verification requests. Try again later").to_owned(),
         ));
     }
     state.admin_challenges.record_failure(ip);
@@ -98,7 +98,7 @@ pub(super) async fn verify(state: &AppState, ip: &str, token: Option<&str>) -> A
     let unavailable = |_| {
         (
             StatusCode::SERVICE_UNAVAILABLE,
-            "暂时无法验证 Cloudflare 人机验证，请稍后重试".to_owned(),
+            t!("暂时无法验证 Cloudflare 人机验证，请稍后重试", "Cloudflare human verification is unavailable right now. Try again later").to_owned(),
         )
     };
     let result: Verification = state

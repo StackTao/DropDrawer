@@ -122,7 +122,7 @@ fn validate(state: &AppState, next: &RuntimeSettings) -> Result<(), (StatusCode,
     if next.google.enabled || next.google.admin_enabled {
         next.google
             .to_google_config()
-            .map_err(|e| bad_request(format!("Google 配置无效: {e}")))?;
+            .map_err(|e| bad_request(tf!("Google 配置无效: {e}", "Invalid Google settings: {e}")))?;
     }
     super::turnstile::validate_settings(&next.admin_turnstile)?;
     next.smtp
@@ -133,31 +133,31 @@ fn validate(state: &AppState, next: &RuntimeSettings) -> Result<(), (StatusCode,
         && !state.has_custom_email_sender()
     {
         return Err(bad_request(
-            "启用「注册必须验证邮箱」前，请先启用并填写完整的 SMTP 发信配置",
+            t!("启用「注册必须验证邮箱」前，请先启用并填写完整的 SMTP 发信配置", "Turn on and complete the SMTP settings before requiring email verification for sign-ups"),
         ));
     }
     if !next.password_login_enabled && !next.google.enabled {
         return Err(bad_request(
-            "至少保留一种登录方式（账号密码登录或 Google 登录）",
+            t!("至少保留一种登录方式（账号密码登录或 Google 登录）", "Keep at least one sign-in method (password or Google)"),
         ));
     }
     if let Some(min) = next.client_policy.min_version.as_deref()
         && crate::settings::parse_version(min).is_none()
     {
-        return Err(bad_request("最低客户端版本格式应为 1.2.3"));
+        return Err(bad_request(t!("最低客户端版本格式应为 1.2.3", "The minimum client version must look like 1.2.3")));
     }
     if next.announcement.enabled
         && next.announcement.title.is_empty()
         && next.announcement.message.is_empty()
     {
-        return Err(bad_request("启用公告前请填写标题或内容"));
+        return Err(bad_request(t!("启用公告前请填写标题或内容", "Enter a title or message before turning on the announcement")));
     }
     if let (Some(default), Some(max)) = (
         next.limits.default_item_ttl_hours,
         next.limits.max_item_ttl_hours,
     ) && default > max
     {
-        return Err(bad_request("条目默认保留时长不能超过最长保留时长"));
+        return Err(bad_request(t!("条目默认保留时长不能超过最长保留时长", "The default item retention can't exceed the maximum retention")));
     }
     Ok(())
 }
@@ -240,7 +240,7 @@ pub(super) async fn test_smtp(
 ) -> ApiResult<Json<serde_json::Value>> {
     let to = req.to.trim();
     if !is_valid_email(to) {
-        return Err(bad_request("收件人邮箱格式无效"));
+        return Err(bad_request(t!("收件人邮箱格式无效", "Invalid recipient email address")));
     }
     let current = state.runtime_settings().smtp;
     let smtp = match req.smtp {

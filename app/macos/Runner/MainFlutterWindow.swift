@@ -427,6 +427,9 @@ class MainFlutterWindow: NSWindow {
         let active = (call.arguments as? [String: Any])?["active"] as? Bool ?? false
         self.isMainDrawerActive = active
         result(true)
+      case "setNativeStrings":
+        NativeStrings.table = (call.arguments as? [String: String]) ?? [:]
+        result(true)
       case "setActiveTransferCount":
         let count = (call.arguments as? [String: Any])?["count"] as? Int ?? 0
         self.activeTransferCount = max(0, count)
@@ -1134,17 +1137,17 @@ class MainFlutterWindow: NSWindow {
         menu.addItem(item)
       }
 
-      addItem("外链管理", symbol: "link", id: "shares")
-      addItem("偏好设置", symbol: "gearshape", id: "preferences")
-      addItem("设备状态", symbol: "laptopcomputer.and.iphone", id: "devices")
+      addItem(NativeStrings.text("menuShares", "外链管理"), symbol: "link", id: "shares")
+      addItem(NativeStrings.text("menuPreferences", "偏好设置"), symbol: "gearshape", id: "preferences")
+      addItem(NativeStrings.text("menuDevices", "设备状态"), symbol: "laptopcomputer.and.iphone", id: "devices")
       addItem(
-        self.dockSide == .left ? "停靠右侧" : "停靠左侧",
+        self.dockSide == .left ? NativeStrings.text("dockRight", "停靠右侧") : NativeStrings.text("dockLeft", "停靠左侧"),
         symbol: self.dockSide == .left ? "sidebar.right" : "sidebar.left",
         id: "toggle_dock_side"
       )
       menu.addItem(NSMenuItem.separator())
-      addItem("退出登录", symbol: "rectangle.portrait.and.arrow.right", id: "logout")
-      addItem("退出应用", symbol: "power", id: "quit", keyEq: "q")
+      addItem(NativeStrings.text("menuLogout", "退出登录"), symbol: "rectangle.portrait.and.arrow.right", id: "logout")
+      addItem(NativeStrings.text("quit", "退出应用"), symbol: "power", id: "quit", keyEq: "q")
 
       let menuWidth = max(menu.size.width, 136)
       let x = min(max(8, anchorRightX - menuWidth), max(8, view.bounds.width - menuWidth - 8))
@@ -1166,8 +1169,8 @@ class MainFlutterWindow: NSWindow {
       }
       NSApp.activate(ignoringOtherApps: true)
       let panel = NSOpenPanel()
-      panel.title = "选择要放入抽屉的文件或文件夹"
-      panel.prompt = "放入抽屉"
+      panel.title = NativeStrings.text("pickFilesTitle", "选择要放入抽屉的文件或文件夹")
+      panel.prompt = NativeStrings.text("pickFilesPrompt", "放入抽屉")
       panel.allowsMultipleSelection = true
       panel.canChooseFiles = true
       panel.canChooseDirectories = true
@@ -1199,8 +1202,8 @@ class MainFlutterWindow: NSWindow {
       }
       NSApp.activate(ignoringOtherApps: true)
       let panel = NSOpenPanel()
-      panel.title = "选择默认下载保存目录"
-      panel.prompt = "选择此目录"
+      panel.title = NativeStrings.text("pickFolderTitle", "选择默认下载保存目录")
+      panel.prompt = NativeStrings.text("pickFolderPrompt", "选择此目录")
       panel.allowsMultipleSelection = false
       panel.canChooseFiles = false
       panel.canChooseDirectories = true
@@ -1894,5 +1897,16 @@ private enum UpdateInstaller {
     } catch {
       return false
     }
+  }
+}
+
+/// Menu, panel and alert titles in the app's UI language, sent by Flutter
+/// (`DrawerWindowService.setNativeStrings`). The Chinese fallbacks cover the
+/// moment before the first Flutter frame.
+enum NativeStrings {
+  static var table: [String: String] = [:]
+
+  static func text(_ key: String, _ fallback: String) -> String {
+    table[key] ?? fallback
   }
 }

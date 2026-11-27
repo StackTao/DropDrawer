@@ -1,0 +1,3 @@
+"NSLocalNetworkUsageDescription" = "DropDrawer 需要访问局域网以在您的设备之间进行高速端到端 P2P 文件传输。";
+"NSPhotoLibraryAddUsageDescription" = "DropDrawer 需要相册写入权限，以便将您下载的图片和视频保存到系统相册。";
+"NSPhotoLibraryUsageDescription" = "DropDrawer 需要访问相册，以便选择照片和视频放入跨端抽屉。";

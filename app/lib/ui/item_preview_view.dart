@@ -9,6 +9,7 @@ import '../models/models.dart';
 import '../state/drawer_controller.dart';
 import 'phone_page.dart';
 import 'theme.dart';
+import '../l10n/l10n.dart';
 
 /// Full-width macOS in-drawer quick preview for text notes, images, and files.
 class ItemPreviewView extends StatelessWidget {
@@ -60,23 +61,23 @@ class ItemPreviewView extends StatelessWidget {
     final isMine = item.ownerDeviceId == c.deviceId;
 
     final title = item.kind == 'text'
-        ? '文本预览'
-        : (_isImage ? '图片预览' : '文件详情');
+        ? l10n.textPreview
+        : (_isImage ? l10n.imagePreview : l10n.fileDetails);
     Future<void> remove() async {
       try {
         await c.deleteItem(item.id);
       } catch (e) {
-        c.setBanner('移出失败：$e');
+        c.setBanner(l10n.removeFailedError(e));
       }
       onBack();
     }
 
     final actions = [
       if (c.canCreateShares)
-        PageAction(icon: CupertinoIcons.link, tooltip: '创建外链分享', onPressed: onShare),
+        PageAction(icon: CupertinoIcons.link, tooltip: l10n.createShareLink, onPressed: onShare),
       PageAction(
         icon: CupertinoIcons.trash,
-        tooltip: '移出抽屉',
+        tooltip: l10n.removeFromDrawer,
         destructive: true,
         onPressed: remove,
       ),
@@ -95,10 +96,10 @@ class ItemPreviewView extends StatelessWidget {
       title: title,
       actions: [
         if (c.canCreateShares)
-          PageAction(icon: CupertinoIcons.link, tooltip: '创建外链分享', onPressed: onShare),
+          PageAction(icon: CupertinoIcons.link, tooltip: l10n.createShareLink, onPressed: onShare),
         PageAction(
           icon: CupertinoIcons.trash,
-          tooltip: '移出抽屉',
+          tooltip: l10n.removeFromDrawer,
           destructive: true,
           onPressed: remove,
         ),
@@ -114,7 +115,7 @@ class ItemPreviewView extends StatelessWidget {
               children: [
                 MacIconButton(
                   icon: CupertinoIcons.chevron_left,
-                  tooltip: '返回抽屉',
+                  tooltip: l10n.backToDrawer,
                   size: 15,
                   onPressed: onBack,
                 ),
@@ -132,14 +133,14 @@ class ItemPreviewView extends StatelessWidget {
                 if (c.canCreateShares)
                   MacIconButton(
                     icon: CupertinoIcons.link,
-                    tooltip: '创建外链分享',
+                    tooltip: l10n.createShareLink,
                     size: 14,
                     onPressed: onShare,
                   ),
                 const SizedBox(width: 2),
                 MacIconButton(
                   icon: CupertinoIcons.trash,
-                  tooltip: '移出抽屉',
+                  tooltip: l10n.removeFromDrawer,
                   size: 14,
                   color: MacPalette.red,
                   onPressed: remove,
@@ -168,29 +169,29 @@ class ItemPreviewView extends StatelessWidget {
   }
 
   List<(String, String)> _infoRows(String? localPath) => [
-        if (item.kind == 'file') ('文件名', item.name),
-        ('大小', formatBytes(item.size)),
+        if (item.kind == 'file') (l10n.fileName, item.name),
+        (l10n.size, formatBytes(item.size)),
         if (item.ownerDeviceName != null)
           (
-            '来源设备',
+            l10n.sourceDevice,
             item.ownerDeviceName!.replaceAll(RegExp(r'\.local$', caseSensitive: false), ''),
           ),
-        ('添加时间', _formatDateTime(item.createdAt)),
+        (l10n.added, _formatDateTime(item.createdAt)),
         (
-          '传输方式',
+          l10n.transferMethod,
           controller.canDownloadP2p(item) && item.cloudReady
-              ? 'P2P 直连 + ${item.storageBackendName ?? '云端缓存'}'
+              ? l10n.p2pDirectPlus(item.storageBackendName ?? l10n.cloudCache)
               : (controller.canDownloadP2p(item)
-                  ? '仅 P2P 直连'
+                  ? l10n.p2pDirectOnly
                   : (item.cloudReady
-                      ? (item.storageBackendName ?? '已存云盘')
-                      : '来源离线')),
+                      ? (item.storageBackendName ?? l10n.savedToCloud)
+                      : l10n.sourceOffline)),
         ),
-        ('到期清理', item.expiresAt != null ? _formatDateTime(item.expiresAt!) : '永不过期'),
+        (l10n.expires, item.expiresAt != null ? _formatDateTime(item.expiresAt!) : l10n.neverExpires),
         if (localPath != null)
           controller.windowService.isIOS
-              ? ('本地缓存', '已保存到本机')
-              : ('本机位置', localPath),
+              ? (l10n.localCopy, l10n.savedOnThisDevice)
+              : (l10n.locationOnThisDevice, localPath),
       ];
 
   /// Phones: the content up top (text, image, or a large file icon and name
@@ -279,7 +280,7 @@ class ItemPreviewView extends StatelessWidget {
           builder: (context, _) => _buildPhoneTransfer(c),
         ),
         PhoneSection(
-          header: '信息',
+          header: l10n.info,
           children: [
             for (final (label, value) in _infoRows(localPath))
               value.length > 22
@@ -299,7 +300,7 @@ class ItemPreviewView extends StatelessWidget {
         .toList();
     if (!isTransferring && outgoing.isEmpty) return const SizedBox.shrink();
     return PhoneSection(
-      header: '传输',
+      header: l10n.transfer,
       children: [
         if (isTransferring)
           Padding(
@@ -322,13 +323,13 @@ class ItemPreviewView extends StatelessWidget {
                     Expanded(
                       child: Text(
                         '${switch (progress.channel) {
-                          'preparing' => '正在准备下载',
+                          'preparing' => l10n.preparingDownload,
                           'upload' => progress.uploadLabel,
-                          'p2p_connecting' => '正在建立 P2P 连接',
-                          'p2p_replica' => 'P2P 局域网副本',
-                          'p2p_direct' => 'P2P 端到端直连',
-                          'p2p_relay' => 'P2P 加密中继',
-                          _ => '云端下载',
+                          'p2p_connecting' => l10n.connectingOverP2p,
+                          'p2p_replica' => l10n.p2pLanCopy,
+                          'p2p_direct' => l10n.p2pDirectConnection,
+                          'p2p_relay' => l10n.p2pEncryptedRelay,
+                          _ => l10n.cloudDownloadShort,
                         }}'
                         '${progress.progressText != null ? ' · ${progress.progressText}' : ''}',
                         style: TextStyle(fontSize: 13, color: MacPalette.textSecondary),
@@ -341,7 +342,7 @@ class ItemPreviewView extends StatelessWidget {
                           ? null
                           : () => c.cancelTransfer(item.id),
                       child: Text(
-                        c.isCancelling(item.id) ? '正在取消' : '取消',
+                        c.isCancelling(item.id) ? l10n.canceling : l10n.cancel,
                         style: TextStyle(fontSize: 15, color: MacPalette.red),
                       ),
                     ),
@@ -352,7 +353,7 @@ class ItemPreviewView extends StatelessWidget {
           ),
         for (final entry in outgoing)
           PhoneRow(
-            title: '正在发送给 ${c.recipientName(entry.value.sendingTo!)}',
+            title: l10n.sendingToDevice(c.recipientName(entry.value.sendingTo!)),
             value: '${(entry.value.fraction * 100).floor()}%',
             trailing: CupertinoButton(
               padding: EdgeInsets.zero,
@@ -361,7 +362,7 @@ class ItemPreviewView extends StatelessWidget {
                   ? null
                   : () => c.cancelOutgoingTransfer(entry.key),
               child: Text(
-                c.isCancellingSend(entry.key) ? '正在取消' : '取消',
+                c.isCancellingSend(entry.key) ? l10n.canceling : l10n.cancel,
                 style: TextStyle(fontSize: 15, color: MacPalette.red),
               ),
             ),
@@ -393,7 +394,7 @@ class ItemPreviewView extends StatelessWidget {
     }
     return Center(
       child: Text(
-        '下载到本机后可查看原图',
+        l10n.downloadItToViewTheOriginal,
         style: TextStyle(fontSize: 15, color: MacPalette.textTertiary),
       ),
     );
@@ -464,7 +465,7 @@ class ItemPreviewView extends StatelessWidget {
                     ),
                     SizedBox(height: 6),
                     Text(
-                      '下载到本地后可查看高清原图',
+                      l10n.downloadItToViewTheFull,
                       style: TextStyle(
                         fontSize: 11,
                         color: MacPalette.textTertiary,
@@ -518,21 +519,21 @@ class ItemPreviewView extends StatelessWidget {
 
   Widget _buildMetaCard(String? localPath) {
     final rows = <(String, String)>[
-      if (item.kind == 'file') ('文件名', item.name),
-      ('大小', formatBytes(item.size)),
-      if (item.ownerDeviceName != null) ('来源设备', item.ownerDeviceName!),
+      if (item.kind == 'file') (l10n.fileName, item.name),
+      (l10n.size, formatBytes(item.size)),
+      if (item.ownerDeviceName != null) (l10n.sourceDevice, item.ownerDeviceName!),
       (
-        '传输状态',
+        l10n.transferStatus,
         controller.canDownloadP2p(item) && item.cloudReady
-            ? 'P2P 直连 + ${item.storageBackendName ?? '云端缓存'}'
+            ? l10n.p2pDirectPlus(item.storageBackendName ?? l10n.cloudCache)
             : (controller.canDownloadP2p(item)
-                ? '仅 P2P 端到端直连'
+                ? l10n.p2pEndToEndOnly
                 : (item.cloudReady
-                    ? (item.storageBackendName ?? '已存云盘')
-                    : '来源离线')),
+                    ? (item.storageBackendName ?? l10n.savedToCloud)
+                    : l10n.sourceOffline)),
       ),
-      ('到期清理', item.expiresAt != null ? _formatDateTime(item.expiresAt!) : '永不过期'),
-      if (localPath != null) ('本机路径', localPath),
+      (l10n.expires, item.expiresAt != null ? _formatDateTime(item.expiresAt!) : l10n.neverExpires),
+      if (localPath != null) (l10n.localPath, localPath),
     ];
 
     return Container(
@@ -615,13 +616,13 @@ class ItemPreviewView extends StatelessWidget {
               children: [
                 Text(
                   switch (progress.channel) {
-                    'preparing' => '正在准备下载',
+                    'preparing' => l10n.preparingDownload,
                     'upload' => progress.uploadLabel,
-                    'p2p_connecting' => '正在建立 P2P 连接',
-                    'p2p_replica' => 'P2P 局域网副本',
-                    'p2p_direct' => 'P2P 端到端直连',
-                    'p2p_relay' => 'P2P 加密中继',
-                    _ => '云端高速下载',
+                    'p2p_connecting' => l10n.connectingOverP2p,
+                    'p2p_replica' => l10n.p2pLanCopy,
+                    'p2p_direct' => l10n.p2pDirectConnection,
+                    'p2p_relay' => l10n.p2pEncryptedRelay,
+                    _ => l10n.cloudDownload,
                   },
                   style: TextStyle(
                     fontSize: 11,
@@ -645,7 +646,7 @@ class ItemPreviewView extends StatelessWidget {
                       minimumSize: const Size(0, 24),
                       onPressed: c.isCancelling(item.id) ? null : () => c.cancelTransfer(item.id),
                       child: Text(
-                        c.isCancelling(item.id) ? '正在取消' : (progress.channel == 'upload' ? '取消上传' : '取消下载'),
+                        c.isCancelling(item.id) ? l10n.canceling : (progress.channel == 'upload' ? l10n.cancelUpload : l10n.cancelDownload),
                         style: TextStyle(fontSize: 11, color: MacPalette.red),
                       ),
                     ),
@@ -659,7 +660,7 @@ class ItemPreviewView extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    '正在发送给 ${c.recipientName(entry.value.sendingTo!)} · ${(entry.value.fraction * 100).floor()}%',
+                    l10n.sendingToProgress(c.recipientName(entry.value.sendingTo!), (entry.value.fraction * 100).floor()),
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontSize: 11,
@@ -672,7 +673,7 @@ class ItemPreviewView extends StatelessWidget {
                   minimumSize: const Size(0, 24),
                   onPressed: c.isCancellingSend(entry.key) ? null : () => c.cancelOutgoingTransfer(entry.key),
                   child: Text(
-                    c.isCancellingSend(entry.key) ? '正在取消' : '取消发送',
+                    c.isCancellingSend(entry.key) ? l10n.canceling : l10n.cancelSending,
                     style: TextStyle(fontSize: 11, color: MacPalette.red),
                   ),
                 ),
@@ -695,47 +696,47 @@ class ItemPreviewView extends StatelessWidget {
       if (item.kind == 'text')
         PhoneButton(
           icon: CupertinoIcons.doc_on_doc,
-          label: '复制全部文本',
+          label: l10n.copyAllText,
           onPressed: () {
             Clipboard.setData(ClipboardData(text: item.textContent ?? item.name));
-            c.setBanner('已复制全部文本');
+            c.setBanner(l10n.copiedAllText);
           },
         )
       else if (localPath != null) ...[
         PhoneButton(
           icon: ios ? CupertinoIcons.eye : Icons.open_in_new,
           // Quick Look on iOS, the default app for the type on Android.
-          label: ios ? '快速查看' : '打开',
+          label: ios ? l10n.quickLook : l10n.open,
           onPressed: () async {
             if (await c.windowService.openFileNative(localPath)) return;
             // Nothing can show this type: offer other apps instead.
             final ok = await c.windowService.shareFilesNative([localPath]);
-            if (!ok) c.setBanner('没有可以打开这个文件的应用');
+            if (!ok) c.setBanner(l10n.noAppCanOpenThisFile);
           },
         ),
         PhoneButton(
           kind: PhoneButtonKind.secondary,
           icon: ios ? CupertinoIcons.share : Icons.share_outlined,
-          label: '分享…',
+          label: l10n.share,
           onPressed: () async {
             final ok = await c.windowService.shareFilesNative([localPath]);
-            if (!ok) c.setBanner('打开系统分享失败');
+            if (!ok) c.setBanner(l10n.couldnTOpenTheShareSheet);
           },
         ),
         if (_canSaveToGallery)
           PhoneButton(
             kind: PhoneButtonKind.secondary,
             icon: ios ? CupertinoIcons.photo_on_rectangle : Icons.photo_library_outlined,
-            label: '存到相册',
+            label: l10n.saveToPhotos,
             onPressed: () async {
               final ok = await c.windowService.saveToGalleryNative(localPath);
-              c.setBanner(ok ? '已保存到系统相册' : '保存相册失败（请检查相册权限）');
+              c.setBanner(ok ? l10n.savedToPhotos : l10n.couldnTSaveToPhotosCheck);
             },
           ),
       ] else
         PhoneButton(
           icon: ios ? CupertinoIcons.arrow_down_circle : Icons.download_outlined,
-          label: c.canDownloadP2p(item) ? 'P2P 优先下载' : '从云端下载',
+          label: c.canDownloadP2p(item) ? l10n.downloadP2pFirst : l10n.downloadFromCloud,
           onPressed: () => c.downloadItem(item),
         ),
       if (item.kind == 'file' && isMine && !item.cloudReady && localPath != null &&
@@ -743,7 +744,7 @@ class ItemPreviewView extends StatelessWidget {
         PhoneButton(
           kind: PhoneButtonKind.secondary,
           icon: ios ? CupertinoIcons.cloud_upload : Icons.cloud_upload_outlined,
-          label: '存到云盘（来源离线也能下载）',
+          label: l10n.saveToCloudDownloadableWhileThe,
           onPressed: () => c.cacheItemToCloud(item.id, localPath),
         ),
     ];
@@ -770,12 +771,12 @@ class ItemPreviewView extends StatelessWidget {
           Expanded(
             child: _primaryButton(
               icon: CupertinoIcons.doc_on_doc,
-              label: '复制全部文本',
+              label: l10n.copyAllText,
               onTap: () {
                 Clipboard.setData(
                   ClipboardData(text: item.textContent ?? item.name),
                 );
-                c.setBanner('已复制全部文本');
+                c.setBanner(l10n.copiedAllText);
               },
             ),
           ),
@@ -783,7 +784,7 @@ class ItemPreviewView extends StatelessWidget {
             const SizedBox(width: 8),
             _secondaryButton(
               icon: CupertinoIcons.link,
-              label: '外链',
+              label: l10n.link,
               onTap: onShare,
             ),
           ],
@@ -798,51 +799,51 @@ class ItemPreviewView extends StatelessWidget {
         if (localPath != null && c.windowService.supportsEdgeDrawer) ...[
           _primaryButton(
             icon: CupertinoIcons.doc_on_doc,
-            label: '复制文件',
+            label: l10n.copyFile,
             onTap: () async {
               final ok = await c.windowService.copyFileToClipboard(localPath);
-              c.setBanner(ok ? '已复制文件，可直接 ${c.windowService.pasteShortcutLabel} 粘贴' : '复制文件失败');
+              c.setBanner(ok ? l10n.fileCopiedPasteItWith(c.windowService.pasteShortcutLabel) : l10n.couldnTCopyTheFile);
             },
           ),
           _secondaryButton(
             icon: CupertinoIcons.folder,
-            label: c.windowService.isWindows ? '在资源管理器中显示' : '访达中显示',
+            label: c.windowService.isWindows ? l10n.showInFileExplorer : l10n.showInFinder,
             onTap: () => c.windowService.revealInFinder(localPath),
           ),
         ] else if (localPath != null && c.windowService.isMobile) ...[
           _primaryButton(
             icon: CupertinoIcons.share,
-            label: '系统分享',
+            label: l10n.share2,
             onTap: () async {
               final ok = await c.windowService.shareFilesNative([localPath]);
-              if (!ok) c.setBanner('打开系统分享失败');
+              if (!ok) c.setBanner(l10n.couldnTOpenTheShareSheet);
             },
           ),
           if (_canSaveToGallery)
             _secondaryButton(
               icon: CupertinoIcons.photo_on_rectangle,
-              label: '存到相册',
+              label: l10n.saveToPhotos,
               onTap: () async {
                 final ok = await c.windowService.saveToGalleryNative(localPath);
-                c.setBanner(ok ? '已保存到系统相册' : '保存相册失败（请检查相册权限）');
+                c.setBanner(ok ? l10n.savedToPhotos : l10n.couldnTSaveToPhotosCheck);
               },
             ),
         ] else
           _primaryButton(
             icon: CupertinoIcons.arrow_down_circle,
-            label: controller.canDownloadP2p(item) ? 'P2P 优先下载' : '云端下载',
+            label: controller.canDownloadP2p(item) ? l10n.downloadP2pFirst : l10n.cloudDownloadShort,
             onTap: () => c.downloadItem(item),
           ),
         if (isMine && !item.cloudReady && localPath != null && c.canUploadToCloud)
           _secondaryButton(
             icon: CupertinoIcons.cloud_upload,
-            label: '存云盘',
+            label: l10n.saveToCloudShort,
             onTap: () => c.cacheItemToCloud(item.id, localPath),
           ),
         if (c.canCreateShares)
           _secondaryButton(
             icon: CupertinoIcons.link,
-            label: '外链分享',
+            label: l10n.shareLink,
             onTap: onShare,
           ),
       ],
@@ -895,8 +896,6 @@ class ItemPreviewView extends StatelessWidget {
   }
 
   String _formatDateTime(DateTime dt) {
-    final l = dt.toLocal();
-    String two(int n) => n.toString().padLeft(2, '0');
-    return '${l.year}-${two(l.month)}-${two(l.day)} ${two(l.hour)}:${two(l.minute)}';
+    return AppLocale.dateTime(dt.toLocal());
   }
 }

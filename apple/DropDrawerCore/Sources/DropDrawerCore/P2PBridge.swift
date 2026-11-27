@@ -51,8 +51,8 @@ public enum P2PError: LocalizedError, Sendable {
 
     public var errorDescription: String? {
         switch self {
-        case .nullPointer: "P2P 原生库返回空指针"
-        case .invalidUTF8: "P2P 原生库返回了无效的 UTF-8 数据"
+        case .nullPointer: String(localized: "P2P 原生库返回空指针", bundle: Bundle.module)
+        case .invalidUTF8: String(localized: "P2P 原生库返回了无效的 UTF-8 数据", bundle: Bundle.module)
         case .nativeError(let msg): msg
         }
     }

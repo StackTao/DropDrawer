@@ -1,6 +1,7 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../l10n/l10n.dart';
 
 /// Restrained macOS-inspired neutral palette. Desktop is always dark (the macOS
 /// window forces a dark vibrancy material); phones follow the system light/dark
@@ -396,7 +397,7 @@ Future<bool> showAdaptiveConfirm(
   required String title,
   required String message,
   required String confirmLabel,
-  String cancelLabel = '取消',
+  String? cancelLabel,
   bool destructive = false,
 }) async {
   final android = _isAndroid(context);
@@ -421,7 +422,7 @@ Future<bool> showAdaptiveConfirm(
       title: Text(title),
       content: Text(message),
       actions: [
-        action(ctx, cancelLabel, false),
+        action(ctx, cancelLabel ?? l10n.cancel, false),
         action(ctx, confirmLabel, true, danger: destructive),
       ],
     ),

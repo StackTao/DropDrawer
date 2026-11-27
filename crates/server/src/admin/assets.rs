@@ -16,8 +16,10 @@ use crate::state::AppState;
 const INDEX_HTML: &str = include_str!("ui/index.html");
 const ADMIN_CSS: &str = include_str!("ui/admin.css");
 const ADMIN_JS: &str = include_str!("ui/admin.js");
+const ADMIN_I18N_JS: &str = include_str!("ui/admin-i18n.js");
 const LOGO_SVG: &str = include_str!("ui/logo.svg");
 const DISABLED_HTML: &str = include_str!("ui/disabled.html");
+const DISABLED_HTML_EN: &str = include_str!("ui/disabled.en.html");
 
 const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; \
 connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
@@ -44,7 +46,8 @@ fn respond(status: StatusCode, content_type: &'static str, body: &'static str, c
 
 pub(super) async fn page(State(state): State<Arc<AppState>>) -> Response {
     if !state.admin_enabled {
-        return respond(StatusCode::NOT_FOUND, "text/html; charset=utf-8", DISABLED_HTML, CSP);
+        let page = if crate::i18n::is_en() { DISABLED_HTML_EN } else { DISABLED_HTML };
+        return respond(StatusCode::NOT_FOUND, "text/html; charset=utf-8", page, CSP);
     }
     let csp = if state.runtime_settings().admin_turnstile.enabled { TURNSTILE_CSP } else { CSP };
     respond(StatusCode::OK, "text/html; charset=utf-8", INDEX_HTML, csp)
@@ -56,6 +59,7 @@ pub(super) async fn asset(State(state): State<Arc<AppState>>, Path(file): Path<S
         "admin.css" => ("text/css; charset=utf-8", ADMIN_CSS),
         "logo.svg" => ("image/svg+xml", LOGO_SVG),
         "admin.js" if state.admin_enabled => ("text/javascript; charset=utf-8", ADMIN_JS),
+        "admin-i18n.js" if state.admin_enabled => ("text/javascript; charset=utf-8", ADMIN_I18N_JS),
         _ => return StatusCode::NOT_FOUND.into_response(),
     };
     respond(StatusCode::OK, content_type, body, CSP)

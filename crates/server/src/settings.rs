@@ -146,11 +146,11 @@ impl SmtpSettings {
         if !self.enabled {
             return Ok(());
         }
-        anyhow::ensure!(!self.host.trim().is_empty(), "SMTP 主机不能为空");
-        anyhow::ensure!(self.port > 0, "SMTP 端口无效");
+        anyhow::ensure!(!self.host.trim().is_empty(), t!("SMTP 主机不能为空", "SMTP host can't be empty"));
+        anyhow::ensure!(self.port > 0, t!("SMTP 端口无效", "Invalid SMTP port"));
         anyhow::ensure!(
             is_valid_email(&self.from_address),
-            "SMTP 发件人邮箱格式无效"
+            t!("SMTP 发件人邮箱格式无效", "Invalid SMTP sender email address")
         );
         Ok(())
     }
@@ -570,7 +570,7 @@ impl RuntimeSettings {
 
     pub fn check_email_domain(&self, email: &str) -> Result<(), String> {
         let Some((_, domain)) = email.trim().rsplit_once('@') else {
-            return Err("邮箱格式无效".to_string());
+            return Err(t!("邮箱格式无效", "Invalid email address").to_string());
         };
         let domain = domain.to_ascii_lowercase();
         if !self.email_allowed_domains.is_empty()
@@ -579,14 +579,14 @@ impl RuntimeSettings {
                 .iter()
                 .any(|d| d.eq_ignore_ascii_case(&domain))
         {
-            return Err(format!("当前服务器仅允许特定域名邮箱注册（不支持 @{domain}）"));
+            return Err(tf!("当前服务器仅允许特定域名邮箱注册（不支持 @{domain}）", "This server only allows sign-ups from specific email domains (@{domain} isn't allowed)"));
         }
         if self
             .email_blocked_domains
             .iter()
             .any(|d| d.eq_ignore_ascii_case(&domain))
         {
-            return Err(format!("邮箱域名 @{domain} 已被禁止注册"));
+            return Err(tf!("邮箱域名 @{domain} 已被禁止注册", "Sign-ups from @{domain} are blocked"));
         }
         Ok(())
     }

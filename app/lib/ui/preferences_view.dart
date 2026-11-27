@@ -1,10 +1,12 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../state/drawer_controller.dart';
 import 'phone_page.dart';
 import 'theme.dart';
 import 'update_settings.dart';
+import '../l10n/l10n.dart';
 
 /// macOS System-Settings style in-drawer Preferences view.
 class PreferencesView extends StatefulWidget {
@@ -50,8 +52,8 @@ class _PreferencesViewState extends State<PreferencesView> {
     setState(() {
       _recordingHotkey = true;
       _hotkeyHint = widget.controller.windowService.isWindows
-          ? '请按下含 Ctrl、Alt 或 Win 的组合键，也可使用 F1–F24。按 Esc 取消。'
-          : '请直接按下组合键（需含 ⌘ / ⌥ / ⌃ 或 F1-F12，Esc 取消）';
+          ? l10n.pressACombinationThatIncludesCtrl
+          : l10n.pressAKeyCombinationItMust;
     });
     final res = await widget.controller.windowService.recordHotkeyNative();
     if (!mounted) return;
@@ -61,13 +63,13 @@ class _PreferencesViewState extends State<PreferencesView> {
     setState(() {
       _recordingHotkey = false;
       if (recorded) {
-        _hotkeyHint = ok ? '已生效：$label' : '系统可能已占用 $label，请换一个组合键';
+        _hotkeyHint = ok ? l10n.hotkeyActive(label) : l10n.hotkeyTakenChooseAnother(label);
       } else {
         _hotkeyHint = null;
       }
     });
     if (recorded && ok) {
-      widget.controller.setBanner('全局呼出快捷键已更新为 $label');
+      widget.controller.setBanner(l10n.hotkeyUpdatedTo(label));
     }
   }
 
@@ -86,10 +88,10 @@ class _PreferencesViewState extends State<PreferencesView> {
     );
     if (!mounted) return;
     setState(() {
-      _hotkeyHint = ok ? '已生效：$label' : '系统可能已占用 $label，请尝试其他组合';
+      _hotkeyHint = ok ? l10n.hotkeyActive(label) : l10n.hotkeyTakenTryAnother(label);
     });
     if (ok) {
-      widget.controller.setBanner('全局呼出快捷键已设为 $label');
+      widget.controller.setBanner(l10n.hotkeySetTo(label));
     }
   }
 
@@ -112,16 +114,32 @@ class _PreferencesViewState extends State<PreferencesView> {
     }
   }
 
-  static const _policies = [
-    ('smart', '智能'),
-    ('p2p_only', '纯 P2P'),
-    ('cloud_cached', '存云盘'),
+  static List<(AppLanguage, String)> get _languages => [
+        (AppLanguage.system, l10n.languageSystem),
+        // Language names are shown in their own language.
+        (AppLanguage.chinese, '简体中文'),
+        (AppLanguage.english, 'English'),
+      ];
+
+  Future<void> _setLanguage(AppLanguage language) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(AppLocale.prefsKey, language.id);
+    } catch (_) {}
+    AppLocale.apply(language);
+    if (mounted) setState(() {});
+  }
+
+  static List<(String, String)> get _policies => [
+    ('smart', l10n.smart),
+    ('p2p_only', l10n.p2pOnly),
+    ('cloud_cached', l10n.saveToCloudShort),
   ];
-  static const _ttls = [
-    (0, '跟随服务器'),
-    (24, '24 小时'),
-    (168, '7 天'),
-    (720, '30 天'),
+  static List<(int, String)> get _ttls => [
+    (0, l10n.serverDefault),
+    (24, l10n.n24Hours),
+    (168, l10n.n7Days),
+    (720, l10n.n30Days),
   ];
   static const _thresholds = [
     (10, '10 MB'),
@@ -135,7 +153,7 @@ class _PreferencesViewState extends State<PreferencesView> {
     if (cap == null || cap <= 0) return _ttls;
     final options = _ttls.where((o) => o.$1 <= cap).toList();
     if (!options.any((o) => o.$1 == cap)) {
-      options.add((cap, '${cap % 24 == 0 ? '${cap ~/ 24} 天' : '$cap 小时'}（上限）'));
+      options.add((cap, l10n.valueAtCap(cap % 24 == 0 ? l10n.daysCount(cap ~/ 24) : l10n.hoursCount(cap))));
     }
     return options;
   }
@@ -160,7 +178,7 @@ class _PreferencesViewState extends State<PreferencesView> {
       options: options,
       selected: selected,
       footer: footer,
-      previousTitle: '偏好设置',
+      previousTitle: l10n.preferences,
     );
     if (value != null && value != selected) onChanged(value);
   }
@@ -170,21 +188,38 @@ class _PreferencesViewState extends State<PreferencesView> {
   Widget _buildPhoneBody(DropDrawerController c) {
     final thresholdMb = c.autoCloudThresholdBytes ~/ (1024 * 1024);
     final threshold = [10, 20, 50, 100].contains(thresholdMb) ? thresholdMb : 20;
-    const policyFooter =
-        '智能模式下小文件同步存云盘、大文件直连 P2P；纯 P2P 不经服务器；存云盘支持离线下载。';
+    final policyFooter =
+        l10n.smartSendsSmallFilesToThe;
     final isIosDefaultDir = c.windowService.isIOS && c.customDownloadDir == null;
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
       children: [
         PhoneSection(
-          header: '传输',
+          header: l10n.general,
+          footer: l10n.languageFooter,
+          children: [
+            PhoneRow(
+              title: l10n.language,
+              value: _label(_languages, AppLocale.preference),
+              onTap: () => _choose(
+                l10n.language,
+                _languages,
+                AppLocale.preference,
+                _setLanguage,
+                footer: l10n.languageFooter,
+              ),
+            ),
+          ],
+        ),
+        PhoneSection(
+          header: l10n.transfer,
           footer: policyFooter,
           children: [
             PhoneRow(
-              title: '新文件传输策略',
+              title: l10n.transferPolicyForNewFiles,
               value: _label(_policies, c.defaultDropPolicy),
               onTap: () => _choose(
-                '传输策略',
+                l10n.transferPolicy,
                 _policies,
                 c.defaultDropPolicy,
                 c.setDropPolicy,
@@ -192,30 +227,30 @@ class _PreferencesViewState extends State<PreferencesView> {
               ),
             ),
             PhoneRow(
-              title: '智能模式上云阈值',
+              title: l10n.smartModeCloudThreshold,
               value: _label(_thresholds, threshold),
               onTap: () => _choose(
-                '上云阈值',
+                l10n.cloudThreshold,
                 _thresholds,
                 threshold,
                 c.setAutoCloudThresholdMb,
-                footer: '智能模式下，小于该体积的文件同时缓存到云盘，更大的只走 P2P 直连。',
+                footer: l10n.inSmartModeFilesSmallerThan,
               ),
             ),
           ],
         ),
         PhoneSection(
-          header: '自动清理',
-          footer: '到期后自动清理云端缓存与列表记录。',
+          header: l10n.autoCleanup,
+          footer: l10n.expiredItemsAreRemovedFromThe,
           children: [
             PhoneRow(
-              title: '默认过期时间',
+              title: l10n.defaultExpiration,
               value: _label(
                 _ttlOptions(c.maxItemTtlHours),
                 _ttlValue(_ttlOptions(c.maxItemTtlHours), c.defaultTtlHours, c.maxItemTtlHours),
               ),
               onTap: () => _choose(
-                '过期时间',
+                l10n.expiration,
                 _ttlOptions(c.maxItemTtlHours),
                 _ttlValue(_ttlOptions(c.maxItemTtlHours), c.defaultTtlHours, c.maxItemTtlHours),
                 c.setDefaultTtlHours,
@@ -224,21 +259,21 @@ class _PreferencesViewState extends State<PreferencesView> {
           ],
         ),
         PhoneSection(
-          header: '下载',
+          header: l10n.downloads,
           children: [
             if (isIosDefaultDir)
-              const PhoneRow(
-                title: '保存位置',
-                value: '「文件」App › DropDrawer',
+              PhoneRow(
+                title: l10n.saveLocation,
+                value: l10n.filesDropdrawer,
               )
             else
               PhoneRow(
-                title: '保存位置',
-                subtitle: _effectiveDir.isEmpty ? '加载中…' : _effectiveDir,
+                title: l10n.saveLocation,
+                subtitle: _effectiveDir.isEmpty ? l10n.loading : _effectiveDir,
               ),
             if (c.customDownloadDir != null)
               PhoneRow(
-                title: '恢复默认位置',
+                title: l10n.restoreDefaultLocation,
                 action: true,
                 onTap: () async {
                   await c.setCustomDownloadDir(null);
@@ -258,11 +293,11 @@ class _PreferencesViewState extends State<PreferencesView> {
     final isWindows = c.windowService.isWindows;
     final thresholdMb = c.autoCloudThresholdBytes ~/ (1024 * 1024);
     if (UiDensity.isTouch(context)) {
-      return PhonePage(title: '偏好设置', body: _buildPhoneBody(c));
+      return PhonePage(title: l10n.preferences, body: _buildPhoneBody(c));
     }
 
     return AdaptivePage(
-      title: '偏好设置',
+      title: l10n.preferences,
       desktopHeader: Padding(
           padding: c.windowService.needsMacTrafficLightPadding
               ? const EdgeInsets.fromLTRB(78, 1, 10, 3)
@@ -274,13 +309,13 @@ class _PreferencesViewState extends State<PreferencesView> {
               children: [
                 MacIconButton(
                   icon: CupertinoIcons.chevron_left,
-                  tooltip: '返回抽屉',
+                  tooltip: l10n.backToDrawer,
                   size: 15,
                   onPressed: widget.onBack,
                 ),
                 const SizedBox(width: 4),
-                const Text(
-                  '偏好设置',
+                Text(
+                  l10n.preferences,
                   style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
                 ),
               ],
@@ -290,7 +325,44 @@ class _PreferencesViewState extends State<PreferencesView> {
       body: ListView(
             padding: const EdgeInsets.all(14),
             children: [
-              const _SectionLabel('传输与自动清理'),
+              _SectionLabel(l10n.general),
+              const SizedBox(height: 6),
+              _GroupBox(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          l10n.language,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                            color: MacPalette.textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          l10n.languageFooter,
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            color: MacPalette.textTertiary,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        MacSegmentedControl<AppLanguage>(
+                          selected: AppLocale.preference,
+                          items: _languages,
+                          onChanged: _setLanguage,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              _SectionLabel(l10n.transfersAutoCleanup),
               const SizedBox(height: 6),
               _GroupBox(
                 children: [
@@ -301,7 +373,7 @@ class _PreferencesViewState extends State<PreferencesView> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          '新文件传输策略',
+                          l10n.transferPolicyForNewFiles,
                           style: TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w500,
@@ -310,7 +382,7 @@ class _PreferencesViewState extends State<PreferencesView> {
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          '智能：小文件同时存云盘、大文件只走 P2P；纯 P2P：不经过服务器；强制存云盘：来源离线也能下载',
+                          l10n.smartSmallFilesAlsoGoTo,
                           style: TextStyle(
                             fontSize: 10.5,
                             color: MacPalette.textTertiary,
@@ -319,10 +391,10 @@ class _PreferencesViewState extends State<PreferencesView> {
                         const SizedBox(height: 8),
                         MacSegmentedControl<String>(
                           selected: c.defaultDropPolicy,
-                          items: const [
-                            ('smart', '智能'),
-                            ('p2p_only', '纯 P2P'),
-                            ('cloud_cached', '存云盘'),
+                          items: [
+                            ('smart', l10n.smart),
+                            ('p2p_only', l10n.p2pOnly),
+                            ('cloud_cached', l10n.saveToCloudShort),
                           ],
                           onChanged: c.setDropPolicy,
                         ),
@@ -336,7 +408,7 @@ class _PreferencesViewState extends State<PreferencesView> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          '默认过期自动清理',
+                          l10n.defaultExpirationCleanup,
                           style: TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w500,
@@ -345,7 +417,7 @@ class _PreferencesViewState extends State<PreferencesView> {
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          '新拖入的文件/文本到期后自动清理云端缓存与抽屉记录',
+                          l10n.newFilesAndTextAreRemoved,
                           style: TextStyle(
                             fontSize: 10.5,
                             color: MacPalette.textTertiary,
@@ -371,7 +443,7 @@ class _PreferencesViewState extends State<PreferencesView> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          '智能模式自动上云阈值',
+                          l10n.smartModeAutoUploadThreshold,
                           style: TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w500,
@@ -380,7 +452,7 @@ class _PreferencesViewState extends State<PreferencesView> {
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          '小于该体积自动缓存至云盘，超过则纯 P2P 端到端直连',
+                          l10n.filesSmallerThanThisAreCached,
                           style: TextStyle(
                             fontSize: 10.5,
                             color: MacPalette.textTertiary,
@@ -411,7 +483,7 @@ class _PreferencesViewState extends State<PreferencesView> {
                         Row(
                           children: [
                             Text(
-                              '默认下载目录',
+                              l10n.defaultDownloadFolder,
                               style: TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w500,
@@ -428,7 +500,7 @@ class _PreferencesViewState extends State<PreferencesView> {
                                 child: MouseRegion(
                                   cursor: SystemMouseCursors.click,
                                   child: Text(
-                                    '恢复默认',
+                                    l10n.restoreDefault,
                                     style: TextStyle(
                                       fontSize: 11,
                                       color: MacPalette.accent,
@@ -440,7 +512,7 @@ class _PreferencesViewState extends State<PreferencesView> {
                         ),
                         const SizedBox(height: 5),
                         Text(
-                          _effectiveDir.isEmpty ? '加载中...' : _effectiveDir,
+                          _effectiveDir.isEmpty ? l10n.loadingDots : _effectiveDir,
                           style: TextStyle(
                             fontSize: 10.5,
                             fontFamily: 'Menlo',
@@ -468,8 +540,8 @@ class _PreferencesViewState extends State<PreferencesView> {
                                         borderRadius: BorderRadius.circular(7),
                                       ),
                                     ),
-                                    child: const Text(
-                                      '更改目录',
+                                    child: Text(
+                                      l10n.changeFolder,
                                       style: TextStyle(fontSize: 11.5),
                                     ),
                                   ),
@@ -493,8 +565,8 @@ class _PreferencesViewState extends State<PreferencesView> {
                                       borderRadius: BorderRadius.circular(7),
                                     ),
                                   ),
-                                  child: const Text(
-                                    '打开',
+                                  child: Text(
+                                    l10n.open,
                                     style: TextStyle(fontSize: 11.5),
                                   ),
                                 ),
@@ -509,7 +581,7 @@ class _PreferencesViewState extends State<PreferencesView> {
               ),
               if (c.windowService.supportsEdgeDrawer) ...[
                 const SizedBox(height: 16),
-                _SectionLabel(isWindows ? '窗口与 Windows 集成' : '窗口与 macOS 集成'),
+                _SectionLabel(isWindows ? l10n.windowWindowsIntegration : l10n.windowMacosIntegration),
                 const SizedBox(height: 6),
                 _GroupBox(
                   children: [
@@ -519,7 +591,7 @@ class _PreferencesViewState extends State<PreferencesView> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            '边缘抽屉停靠侧',
+                            l10n.drawerEdge,
                             style: TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w500,
@@ -528,7 +600,7 @@ class _PreferencesViewState extends State<PreferencesView> {
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            '也可直接按住边缘悬浮手柄上下或跨屏拖动调整',
+                            l10n.youCanAlsoDragTheEdge,
                             style: TextStyle(
                               fontSize: 10.5,
                               color: MacPalette.textTertiary,
@@ -537,9 +609,9 @@ class _PreferencesViewState extends State<PreferencesView> {
                           const SizedBox(height: 8),
                           MacSegmentedControl<String>(
                             selected: c.windowService.dockSide,
-                            items: const [
-                              ('left', '屏幕左侧'),
-                              ('right', '屏幕右侧'),
+                            items: [
+                              ('left', l10n.leftSideOfTheScreen),
+                              ('right', l10n.rightSideOfTheScreen),
                             ],
                             onChanged: (side) =>
                                 c.windowService.setDockSide(side),
@@ -549,8 +621,8 @@ class _PreferencesViewState extends State<PreferencesView> {
                     ),
                     const Divider(height: 0.5, thickness: 0.5, indent: 12),
                     _SwitchRow(
-                      title: '全局快捷键呼出抽屉',
-                      subtitle: '任意应用下快速展开或收起抽屉，可自定义避免冲突',
+                      title: l10n.globalShortcutToOpenTheDrawer,
+                      subtitle: l10n.opensOrClosesTheDrawerFrom,
                       value: c.windowService.hotkeyEnabled,
                       onChanged: (v) async {
                         if (_recordingHotkey) {
@@ -569,7 +641,7 @@ class _PreferencesViewState extends State<PreferencesView> {
                             Row(
                               children: [
                                 Text(
-                                  '当前快捷键',
+                                  l10n.currentShortcut,
                                   style: TextStyle(
                                     fontSize: 11,
                                     color: MacPalette.textSecondary,
@@ -615,7 +687,7 @@ class _PreferencesViewState extends State<PreferencesView> {
                                           const SizedBox(width: 6),
                                           Text(
                                             _recordingHotkey
-                                                ? '按下组合键...'
+                                                ? l10n.pressAKeyCombination
                                                 : c.windowService.hotkeyLabel,
                                             style: TextStyle(
                                               fontSize: 11.5,
@@ -629,7 +701,7 @@ class _PreferencesViewState extends State<PreferencesView> {
                                           if (!_recordingHotkey) ...[
                                             const SizedBox(width: 6),
                                             Text(
-                                              '点击修改',
+                                              l10n.clickToChange,
                                               style: TextStyle(
                                                 fontSize: 10,
                                                 color: MacPalette.textTertiary,
@@ -716,10 +788,10 @@ class _PreferencesViewState extends State<PreferencesView> {
                                         child: Text(
                                           c.windowService
                                                   .hasGlobalHotkeyPermission
-                                              ? '全局监听已就绪 · 任意应用按 ${c.windowService.hotkeyLabel} 即可呼出'
+                                              ? l10n.hotkeyReady(c.windowService.hotkeyLabel)
                                               : isWindows
-                                                  ? '全局快捷键可能已被占用，请换一个组合键'
-                                                  : '需要开启 macOS「辅助功能」权限才能在其他应用下响应全局快捷键',
+                                                  ? l10n.theGlobalShortcutMayAlreadyBe
+                                                  : l10n.dropdrawerNeedsMacosAccessibilityPermissionTo,
                                           style: TextStyle(
                                             fontSize: 10.5,
                                             color: MacPalette.textPrimary,
@@ -752,8 +824,8 @@ class _PreferencesViewState extends State<PreferencesView> {
                                                     BorderRadius.circular(6),
                                               ),
                                             ),
-                                            child: const Text(
-                                              '前往开启辅助功能',
+                                            child: Text(
+                                              l10n.openAccessibilitySettings,
                                               style: TextStyle(
                                                 fontSize: 10.5,
                                                 fontWeight: FontWeight.w600,
@@ -770,10 +842,10 @@ class _PreferencesViewState extends State<PreferencesView> {
                                                   .refreshSystemSettings();
                                               if (c.windowService
                                                   .hasGlobalHotkeyPermission) {
-                                                c.setBanner('已检测到权限，全局快捷键立即生效');
+                                                c.setBanner(l10n.permissionGrantedTheGlobalShortcutWorks);
                                               } else {
                                                 c.setBanner(
-                                                  '尚未检测到权限，请在系统设置中勾选 dropdrawer_app',
+                                                  l10n.permissionNotDetectedYetEnableDropdrawer,
                                                 );
                                               }
                                             },
@@ -793,8 +865,8 @@ class _PreferencesViewState extends State<PreferencesView> {
                                                     BorderRadius.circular(6),
                                               ),
                                             ),
-                                            child: const Text(
-                                              '重新检测',
+                                            child: Text(
+                                              l10n.checkAgain,
                                               style: TextStyle(fontSize: 10.5),
                                             ),
                                           ),
@@ -810,21 +882,21 @@ class _PreferencesViewState extends State<PreferencesView> {
                       ),
                     const Divider(height: 0.5, thickness: 0.5, indent: 12),
                     _SwitchRow(
-                      title: isWindows ? '在任务栏显示抽屉' : '在程序坞 (Dock) 显示图标',
+                      title: isWindows ? l10n.showTheDrawerInTheTaskbar : l10n.showIconInTheDock,
                       subtitle: isWindows
-                          ? '关闭时可通过系统托盘打开抽屉'
-                          : '关闭时仅常驻顶部菜单栏，开启后同时在 Dock 显示',
+                          ? l10n.whenOffOpenTheDrawerFrom
+                          : l10n.whenOffDropdrawerStaysInThe,
                       value: c.windowService.showDockIcon,
                       onChanged: (v) => c.windowService.setShowDockIcon(v),
                     ),
                     if (isWindows) ...[
                       const Divider(height: 0.5, thickness: 0.5, indent: 12),
                       _SwitchRow(
-                        title: '毛玻璃背景',
+                        title: l10n.translucentBackground,
                         subtitle: c.windowService.windowsBackdropEnabled &&
                                 !c.windowService.windowsBackdrop
-                            ? '当前系统不支持（需 Windows 11 22H2 及以上），已使用不透明背景'
-                            : '使用 Windows 11 的 Mica / 亚克力效果；如背景显示异常可关闭',
+                            ? l10n.notSupportedOnThisSystemRequires
+                            : l10n.usesTheWindows11MicaAcrylic,
                         value: c.windowService.windowsBackdropEnabled,
                         onChanged: (v) async {
                           await c.windowService.setWindowsBackdrop(v);
@@ -834,17 +906,17 @@ class _PreferencesViewState extends State<PreferencesView> {
                     ],
                     const Divider(height: 0.5, thickness: 0.5, indent: 12),
                     _SwitchRow(
-                      title: '开机自动启动',
+                      title: l10n.launchAtLogin,
                       subtitle: isWindows
-                          ? '登录 Windows 时自动驻留系统托盘'
-                          : '登录 macOS 时自动静默驻留状态栏与屏幕边缘',
+                          ? l10n.staysInTheSystemTrayWhen
+                          : l10n.runsQuietlyInTheMenuBar,
                       value: c.windowService.launchAtLogin,
                       onChanged: (v) async {
                         final ok = await c.windowService.setLaunchAtLogin(v);
                         c.setBanner(
                           ok
-                              ? (v ? '已开启开机自启动' : '已关闭开机自启动')
-                              : '修改开机自启动失败',
+                              ? (v ? l10n.launchAtLoginTurnedOn : l10n.launchAtLoginTurnedOff)
+                              : l10n.couldnTChangeLaunchAtLogin,
                         );
                       },
                     ),
@@ -853,7 +925,7 @@ class _PreferencesViewState extends State<PreferencesView> {
               ],
               // Rarely needed, so last: the version and updates.
               const SizedBox(height: 16),
-              const _SectionLabel('关于与更新'),
+              _SectionLabel(l10n.aboutUpdates),
               const SizedBox(height: 6),
               _GroupBox(
                 children: [

@@ -1,0 +1,16 @@
+{
+  "sourceLanguage": "zh-Hans",
+  "strings": {
+    "正在发送到 DropDrawer…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sending to DropDrawer…"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

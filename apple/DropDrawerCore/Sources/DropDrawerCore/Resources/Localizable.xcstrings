@@ -1,0 +1,786 @@
+{
+  "sourceLanguage": "zh-Hans",
+  "strings": {
+    "%lld 分钟前": {
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld minute ago"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld minutes ago"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld 小时前": {
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld hour ago"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld hours ago"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Google 登录已超时，请重试。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Google sign-in timed out. Try again."
+          }
+        }
+      }
+    },
+    "Google 登录需要 HTTPS 服务器地址。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Google sign-in requires an HTTPS server address."
+          }
+        }
+      }
+    },
+    "P2P 加密中继": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "P2P encrypted relay"
+          }
+        }
+      }
+    },
+    "P2P 原生库返回了无效的 UTF-8 数据": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The P2P library returned invalid UTF-8 data"
+          }
+        }
+      }
+    },
+    "P2P 原生库返回空指针": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The P2P library returned a null pointer"
+          }
+        }
+      }
+    },
+    "P2P 发送失败：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "P2P send failed: %@"
+          }
+        }
+      }
+    },
+    "P2P 直连": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "P2P direct"
+          }
+        }
+      }
+    },
+    "P2P 连接中": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connecting over P2P"
+          }
+        }
+      }
+    },
+    "上传未收到有效响应": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The upload didn't get a valid response"
+          }
+        }
+      }
+    },
+    "上传计划响应格式无效": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Invalid upload plan response"
+          }
+        }
+      }
+    },
+    "下载失败：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download failed: %@"
+          }
+        }
+      }
+    },
+    "下载未收到有效响应": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The download didn't get a valid response"
+          }
+        }
+      }
+    },
+    "云盘": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cloud storage"
+          }
+        }
+      }
+    },
+    "云盘上传失败：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cloud upload failed: %@"
+          }
+        }
+      }
+    },
+    "云端下载": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cloud download"
+          }
+        }
+      }
+    },
+    "传输已取消": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transfer canceled"
+          }
+        }
+      }
+    },
+    "全部": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All"
+          }
+        }
+      }
+    },
+    "准备中": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preparing"
+          }
+        }
+      }
+    },
+    "刚刚": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Just now"
+          }
+        }
+      }
+    },
+    "删除失败：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't delete: %@"
+          }
+        }
+      }
+    },
+    "发送已完成": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sent"
+          }
+        }
+      }
+    },
+    "发送文本失败：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't send the text: %@"
+          }
+        }
+      }
+    },
+    "夸克网盘": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quark Drive"
+          }
+        }
+      }
+    },
+    "存云盘": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save to cloud"
+          }
+        }
+      }
+    },
+    "局域网副本": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "LAN copy"
+          }
+        }
+      }
+    },
+    "已从云端下载完成": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Downloaded from the cloud"
+          }
+        }
+      }
+    },
+    "已删除存储策略": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Storage deleted"
+          }
+        }
+      }
+    },
+    "已加入列表（P2P 直连）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Added to the list (P2P direct)"
+          }
+        }
+      }
+    },
+    "已取消上传": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Upload canceled"
+          }
+        }
+      }
+    },
+    "已取消下载": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download canceled"
+          }
+        }
+      }
+    },
+    "已取消发送": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sending canceled"
+          }
+        }
+      }
+    },
+    "已同步文本": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Text synced"
+          }
+        }
+      }
+    },
+    "已撤销外链": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Share link revoked"
+          }
+        }
+      }
+    },
+    "已清理 %lld 个本地缓存文件": {
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Removed %lld cached file"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Removed %lld cached files"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "已清空 %lld 项": {
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Cleared %lld item"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Cleared %lld items"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "已移出 %lld 项": {
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Removed %lld item"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Removed %lld items"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "已缓存到云盘": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saved to the cloud"
+          }
+        }
+      }
+    },
+    "已通过%@下载完成": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Downloaded via %@"
+          }
+        }
+      }
+    },
+    "当前版本过低，请更新 DropDrawer": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This version is too old. Update DropDrawer"
+          }
+        }
+      }
+    },
+    "批量清理失败：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't clean up: %@"
+          }
+        }
+      }
+    },
+    "撤销失败：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't revoke: %@"
+          }
+        }
+      }
+    },
+    "文件": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Files"
+          }
+        }
+      }
+    },
+    "文本": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Text"
+          }
+        }
+      }
+    },
+    "无效的服务器响应": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Invalid server response"
+          }
+        }
+      }
+    },
+    "无效的服务器地址：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Invalid server address: %@"
+          }
+        }
+      }
+    },
+    "昨天": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yesterday"
+          }
+        }
+      }
+    },
+    "智能": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Smart"
+          }
+        }
+      }
+    },
+    "服务器已关闭云端上传，文件将只通过 P2P 传输": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cloud uploads are turned off on this server. Files will only be sent over P2P"
+          }
+        }
+      }
+    },
+    "服务器已关闭云端上传，请使用设备间 P2P 传输": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cloud uploads are turned off on this server. Send files device-to-device over P2P"
+          }
+        }
+      }
+    },
+    "服务器已关闭外链分享": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Share links are turned off on this server"
+          }
+        }
+      }
+    },
+    "服务器本地盘": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Server Local Storage"
+          }
+        }
+      }
+    },
+    "服务器要求外链必须设置提取码": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This server requires a passcode for share links"
+          }
+        }
+      }
+    },
+    "服务器返回了无效的 Google 授权地址。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The server returned an invalid Google authorization URL."
+          }
+        }
+      }
+    },
+    "未登录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not signed in"
+          }
+        }
+      }
+    },
+    "本地缓存已清空": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local cache is already empty"
+          }
+        }
+      }
+    },
+    "来源设备离线且未缓存到云盘": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The source device is offline and the file isn't in the cloud"
+          }
+        }
+      }
+    },
+    "正在发送文件": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sending file"
+          }
+        }
+      }
+    },
+    "正在取消…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Canceling…"
+          }
+        }
+      }
+    },
+    "此服务器尚未启用 Google 登录。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Google sign-in is not enabled on this server."
+          }
+        }
+      }
+    },
+    "添加失败：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't add: %@"
+          }
+        }
+      }
+    },
+    "登录状态已失效（可能被管理员强制下线或账号已停用），请重新登录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your session has expired (an administrator may have signed you out or disabled the account). Sign in again"
+          }
+        }
+      }
+    },
+    "登录状态已失效，请重新登录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your session has expired. Sign in again"
+          }
+        }
+      }
+    },
+    "百度网盘": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Baidu Netdisk"
+          }
+        }
+      }
+    },
+    "秒传响应缺少条目信息": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The instant-upload response is missing the item"
+          }
+        }
+      }
+    },
+    "移出失败：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't remove: %@"
+          }
+        }
+      }
+    },
+    "等待存储确认…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting for storage confirmation…"
+          }
+        }
+      }
+    },
+    "纯 P2P": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "P2P only"
+          }
+        }
+      }
+    },
+    "设备注册失败：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't register the device: %@"
+          }
+        }
+      }
+    },
+    "请求失败 (%lld)": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Request failed (%lld)"
+          }
+        }
+      }
+    },
+    "请求失败 (%lld)：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Request failed (%lld): %@"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

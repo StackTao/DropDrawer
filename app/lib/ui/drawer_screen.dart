@@ -20,6 +20,7 @@ import 'storage_settings_view.dart';
 import 'theme.dart';
 import 'announcement_banner.dart';
 import 'update_banner.dart';
+import '../l10n/l10n.dart';
 
 part 'drawer_item_tiles.dart';
 
@@ -190,12 +191,12 @@ class _DrawerScreenState extends State<DrawerScreen>
 
   String _dropPolicyHint(DropDrawerController c) {
     if (c.defaultDropPolicy == 'p2p_only') {
-      return '仅本机 P2P 端到端直连 · 不占服务器与云盘';
+      return l10n.p2pEndToEndOnThis;
     }
     if (c.defaultDropPolicy == 'cloud_cached') {
-      return '直接上传至「${c.defaultStorageBackendName}」· 离线可下';
+      return l10n.policyAlwaysUploadShort(c.defaultStorageBackendName);
     }
-    return '小于 ${c.autoCloudThresholdBytes ~/ (1024 * 1024)}MB 自动云存 · 大文件纯 P2P 直连';
+    return l10n.policySmartShort(c.autoCloudThresholdBytes ~/ (1024 * 1024));
   }
 
   /// Windows surface: translucent over Mica/Acrylic when DWM applied it,
@@ -340,7 +341,7 @@ class _DrawerScreenState extends State<DrawerScreen>
     if (val == 'toggle_dock_side') {
       final next = c.windowService.dockSide == 'left' ? 'right' : 'left';
       c.windowService.setDockSide(next);
-      c.setBanner(next == 'left' ? '已停靠到屏幕左侧' : '已停靠到屏幕右侧');
+      c.setBanner(next == 'left' ? l10n.dockedToTheLeftSideOf : l10n.dockedToTheRightSideOf);
     } else if (val == 'devices') {
       _switchPage(_DrawerPage.devices);
     } else if (val == 'shares') {
@@ -364,10 +365,10 @@ class _DrawerScreenState extends State<DrawerScreen>
     }
     final confirmed = await showAdaptiveConfirm(
       context,
-      title: '还有 $active 项传输正在进行',
-      message: '退出软件会中断当前传输（下次打开时未完成的云盘上传会自动续传）。是否仍要退出？',
-      confirmLabel: '仍要退出',
-      cancelLabel: '后台继续',
+      title: l10n.transfersInProgress(active),
+      message: l10n.quittingInterruptsTheCurrentTransfersUnfinished,
+      confirmLabel: l10n.quitAnyway,
+      cancelLabel: l10n.keepRunningInBackground,
       destructive: true,
     );
     if (!mounted) return;
@@ -383,9 +384,9 @@ class _DrawerScreenState extends State<DrawerScreen>
     if (c.items.isEmpty) return;
     final confirmed = await showAdaptiveConfirm(
       context,
-      title: '清空全部',
-      message: '将清理列表中的 ${c.items.length} 项内容及其在服务器或网盘的副本。本机原文件会保留。',
-      confirmLabel: '清空',
+      title: l10n.clearAll,
+      message: l10n.clearAllMessage(c.items.length),
+      confirmLabel: l10n.clear,
       destructive: true,
     );
     if (confirmed) {
@@ -427,7 +428,7 @@ class _DrawerScreenState extends State<DrawerScreen>
         await widget.controller.addFilesToDrawer(paths);
       }
     } catch (e) {
-      widget.controller.setBanner('打开文件选择器失败: $e');
+      widget.controller.setBanner(l10n.filePickerFailed(e));
     } finally {
       await widget.controller.windowService.setModalOpen(false);
     }
@@ -440,7 +441,7 @@ class _DrawerScreenState extends State<DrawerScreen>
         await widget.controller.addFilesToDrawer(paths);
       }
     } catch (e) {
-      widget.controller.setBanner('打开相册失败: $e');
+      widget.controller.setBanner(l10n.photoPickerFailed(e));
     }
   }
 
@@ -457,8 +458,8 @@ class _DrawerScreenState extends State<DrawerScreen>
           await widget.controller.addFilesToDrawer(paths);
           widget.controller.setBanner(
             kind == 'image'
-                ? '已粘贴截图并同步到抽屉'
-                : '已粘贴 ${paths.length} 个文件到抽屉',
+                ? l10n.screenshotPastedAndSyncedToThe
+                : l10n.pastedFiles(paths.length),
           );
           return;
         }
@@ -469,13 +470,13 @@ class _DrawerScreenState extends State<DrawerScreen>
           return;
         }
       } else if (kind == 'unsupported_dir') {
-        widget.controller.setBanner('暂不支持直接粘贴文件夹，请先压缩或选择具体文件');
+        widget.controller.setBanner(l10n.foldersCanTBePastedDirectly);
         return;
       }
 
-      widget.controller.setBanner('剪贴板为空（支持粘贴文件、截图或文本）');
+      widget.controller.setBanner(l10n.theClipboardIsEmptyYouCan);
     } catch (e) {
-      widget.controller.setBanner('读取剪贴板失败: $e');
+      widget.controller.setBanner(l10n.clipboardReadFailed(e));
     }
   }
 
@@ -524,10 +525,10 @@ class _DrawerScreenState extends State<DrawerScreen>
                       _page == _DrawerPage.drawer &&
                       !_selectionMode
                   ? FloatingActionButton.extended(
-                      tooltip: '添加',
+                      tooltip: l10n.add,
                       onPressed: _showAddSheet,
                       icon: const Icon(Icons.add),
-                      label: const Text('添加'),
+                      label: Text(l10n.add),
                     )
                   : null,
               body: AnimatedContainer(
@@ -699,7 +700,7 @@ class _DrawerScreenState extends State<DrawerScreen>
                               ),
                               const SizedBox(height: 12),
                               Text(
-                                '松手放入跨端抽屉',
+                                l10n.releaseToDropIntoTheDrawer,
                                 style: TextStyle(
                                   fontSize: 14,
                                   fontWeight: FontWeight.w600,
@@ -744,7 +745,7 @@ class _DrawerScreenState extends State<DrawerScreen>
           onPanEnd: (_) =>
               unawaited(window.dragExpandedDrawer(DrawerDragPhase.end)),
           child: Tooltip(
-            message: '拖动抽屉',
+            message: l10n.moveDrawer,
             child: SizedBox(
               height: 10,
               child: Center(
@@ -824,7 +825,7 @@ class _DrawerScreenState extends State<DrawerScreen>
                       fit: BoxFit.scaleDown,
                       alignment: Alignment.centerLeft,
                       child: Text(
-                        '拖到这儿，放入跨端抽屉',
+                        l10n.dragHereToDropIntoThe,
                         style: TextStyle(
                           fontSize: 12.5,
                           fontWeight: FontWeight.w500,
@@ -1056,19 +1057,19 @@ class _DrawerScreenState extends State<DrawerScreen>
 
   List<PhoneMenuEntry> _phoneAddEntries() => [
         PhoneMenuEntry(
-          label: '选取文件',
+          label: l10n.chooseFiles,
           icon: CupertinoIcons.doc,
           materialIcon: Icons.insert_drive_file_outlined,
           onSelected: _pickFiles,
         ),
         PhoneMenuEntry(
-          label: '照片图库',
+          label: l10n.photoLibrary,
           icon: CupertinoIcons.photo_on_rectangle,
           materialIcon: Icons.photo_library_outlined,
           onSelected: _pickMedia,
         ),
         PhoneMenuEntry(
-          label: '粘贴',
+          label: l10n.paste,
           icon: CupertinoIcons.doc_on_clipboard,
           materialIcon: Icons.content_paste,
           onSelected: _pasteFromClipboard,
@@ -1082,46 +1083,46 @@ class _DrawerScreenState extends State<DrawerScreen>
       [
         if (c.items.isNotEmpty) ...[
           PhoneMenuEntry(
-            label: '选择',
+            label: l10n.select,
             icon: CupertinoIcons.checkmark_circle,
             materialIcon: Icons.checklist,
             onSelected: () => _enterSelectionMode(),
           ),
           PhoneMenuEntry(
-            label: '全部下载',
+            label: l10n.downloadAll,
             icon: CupertinoIcons.arrow_down_circle,
             materialIcon: Icons.download_outlined,
             onSelected: () => c.batchDownloadItems(visibleItems),
           ),
         ],
         PhoneMenuEntry(
-          label: '云盘与存储',
+          label: l10n.cloudStorage,
           icon: CupertinoIcons.cloud,
           materialIcon: Icons.cloud_outlined,
           startsGroup: true,
           onSelected: () => _switchPage(_DrawerPage.storage),
         ),
         PhoneMenuEntry(
-          label: '外链管理',
+          label: l10n.shareLinksTitle,
           icon: CupertinoIcons.link,
           materialIcon: Icons.link,
           onSelected: () => _switchPage(_DrawerPage.share),
         ),
         PhoneMenuEntry(
-          label: '设备与 P2P',
+          label: l10n.devicesP2p,
           icon: CupertinoIcons.device_laptop,
           materialIcon: Icons.devices_outlined,
           onSelected: () => _switchPage(_DrawerPage.devices),
         ),
         PhoneMenuEntry(
-          label: '偏好设置',
+          label: l10n.preferences,
           icon: CupertinoIcons.gear,
           materialIcon: Icons.settings_outlined,
           onSelected: () => _switchPage(_DrawerPage.preferences),
         ),
         if (c.items.isNotEmpty)
           PhoneMenuEntry(
-            label: '清空全部',
+            label: l10n.clearAll,
             icon: CupertinoIcons.trash,
             materialIcon: Icons.delete_sweep_outlined,
             destructive: true,
@@ -1129,7 +1130,7 @@ class _DrawerScreenState extends State<DrawerScreen>
             onSelected: () => _confirmAndClearDrawer(c),
           ),
         PhoneMenuEntry(
-          label: '退出登录',
+          label: l10n.signOut,
           icon: CupertinoIcons.square_arrow_right,
           materialIcon: Icons.logout,
           destructive: true,
@@ -1174,11 +1175,11 @@ class _DrawerScreenState extends State<DrawerScreen>
         finish: finish,
       );
     }
-    final title = Text(selecting ? '已选 ${_selectedIds.length} 项' : 'DropDrawer');
+    final title = Text(selecting ? l10n.selectedCount(_selectedIds.length) : 'DropDrawer');
     final more = PhoneMenuButton(
       icon: CupertinoIcons.ellipsis,
       materialIcon: Icons.more_vert,
-      tooltip: '更多',
+      tooltip: l10n.more,
       entries: _phoneMoreEntries(c, visibleItems),
     );
 
@@ -1198,7 +1199,7 @@ class _DrawerScreenState extends State<DrawerScreen>
                   padding: const EdgeInsets.symmetric(horizontal: 14),
                   onPressed: toggleAll,
                   child: Text(
-                    allSelected ? '取消全选' : '全选',
+                    allSelected ? l10n.deselectAll : l10n.selectAll,
                     style: TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w500,
@@ -1220,7 +1221,7 @@ class _DrawerScreenState extends State<DrawerScreen>
                 padding: const EdgeInsets.symmetric(horizontal: 14),
                 onPressed: finish,
                 child: Text(
-                  '完成',
+                  l10n.done,
                   style: TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w600,
@@ -1315,14 +1316,14 @@ class _DrawerScreenState extends State<DrawerScreen>
         backgroundColor: MacPalette.cardBg,
         surfaceTintColor: Colors.transparent,
         leading: IconButton(
-          tooltip: '完成',
+          tooltip: l10n.done,
           icon: const Icon(Icons.close),
           onPressed: finish,
         ),
-        title: Text('已选 ${_selectedIds.length} 项'),
+        title: Text(l10n.selectedCount(_selectedIds.length)),
         actions: [
           IconButton(
-            tooltip: allSelected ? '取消全选' : '全选',
+            tooltip: allSelected ? l10n.deselectAll : l10n.selectAll,
             icon: Icon(allSelected ? Icons.deselect : Icons.select_all),
             onPressed: toggleAll,
           ),
@@ -1390,7 +1391,7 @@ class _DrawerScreenState extends State<DrawerScreen>
     return SearchBar(
       controller: _searchCtrl,
       focusNode: _searchFocusNode,
-      hintText: '在 DropDrawer 中搜索',
+      hintText: l10n.searchDropdrawer,
       constraints: const BoxConstraints(minHeight: 56, maxHeight: 56),
       elevation: const WidgetStatePropertyAll(0),
       backgroundColor: WidgetStatePropertyAll(MacPalette.elevatedBg),
@@ -1405,7 +1406,7 @@ class _DrawerScreenState extends State<DrawerScreen>
       ),
       leading: searching
           ? IconButton(
-              tooltip: '关闭搜索',
+              tooltip: l10n.closeSearch,
               icon: const Icon(Icons.arrow_back),
               onPressed: _closeSearch,
             )
@@ -1416,7 +1417,7 @@ class _DrawerScreenState extends State<DrawerScreen>
       trailing: [
         if (_searchCtrl.text.isNotEmpty)
           IconButton(
-            tooltip: '清除',
+            tooltip: l10n.clearSearch,
             icon: const Icon(Icons.close),
             onPressed: () => setState(_searchCtrl.clear),
           )
@@ -1424,7 +1425,7 @@ class _DrawerScreenState extends State<DrawerScreen>
           PhoneMenuButton(
             icon: CupertinoIcons.ellipsis,
             materialIcon: Icons.more_vert,
-            tooltip: '更多',
+            tooltip: l10n.more,
             entries: _phoneMoreEntries(c, visibleItems),
           ),
       ],
@@ -1440,8 +1441,8 @@ class _DrawerScreenState extends State<DrawerScreen>
   /// with the item count at the end of the line.
   Widget _buildMaterialStatus(DropDrawerController c) {
     final status = !c.wsConnected
-        ? '正在连接…'
-        : '${c.onlineDeviceCount} 台设备在线';
+        ? l10n.connecting
+        : l10n.devicesOnline(c.onlineDeviceCount);
     final dotColor = c.wsConnected
         ? (c.p2pReady ? MacPalette.green : MacPalette.accent)
         : MacPalette.red;
@@ -1449,7 +1450,8 @@ class _DrawerScreenState extends State<DrawerScreen>
       padding: const EdgeInsets.fromLTRB(16, 0, 20, 4),
       child: Row(
         children: [
-          ActionChip(
+          Flexible(
+            child: ActionChip(
             avatar: Container(
               width: 8,
               height: 8,
@@ -1468,10 +1470,11 @@ class _DrawerScreenState extends State<DrawerScreen>
             backgroundColor: MacPalette.background,
             onPressed: () => _switchPage(_DrawerPage.devices),
           ),
+          ),
           const Spacer(),
           if (c.items.isNotEmpty)
             Text(
-              '${c.items.length} 项',
+              l10n.itemsCount(c.items.length),
               style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w500,
@@ -1488,7 +1491,7 @@ class _DrawerScreenState extends State<DrawerScreen>
     DropDrawerController c,
     List<DrawerItem> visibleItems,
   ) {
-    const scopes = [('all', '全部'), ('file', '文件'), ('text', '文本')];
+    final scopes = [('all', l10n.all), ('file', l10n.file), ('text', l10n.text)];
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 20, 4),
       child: Row(
@@ -1518,7 +1521,7 @@ class _DrawerScreenState extends State<DrawerScreen>
 
   /// Native iOS scope filter shown below the header while searching.
   Widget _buildIosScopeBar() {
-    const scopes = [('all', '全部'), ('file', '文件'), ('text', '文本')];
+    final scopes = [('all', l10n.all), ('file', l10n.file), ('text', l10n.text)];
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 2, 16, 10),
       child: CupertinoSlidingSegmentedControl<String>(
@@ -1606,7 +1609,7 @@ class _DrawerScreenState extends State<DrawerScreen>
                                 ),
                                 cursorColor: MacPalette.accent,
                                 decoration: InputDecoration.collapsed(
-                                  hintText: '搜索',
+                                  hintText: l10n.search,
                                   hintStyle: TextStyle(
                                     fontSize: 16,
                                     letterSpacing: -0.32,
@@ -1653,7 +1656,7 @@ class _DrawerScreenState extends State<DrawerScreen>
                 PhoneMenuButton(
                   icon: CupertinoIcons.plus,
                   materialIcon: Icons.add,
-                  tooltip: '添加',
+                  tooltip: l10n.add,
                   prominent: true,
                   entries: _phoneAddEntries(),
                 ),
@@ -1699,11 +1702,11 @@ class _DrawerScreenState extends State<DrawerScreen>
     final isFiltering =
         _filterKind != 'all' || _searchCtrl.text.trim().isNotEmpty;
     final status = !c.wsConnected
-        ? '正在连接…'
-        : '${c.onlineDeviceCount} 台设备在线';
+        ? l10n.connecting
+        : l10n.devicesOnline(c.onlineDeviceCount);
     final label = isFiltering
-        ? '$status · 筛选 ${visibleItems.length}/${c.items.length}'
-        : (c.items.isEmpty ? status : '$status · ${c.items.length} 项');
+        ? l10n.statusFiltered(status, visibleItems.length, c.items.length)
+        : (c.items.isEmpty ? status : l10n.statusItems(status, c.items.length));
     return Padding(
       padding: material
           ? const EdgeInsets.fromLTRB(16, 0, 16, 2)
@@ -1868,27 +1871,27 @@ class _DrawerScreenState extends State<DrawerScreen>
         );
     return [
       if (item.kind == 'text')
-        action('复制文本', CupertinoIcons.doc_on_doc, () {
+        action(l10n.copyText, CupertinoIcons.doc_on_doc, () {
           Clipboard.setData(ClipboardData(text: item.textContent ?? item.name));
-          c.setBanner('已复制到剪贴板');
+          c.setBanner(l10n.copiedToClipboard);
         })
       else if (localPath != null)
-        action('分享…', CupertinoIcons.share, () async {
+        action(l10n.share, CupertinoIcons.share, () async {
           final ok = await c.windowService.shareFilesNative([localPath]);
-          if (!ok) c.setBanner('打开系统分享失败');
+          if (!ok) c.setBanner(l10n.couldnTOpenTheShareSheet);
         })
       else
-        action('下载', CupertinoIcons.arrow_down_circle, () => c.downloadItem(item)),
+        action(l10n.downloads, CupertinoIcons.arrow_down_circle, () => c.downloadItem(item)),
       if (c.canCreateShares)
-        action('创建外链', CupertinoIcons.link,
+        action(l10n.createShareLink2, CupertinoIcons.link,
             () => _switchPage(_DrawerPage.share, shareItems: [item])),
       if (item.kind == 'file' && isMine && !item.cloudReady && localPath != null &&
           c.canUploadToCloud)
-        action('存到云盘', CupertinoIcons.cloud_upload,
+        action(l10n.saveToCloudAction, CupertinoIcons.cloud_upload,
             () => c.cacheItemToCloud(item.id, localPath)),
-      action('选择', CupertinoIcons.checkmark_circle,
+      action(l10n.select, CupertinoIcons.checkmark_circle,
           () => _enterSelectionMode(item.id)),
-      action('移出', CupertinoIcons.trash, () => _deleteNow(c, item),
+      action(l10n.remove, CupertinoIcons.trash, () => _deleteNow(c, item),
           destructive: true),
     ];
   }
@@ -1999,7 +2002,7 @@ class _DrawerScreenState extends State<DrawerScreen>
                             borderRadius: BorderRadius.circular(isMobile ? 6 : 5),
                           ),
                           child: Text(
-                            '${c.onlineDeviceCount} 设备在线',
+                            l10n.devicesOnlineShort(c.onlineDeviceCount),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
@@ -2020,8 +2023,8 @@ class _DrawerScreenState extends State<DrawerScreen>
                     ? CupertinoIcons.pin_fill
                     : CupertinoIcons.pin,
                 tooltip: c.windowService.pinned
-                    ? '已固定展开（点击开启离开自动隐藏）'
-                    : '离开自动隐藏（点击固定展开）',
+                    ? l10n.pinnedOpenClickToHideAutomatically
+                    : l10n.hidesAutomaticallyWhenYouLeaveClick,
                 active: c.windowService.pinned,
                 size: 13.5,
                 onPressed: () =>
@@ -2032,7 +2035,7 @@ class _DrawerScreenState extends State<DrawerScreen>
                 icon: c.windowService.dockSide == 'left'
                     ? CupertinoIcons.arrow_left_to_line
                     : CupertinoIcons.arrow_right_to_line,
-                tooltip: '收起到边缘 (Esc)',
+                tooltip: l10n.collapseToEdgeEsc,
                 size: 13.5,
                 onPressed: () => c.windowService.collapseDrawer(),
               ),
@@ -2045,7 +2048,7 @@ class _DrawerScreenState extends State<DrawerScreen>
                     : (c.windowService.dockSide == 'left'
                         ? CupertinoIcons.sidebar_left
                         : CupertinoIcons.sidebar_right),
-                tooltip: isEdge ? '切换为常规窗口' : '切换为边缘抽屉',
+                tooltip: isEdge ? l10n.switchToARegularWindow : l10n.switchToTheEdgeDrawer,
                 size: 14,
                 onPressed: () => c.windowService.setEdgeDrawerMode(!isEdge),
               ),
@@ -2053,7 +2056,7 @@ class _DrawerScreenState extends State<DrawerScreen>
             ],
             MacIconButton(
               icon: CupertinoIcons.cloud,
-              tooltip: '多云盘与中转存储',
+              tooltip: l10n.cloudStorageTransferStorage,
               size: isMobile ? 19 : 14.5,
               boxSize: isMobile ? 36 : 26,
               onPressed: () => _switchPage(_DrawerPage.storage),
@@ -2066,7 +2069,7 @@ class _DrawerScreenState extends State<DrawerScreen>
                 key: _moreMenuBtnKey,
                 child: MacIconButton(
                   icon: CupertinoIcons.ellipsis,
-                  tooltip: '更多',
+                  tooltip: l10n.more,
                   size: 15,
                   onPressed: () => _openNativeMoreMenu(c),
                 ),
@@ -2095,7 +2098,7 @@ class _DrawerScreenState extends State<DrawerScreen>
   Widget _buildPhoneMoreMenu(DropDrawerController c, {required Widget child}) {
     final isMobile = c.windowService.isMobile;
     return PopupMenuButton<String>(
-      tooltip: '更多',
+      tooltip: l10n.more,
       padding: EdgeInsets.zero,
       offset: Offset(0, isMobile ? 40 : 30),
       color: MacPalette.elevatedBg,
@@ -2113,7 +2116,7 @@ class _DrawerScreenState extends State<DrawerScreen>
             children: [
               Icon(CupertinoIcons.link, size: isMobile ? 16 : 13.5, color: MacPalette.textSecondary),
               const SizedBox(width: 10),
-              Text('外链管理', style: TextStyle(fontSize: isMobile ? 14 : 12)),
+              Text(l10n.shareLinksTitle, style: TextStyle(fontSize: isMobile ? 14 : 12)),
             ],
           ),
         ),
@@ -2124,7 +2127,7 @@ class _DrawerScreenState extends State<DrawerScreen>
             children: [
               Icon(CupertinoIcons.device_laptop, size: isMobile ? 16 : 13.5, color: MacPalette.textSecondary),
               const SizedBox(width: 10),
-              Text('设备状态', style: TextStyle(fontSize: isMobile ? 14 : 12)),
+              Text(l10n.deviceStatus, style: TextStyle(fontSize: isMobile ? 14 : 12)),
             ],
           ),
         ),
@@ -2135,7 +2138,7 @@ class _DrawerScreenState extends State<DrawerScreen>
             children: [
               Icon(CupertinoIcons.gear_alt, size: isMobile ? 16 : 13.5, color: MacPalette.textSecondary),
               const SizedBox(width: 10),
-              Text('偏好设置', style: TextStyle(fontSize: isMobile ? 14 : 12)),
+              Text(l10n.preferences, style: TextStyle(fontSize: isMobile ? 14 : 12)),
             ],
           ),
         ),
@@ -2148,7 +2151,7 @@ class _DrawerScreenState extends State<DrawerScreen>
               children: [
                 Icon(CupertinoIcons.trash, size: 16, color: MacPalette.red),
                 SizedBox(width: 10),
-                Text('清空抽屉', style: TextStyle(fontSize: 14, color: MacPalette.red)),
+                Text(l10n.clearDrawer, style: TextStyle(fontSize: 14, color: MacPalette.red)),
               ],
             ),
           ),
@@ -2162,7 +2165,7 @@ class _DrawerScreenState extends State<DrawerScreen>
               Icon(CupertinoIcons.square_arrow_right, size: isMobile ? 16 : 13.5, color: MacPalette.red),
               const SizedBox(width: 10),
               Text(
-                '退出登录',
+                l10n.signOut,
                 style: TextStyle(
                   fontSize: isMobile ? 14 : 12,
                   color: MacPalette.red,
@@ -2206,7 +2209,7 @@ class _DrawerScreenState extends State<DrawerScreen>
     }
 
     return PopupMenuButton<String>(
-      tooltip: '更多',
+      tooltip: l10n.more,
       icon: const Icon(CupertinoIcons.ellipsis),
       iconSize: 16,
       iconColor: MacPalette.textPrimary,
@@ -2243,12 +2246,12 @@ class _DrawerScreenState extends State<DrawerScreen>
         _handleMoreMenuAction(c, action);
       },
       itemBuilder: (_) => [
-        entry('shares', '外链管理', CupertinoIcons.link),
-        entry('devices', '设备状态', CupertinoIcons.device_laptop),
-        entry('preferences', '偏好设置', CupertinoIcons.gear_alt),
+        entry('shares', l10n.shareLinksTitle, CupertinoIcons.link),
+        entry('devices', l10n.deviceStatus, CupertinoIcons.device_laptop),
+        entry('preferences', l10n.preferences, CupertinoIcons.gear_alt),
         entry(
           'toggle_dock_side',
-          dockLeft ? '停靠右侧' : '停靠左侧',
+          dockLeft ? l10n.dockRight : l10n.dockLeft,
           dockLeft ? CupertinoIcons.sidebar_right : CupertinoIcons.sidebar_left,
         ),
         PopupMenuDivider(
@@ -2257,8 +2260,8 @@ class _DrawerScreenState extends State<DrawerScreen>
           endIndent: 12,
           color: MacPalette.hairline,
         ),
-        entry('logout', '退出登录', CupertinoIcons.square_arrow_right),
-        entry('quit', '退出应用', CupertinoIcons.power, destructive: true),
+        entry('logout', l10n.signOut, CupertinoIcons.square_arrow_right),
+        entry('quit', l10n.quit, CupertinoIcons.power, destructive: true),
       ],
     );
   }
@@ -2343,8 +2346,8 @@ class _DrawerScreenState extends State<DrawerScreen>
                         children: [
                           Text(
                             _isDragHovering
-                                ? '松开即可放入抽屉'
-                                : '拖入、选取或 ${c.windowService.pasteShortcutLabel} 粘贴',
+                                ? l10n.releaseToDropIntoTheDrawer2
+                                : l10n.dropPickOrPaste(c.windowService.pasteShortcutLabel),
                             style: TextStyle(
                               fontSize: 12.5,
                               fontWeight: _isDragHovering
@@ -2370,7 +2373,7 @@ class _DrawerScreenState extends State<DrawerScreen>
                     ),
                     MacIconButton(
                       icon: CupertinoIcons.doc_on_clipboard,
-                      tooltip: '智能粘贴文件 / 截图 / 文本 (${c.windowService.pasteShortcutLabel})',
+                      tooltip: l10n.smartPasteTooltip(c.windowService.pasteShortcutLabel),
                       size: 14.5,
                       onPressed: _pasteFromClipboard,
                     ),
@@ -2383,9 +2386,9 @@ class _DrawerScreenState extends State<DrawerScreen>
           MacSegmentedControl<String>(
             selected: c.defaultDropPolicy,
             items: [
-              ('smart', '智能(<${c.autoCloudThresholdBytes ~/ (1024 * 1024)}M上云)'),
-              ('p2p_only', '纯 P2P 直连'),
-              ('cloud_cached', '强制存云盘'),
+              ('smart', l10n.smartPolicyShort(c.autoCloudThresholdBytes ~/ (1024 * 1024))),
+              ('p2p_only', l10n.policyP2pOnly),
+              ('cloud_cached', l10n.alwaysSaveToCloud),
             ],
             onChanged: c.setDropPolicy,
           ),
@@ -2416,7 +2419,7 @@ class _DrawerScreenState extends State<DrawerScreen>
         children: [
           if (_selectionMode) ...[
             _miniTextAction(
-              label: allSelected ? '取消全选' : '全选 (${visibleItems.length})',
+              label: allSelected ? l10n.deselectAll : l10n.selectAllCount(visibleItems.length),
               isMobile: isMobile,
               onTap: () {
                 setState(() {
@@ -2429,16 +2432,20 @@ class _DrawerScreenState extends State<DrawerScreen>
               },
             ),
             const SizedBox(width: 8),
-            Text(
-              '已选 ${_selectedIds.length} 项',
-              style: TextStyle(
-                fontSize: isMobile ? 12 : 10.5,
-                color: MacPalette.textTertiary,
+            Flexible(
+              child: Text(
+                l10n.selectedCount(_selectedIds.length),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: isMobile ? 12 : 10.5,
+                  color: MacPalette.textTertiary,
+                ),
               ),
             ),
             const Spacer(),
             _miniTextAction(
-              label: '完成',
+              label: l10n.done,
               color: MacPalette.textPrimary,
               isMobile: isMobile,
               onTap: () => setState(() {
@@ -2447,13 +2454,17 @@ class _DrawerScreenState extends State<DrawerScreen>
               }),
             ),
           ] else ...[
-            Text(
-              isFiltering
-                  ? '筛选结果 · ${visibleItems.length}/${c.items.length}'
-                  : '抽屉内容 · ${c.items.length} 项',
-              style: TextStyle(
-                fontSize: isMobile ? 13.5 : 10.5,
-                color: MacPalette.textTertiary,
+            Flexible(
+              child: Text(
+                isFiltering
+                    ? l10n.filteredResults(visibleItems.length, c.items.length)
+                    : l10n.drawerItemsCount(c.items.length),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: isMobile ? 13.5 : 10.5,
+                  color: MacPalette.textTertiary,
+                ),
               ),
             ),
             const Spacer(),
@@ -2464,12 +2475,12 @@ class _DrawerScreenState extends State<DrawerScreen>
             if (!isMobile) ...[
               const SizedBox(width: 8),
               _miniTextAction(
-                label: '多选',
+                label: l10n.multiSelect,
                 onTap: () => _enterSelectionMode(),
               ),
               const SizedBox(width: 10),
               _miniTextAction(
-                label: '全部下载',
+                label: l10n.downloadAll,
                 onTap: () => c.batchDownloadItems(visibleItems),
               ),
             ],
@@ -2477,7 +2488,7 @@ class _DrawerScreenState extends State<DrawerScreen>
               const SizedBox(width: 10),
               if (_confirmingClear) ...[
                 _miniTextAction(
-                  label: '确认清空',
+                  label: l10n.confirmClear,
                   color: MacPalette.red,
                   onTap: () async {
                     setState(() => _confirmingClear = false);
@@ -2486,12 +2497,12 @@ class _DrawerScreenState extends State<DrawerScreen>
                 ),
                 const SizedBox(width: 6),
                 _miniTextAction(
-                  label: '取消',
+                  label: l10n.cancel,
                   onTap: () => setState(() => _confirmingClear = false),
                 ),
               ] else
                 _miniTextAction(
-                  label: '清空',
+                  label: l10n.clear,
                   color: MacPalette.textSecondary,
                   onTap: () {
                     setState(() => _confirmingClear = true);
@@ -2549,7 +2560,7 @@ class _DrawerScreenState extends State<DrawerScreen>
                         isDense: true,
                         contentPadding: EdgeInsets.zero,
                         border: InputBorder.none,
-                        hintText: '搜索文件名或文本...',
+                        hintText: l10n.searchFileNamesOrText,
                         hintStyle: TextStyle(
                           fontSize: fontSize,
                           color: MacPalette.textTertiary,
@@ -2574,11 +2585,11 @@ class _DrawerScreenState extends State<DrawerScreen>
             ),
           ),
           const SizedBox(width: 6),
-          _filterPill('all', '全部'),
+          _filterPill('all', l10n.all),
           const SizedBox(width: 4),
-          _filterPill('file', '文件'),
+          _filterPill('file', l10n.file),
           const SizedBox(width: 4),
-          _filterPill('text', '文本'),
+          _filterPill('text', l10n.text),
         ],
       ),
     );
@@ -2698,10 +2709,10 @@ class _DrawerScreenState extends State<DrawerScreen>
       );
     });
     _showToast(
-      '已移出「${item.name}」',
+      l10n.removedItem(item.name),
       duration: const Duration(seconds: 4),
       action: SnackBarAction(
-        label: '撤销',
+        label: l10n.undo,
         textColor: MacPalette.accent,
         onPressed: () {
           _pendingDeletes.remove(item.id)?.cancel();
@@ -2716,7 +2727,7 @@ class _DrawerScreenState extends State<DrawerScreen>
     try {
       await c.deleteItem(id);
     } catch (e) {
-      c.setBanner('移出失败：$e');
+      c.setBanner(l10n.removeFailedError(e));
     }
     if (mounted) setState(() {});
   }
@@ -2777,7 +2788,7 @@ class _DrawerScreenState extends State<DrawerScreen>
           _batchFooterBtn(
             isMobile: isMobile,
             icon: CupertinoIcons.arrow_down_circle,
-            label: '下载',
+            label: l10n.downloads,
             enabled: hasSelection,
             onTap: () async {
               await c.batchDownloadItems(selectedItems);
@@ -2794,21 +2805,21 @@ class _DrawerScreenState extends State<DrawerScreen>
             icon: c.windowService.isMobile
                 ? CupertinoIcons.share
                 : CupertinoIcons.doc_on_doc,
-            label: c.windowService.isMobile ? '分享' : '复制',
+            label: c.windowService.isMobile ? l10n.shareAction : l10n.copy,
             enabled: localSelectedPaths.isNotEmpty,
             onTap: () async {
               if (c.windowService.isMobile) {
                 final ok = await c.windowService
                     .shareFilesNative(localSelectedPaths);
-                if (!ok) c.setBanner('打开系统分享失败');
+                if (!ok) c.setBanner(l10n.couldnTOpenTheShareSheet);
                 return;
               }
               final ok = await c.windowService
                   .copyFilesToClipboard(localSelectedPaths);
               c.setBanner(
                 ok
-                    ? '已复制 ${localSelectedPaths.length} 个文件，可直接 ${c.windowService.pasteShortcutLabel} 粘贴'
-                    : '复制文件失败',
+                    ? l10n.copiedFiles(localSelectedPaths.length, c.windowService.pasteShortcutLabel)
+                    : l10n.couldnTCopyTheFile,
               );
             },
           ),
@@ -2816,7 +2827,7 @@ class _DrawerScreenState extends State<DrawerScreen>
           _batchFooterBtn(
             isMobile: isMobile,
             icon: CupertinoIcons.link,
-            label: '外链',
+            label: l10n.link,
             enabled: hasSelection,
             onTap: () {
               final targets = List<DrawerItem>.from(selectedItems);
@@ -2831,7 +2842,7 @@ class _DrawerScreenState extends State<DrawerScreen>
           _batchFooterBtn(
             isMobile: isMobile,
             icon: CupertinoIcons.cloud_upload,
-            label: '存云盘',
+            label: l10n.saveToCloudShort,
             enabled: hasSelection,
             onTap: () async {
               await c.batchCacheToCloud(selectedItems);
@@ -2840,7 +2851,7 @@ class _DrawerScreenState extends State<DrawerScreen>
           _batchFooterBtn(
             isMobile: isMobile,
             icon: CupertinoIcons.trash,
-            label: hasSelection ? '删除(${selectedItems.length})' : '删除',
+            label: hasSelection ? l10n.deleteCount(selectedItems.length) : l10n.delete,
             enabled: hasSelection,
             color: MacPalette.red,
             onTap: () async {
@@ -2951,7 +2962,7 @@ class _DrawerScreenState extends State<DrawerScreen>
               ),
               SizedBox(height: isMobile ? 14 : 10),
               Text(
-                isMobile ? '暂无内容' : '抽屉是空的',
+                isMobile ? l10n.nothingHereYet : l10n.theDrawerIsEmpty,
                 style: TextStyle(
                   fontSize: isMobile ? 17 : 13,
                   fontWeight: FontWeight.w500,
@@ -2962,9 +2973,9 @@ class _DrawerScreenState extends State<DrawerScreen>
               Text(
                 isMobile
                     ? (usesMaterialChrome(context)
-                        ? '点右下角「添加」选取文件、照片或粘贴内容\n也可在其他 App 中「分享 → DropDrawer」发送'
-                        : '点右下角「+」选取文件、照片或粘贴内容\n也可在其他 App 中「分享 → DropDrawer」发送')
-                    : '拖起文件或文本靠近悬浮引导条\n点击边缘手柄展开 · 拖动可调整上下或左右停靠',
+                        ? l10n.tapAddAtTheBottomRight
+                        : l10n.tapAtTheBottomRightTo)
+                    : l10n.dragAFileOrTextNear,
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: isMobile ? 14 : 11,
@@ -2981,7 +2992,7 @@ class _DrawerScreenState extends State<DrawerScreen>
     if (visibleItems.isEmpty && pending.isEmpty) {
       return Center(
         child: Text(
-          '没有匹配的内容',
+          l10n.noMatches,
           style: TextStyle(
             fontSize: isMobile ? 15 : 12,
             color: MacPalette.textTertiary,
@@ -3134,9 +3145,9 @@ class _DrawerScreenState extends State<DrawerScreen>
           size: 21,
           color: device.online ? MacPalette.textPrimary : MacPalette.textTertiary,
         ),
-        title: '$cleanName${device.id == c.deviceId ? '（本机）' : ''}',
+        title: '$cleanName${device.id == c.deviceId ? l10n.thisDeviceSuffix : ''}',
         subtitle: device.platform,
-        value: device.online ? '在线' : '离线',
+        value: device.online ? l10n.online : l10n.offline,
         trailing: Container(
           width: 8,
           height: 8,
@@ -3156,14 +3167,14 @@ class _DrawerScreenState extends State<DrawerScreen>
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
       children: [
         PhoneSection(
-          header: '本机 P2P 节点',
+          header: l10n.thisDeviceSP2pNode,
           footer: c.p2pReady
-              ? 'iroh QUIC 节点运行中：局域网与公网直连优先，必要时经加密中继。'
-              : 'P2P 引擎未加载，传输只能经过服务器和云盘。',
+              ? l10n.irohQuicNodeRunningDirectLan
+              : l10n.theP2pEngineIsnTLoaded,
           children: [
             PhoneRow(
-              title: '节点状态',
-              value: c.p2pReady ? '运行中' : '未加载',
+              title: l10n.nodeStatus,
+              value: c.p2pReady ? l10n.running : l10n.notLoaded,
               trailing: Container(
                 width: 8,
                 height: 8,
@@ -3185,19 +3196,19 @@ class _DrawerScreenState extends State<DrawerScreen>
                 ),
                 onTap: () {
                   Clipboard.setData(ClipboardData(text: nodeId));
-                  c.setBanner('已复制 Node ID');
+                  c.setBanner(l10n.nodeIdCopied);
                 },
               ),
           ],
         ),
         PhoneSection(
-          header: '同账号设备',
+          header: l10n.devicesOnThisAccount,
           children: [for (final device in primary) deviceRow(device)],
         ),
         if (sameNameOffline.isNotEmpty)
           PhoneSection(
-            header: '同名离线设备（${sameNameOffline.length}）',
-            footer: '同一台设备重装或重新登录后留下的旧记录。',
+            header: l10n.sameNameOffline(sameNameOffline.length),
+            footer: l10n.oldRecordsLeftWhenTheSame,
             children: [for (final device in sameNameOffline) deviceRow(device)],
           ),
       ],
@@ -3226,12 +3237,12 @@ class _DrawerScreenState extends State<DrawerScreen>
     // This screen's own context sits above its UiDensity.
     if (c.windowService.isMobile) {
       return PhonePage(
-        title: '设备与 P2P',
+        title: l10n.devicesP2p,
         body: _buildPhoneDevicesBody(c, primary, sameNameOffline),
       );
     }
     return AdaptivePage(
-      title: '设备与 P2P',
+      title: l10n.devicesP2p,
       desktopHeader: Padding(
           padding: c.windowService.needsMacTrafficLightPadding
               ? const EdgeInsets.fromLTRB(78, 1, 10, 3)
@@ -3243,13 +3254,13 @@ class _DrawerScreenState extends State<DrawerScreen>
               children: [
                 MacIconButton(
                   icon: CupertinoIcons.chevron_left,
-                  tooltip: '返回抽屉',
+                  tooltip: l10n.backToDrawer,
                   size: 15,
                   onPressed: onBack ?? () => _switchPage(_DrawerPage.drawer),
                 ),
                 const SizedBox(width: 4),
-                const Text(
-                  '已登录设备与 P2P 节点',
+                Text(
+                  l10n.signedInDevicesP2pNodes,
                   style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
                 ),
               ],
@@ -3281,7 +3292,7 @@ class _DrawerScreenState extends State<DrawerScreen>
                         ),
                         const SizedBox(width: 7),
                         Text(
-                          c.p2pReady ? '本机 iroh QUIC P2P 节点运行中' : 'P2P 引擎未加载',
+                          c.p2pReady ? l10n.irohQuicP2pNodeRunningOn : l10n.p2pEngineNotLoaded,
                           style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
                         ),
                       ],
@@ -3302,7 +3313,7 @@ class _DrawerScreenState extends State<DrawerScreen>
               ),
               const SizedBox(height: 14),
               Text(
-                '同账号设备',
+                l10n.devicesOnThisAccount,
                 style: TextStyle(fontSize: 11.5, color: MacPalette.textSecondary),
               ),
               const SizedBox(height: 6),
@@ -3311,7 +3322,7 @@ class _DrawerScreenState extends State<DrawerScreen>
                 ExpansionTile(
                   tilePadding: EdgeInsets.zero,
                   title: Text(
-                    '同名离线设备（${sameNameOffline.length}）',
+                    l10n.sameNameOffline(sameNameOffline.length),
                     style: const TextStyle(fontSize: 11.5),
                   ),
                   children: [_buildDeviceRows(sameNameOffline, c.deviceId)],
@@ -3354,7 +3365,7 @@ class _DrawerScreenState extends State<DrawerScreen>
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            '${device.name}${device.id == localDeviceId ? ' (本机)' : ''}',
+                            '${device.name}${device.id == localDeviceId ? l10n.thisDeviceSuffixShort : ''}',
                             style: const TextStyle(
                               fontSize: 12.5,
                               fontWeight: FontWeight.w500,
@@ -3363,7 +3374,7 @@ class _DrawerScreenState extends State<DrawerScreen>
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            '${device.platform} · ${device.online ? '在线' : '离线'}',
+                            '${device.platform} · ${device.online ? l10n.online : l10n.offline}',
                             style: TextStyle(
                               fontSize: 10.5,
                               color: MacPalette.textTertiary,
@@ -3383,8 +3394,8 @@ class _DrawerScreenState extends State<DrawerScreen>
   Widget _buildFooter(DropDrawerController c) {
     final text = c.statusBanner ??
         (c.p2pReady
-            ? 'iroh P2P 就绪 · 局域网与公网直连优先'
-            : '当前运行在云端中转模式');
+            ? l10n.irohP2pReadyDirectLanAnd
+            : l10n.runningInCloudRelayMode);
 
     return Container(
       height: 30,
@@ -3406,7 +3417,7 @@ class _DrawerScreenState extends State<DrawerScreen>
             ),
           ),
           Text(
-            '${c.items.length} 项',
+            l10n.itemsCount(c.items.length),
             style: TextStyle(
               fontSize: 10.5,
               color: MacPalette.textTertiary,
@@ -3524,7 +3535,7 @@ class _PendingDropTile extends StatelessWidget {
                 ),
                 SizedBox(height: isMobile ? 3 : 2),
                 Text(
-                  '正在加入抽屉…',
+                  l10n.addingToTheDrawer,
                   style: TextStyle(
                     fontSize: isMobile ? 12.5 : 10.5,
                     color: MacPalette.textTertiary,
@@ -3600,19 +3611,19 @@ class _InnerEdgeGlowPainter extends CustomPainter {
       old.subtle != subtle;
 }
 
-/// Short Chinese relative time, e.g. 刚刚 / 5 分钟前 / 昨天 / 3月2日.
+/// Short relative time in the UI language, e.g. "Just now", "5 minutes ago",
+/// "Yesterday" or "Mar 2".
 @visibleForTesting
 String relativeTimeLabel(DateTime time, {DateTime? now}) {
   final current = now ?? DateTime.now();
   final local = time.toLocal();
   final diff = current.difference(local);
-  if (diff.inMinutes < 1) return '刚刚';
-  if (diff.inHours < 1) return '${diff.inMinutes} 分钟前';
+  if (diff.inMinutes < 1) return l10n.justNow;
+  if (diff.inHours < 1) return l10n.minutesAgo(diff.inMinutes);
   final today = DateTime(current.year, current.month, current.day);
   final day = DateTime(local.year, local.month, local.day);
   final days = today.difference(day).inDays;
-  if (days == 0) return '${diff.inHours} 小时前';
-  if (days == 1) return '昨天';
-  if (local.year == current.year) return '${local.month}月${local.day}日';
-  return '${local.year}年${local.month}月${local.day}日';
+  if (days == 0) return l10n.hoursAgo(diff.inHours);
+  if (days == 1) return l10n.yesterday;
+  return AppLocale.shortDate(local, now: current);
 }

@@ -3231,3 +3231,55 @@ async fn test_admin_accounts_roles_totp_and_backup() {
     assert!(audit.iter().any(|e| e["actor"] == "ops-lead" && e["action"] == "maintenance.backup"));
     assert!(audit.iter().any(|e| e["action"] == "admin.login_failed" && e["target"] == "ops-lead"));
 }
+
+#[tokio::test]
+async fn error_messages_follow_accept_language() {
+    let (app, _state, _tmp) = spawn_test_server().await;
+    let login = |lang: Option<&'static str>| {
+        let app = app.clone();
+        async move {
+            let mut builder = Request::builder()
+                .method("POST")
+                .uri("/api/auth/login")
+                .header(header::CONTENT_TYPE, "application/json");
+            if let Some(lang) = lang {
+                builder = builder.header(header::ACCEPT_LANGUAGE, lang);
+            }
+            let body = serde_json::json!({ "username": "nobody", "password": "wrong-password" });
+            let resp = app
+                .oneshot(builder.body(Body::from(serde_json::to_vec(&body).unwrap())).unwrap())
+                .await
+                .unwrap();
+            let status = resp.status();
+            let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+            (status, String::from_utf8(bytes.to_vec()).unwrap())
+        }
+    };
+    // Older clients send no header and keep the Chinese messages they always showed.
+    assert_eq!(login(None).await, (StatusCode::UNAUTHORIZED, "用户名或密码错误".to_string()));
+    assert_eq!(
+        login(Some("en-US,en;q=0.9")).await,
+        (StatusCode::UNAUTHORIZED, "Incorrect username or password".to_string())
+    );
+    assert_eq!(login(Some("zh-CN")).await.1, "用户名或密码错误");
+    // Unsupported languages fall back to English.
+    assert_eq!(login(Some("fr-FR")).await.1, "Incorrect username or password");
+
+    let page = |lang: &'static str| {
+        let app = app.clone();
+        async move {
+            let req = Request::builder()
+                .uri("/api/oauth/google/callback?error=access_denied")
+                .header(header::ACCEPT_LANGUAGE, lang)
+                .body(Body::empty())
+                .unwrap();
+            let resp = app.oneshot(req).await.unwrap();
+            let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+            String::from_utf8(bytes.to_vec()).unwrap()
+        }
+    };
+    let en = page("en").await;
+    assert!(en.contains(r#"<html lang="en">"#) && en.contains("Authorization was canceled or failed"));
+    let zh = page("zh-CN").await;
+    assert!(zh.contains(r#"<html lang="zh-CN">"#) && zh.contains("授权已取消或失败"));
+}

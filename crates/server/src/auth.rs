@@ -176,10 +176,10 @@ impl FromRequestParts<Arc<AppState>> for AuthUser {
         let token = auth_header
             .and_then(|v| v.strip_prefix("Bearer "))
             .map(str::trim)
-            .ok_or_else(|| (StatusCode::UNAUTHORIZED, "missing bearer token".to_string()))?;
+            .ok_or_else(|| (StatusCode::UNAUTHORIZED, t!("缺少登录凭证，请重新登录", "Missing sign-in token. Sign in again").to_string()))?;
 
         let claims = decode_jwt(token, &state.jwt_secret)
-            .map_err(|_| (StatusCode::UNAUTHORIZED, "invalid or expired token".to_string()))?;
+            .map_err(|_| (StatusCode::UNAUTHORIZED, t!("登录状态已失效，请重新登录", "Your session has expired. Sign in again").to_string()))?;
 
         validate_user_claims(state, &claims)?;
 

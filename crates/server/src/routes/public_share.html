@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="__LANG__">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>DropDrawer 外链提取</title>
+<title>__TITLE__</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -72,11 +72,50 @@
 </head>
 <body>
 <div class="card">
-  <div class="brand"><div class="logo">D</div><span>DropDrawer 外链分享</span></div>
-  <div id="app">正在加载分享信息...</div>
+  <div class="brand"><div class="logo">D</div><span>__BRAND__</span></div>
+  <div id="app">__LOADING__</div>
 </div>
 <script>
 const code = "__SHARE_CODE__";
+const EN = document.documentElement.lang === "en";
+const LOCALE = EN ? "en" : "zh-CN";
+const T = EN ? {
+  cantOpen: "Can't open this share",
+  count: n => `${n} items · `,
+  downloads: (n, max) => max ? ` · ${n}/${max} downloads` : ` · ${n} download${n === 1 ? "" : "s"}`,
+  expires: t => ` · Expires ${t}`,
+  passcodePlaceholder: "Enter the passcode",
+  unlock: "Open",
+  textSnippet: "Text",
+  file: "File",
+  copyText: "Copy text",
+  download: "Download",
+  downloadAll: n => `Download all (${n} file${n === 1 ? "" : "s"})`,
+  copyAllText: "Copy all text",
+  downloadFile: "Download file",
+  wrongPasscode: "Incorrect passcode. Try again",
+  copiedToClipboard: "Copied to clipboard",
+  copied: "Copied",
+  downloadsStarted: n => `Started ${n} download${n === 1 ? "" : "s"}`,
+} : {
+  cantOpen: "无法访问该分享",
+  count: n => `共 ${n} 项 · `,
+  downloads: (n, max) => max ? ` · 已下载 ${n}/${max} 次` : ` · 已下载 ${n} 次`,
+  expires: t => ` · 有效期至 ${t}`,
+  passcodePlaceholder: "请输入提取码",
+  unlock: "提取",
+  textSnippet: "文本片段",
+  file: "文件",
+  copyText: "复制文本",
+  download: "下载",
+  downloadAll: n => `全部下载 (${n} 个文件)`,
+  copyAllText: "复制全部文本",
+  downloadFile: "立即下载文件",
+  wrongPasscode: "提取码不正确，请重试",
+  copiedToClipboard: "已复制到剪贴板",
+  copied: "已复制",
+  downloadsStarted: n => `已触发 ${n} 个文件下载`,
+};
 let currentPasscode = new URLSearchParams(location.search).get("p") || "";
 
 function fmtBytes(b) {
@@ -104,22 +143,22 @@ async function load(errMsg) {
   const el = document.getElementById("app");
   if (!resp.ok) {
     const t = await resp.text();
-    el.innerHTML = `<p class="name">无法访问该分享</p><p class="err">${esc(t || resp.statusText)}</p>`;
+    el.innerHTML = `<p class="name">${T.cantOpen}</p><p class="err">${esc(t || resp.statusText)}</p>`;
     return;
   }
   const d = await resp.json();
   const items = Array.isArray(d.items) ? d.items : [];
-  const countInfo = items.length > 1 ? `共 ${items.length} 项 · ` : "";
-  const limitInfo = d.max_downloads ? ` · 已下载 ${d.download_count}/${d.max_downloads} 次` : ` · 已下载 ${d.download_count} 次`;
-  const expInfo = d.expires_at ? ` · 有效期至 ${new Date(d.expires_at).toLocaleString()}` : "";
+  const countInfo = items.length > 1 ? T.count(items.length) : "";
+  const limitInfo = T.downloads(d.download_count, d.max_downloads);
+  const expInfo = d.expires_at ? T.expires(new Date(d.expires_at).toLocaleString(LOCALE)) : "";
 
   if (d.locked) {
     el.innerHTML = `
       <p class="name">${esc(d.name)}</p>
       <p class="meta">${countInfo}${fmtBytes(d.size)}${limitInfo}${expInfo}</p>
       <div class="input-row">
-        <input id="pw" placeholder="请输入提取码" value="${esc(currentPasscode)}" />
-        <button class="secondary" style="height:40px;padding:0 16px;" onclick="unlock()">提取</button>
+        <input id="pw" placeholder="${T.passcodePlaceholder}" value="${esc(currentPasscode)}" />
+        <button class="secondary" style="height:40px;padding:0 16px;" onclick="unlock()">${T.unlock}</button>
       </div>
       ${errMsg ? `<div class="err">${esc(errMsg)}</div>` : ""}
     `;
@@ -136,9 +175,9 @@ async function load(errMsg) {
           <div class="bundle-row">
             <div class="bundle-info">
               <div class="bundle-title">${esc(it.name)}</div>
-              <div class="bundle-sub">文本片段 · ${fmtBytes(it.size)}</div>
+              <div class="bundle-sub">${T.textSnippet} · ${fmtBytes(it.size)}</div>
             </div>
-            <button class="mini-btn" onclick="copyBundleText(${idx}, this)">复制文本</button>
+            <button class="mini-btn" onclick="copyBundleText(${idx}, this)">${T.copyText}</button>
           </div>
         `;
       }
@@ -146,9 +185,9 @@ async function load(errMsg) {
         <div class="bundle-row">
           <div class="bundle-info">
             <div class="bundle-title">${esc(it.name)}</div>
-            <div class="bundle-sub">文件 · ${fmtBytes(it.size)}</div>
+            <div class="bundle-sub">${T.file} · ${fmtBytes(it.size)}</div>
           </div>
-          <a class="mini-btn" href="${buildDlUrl(it.id)}">下载</a>
+          <a class="mini-btn" href="${buildDlUrl(it.id)}">${T.download}</a>
         </div>
       `;
     }).join("");
@@ -157,7 +196,7 @@ async function load(errMsg) {
       <p class="name">${esc(d.name)}</p>
       <p class="meta">${countInfo}${fmtBytes(d.size)}${limitInfo}${expInfo}</p>
       <div class="bundle-list">${rowsHtml}</div>
-      ${fileItems.length > 0 ? `<button onclick="downloadAllFiles(this)">全部下载 (${fileItems.length} 个文件)</button>` : ""}
+      ${fileItems.length > 0 ? `<button onclick="downloadAllFiles(this)">${T.downloadAll(fileItems.length)}</button>` : ""}
     `;
     return;
   }
@@ -165,9 +204,9 @@ async function load(errMsg) {
   if (d.kind === "text") {
     el.innerHTML = `
       <p class="name">${esc(d.name)}</p>
-      <p class="meta">文本片段 · ${fmtBytes(d.size)}${expInfo}</p>
+      <p class="meta">${T.textSnippet} · ${fmtBytes(d.size)}${expInfo}</p>
       <pre class="text-box" id="txt">${esc(d.text_content || "")}</pre>
-      <button onclick="copyTxt(this)">复制全部文本</button>
+      <button onclick="copyTxt(this)">${T.copyAllText}</button>
     `;
     window._sharedText = d.text_content || "";
     return;
@@ -176,7 +215,7 @@ async function load(errMsg) {
   el.innerHTML = `
     <p class="name">${esc(d.name)}</p>
     <p class="meta">${fmtBytes(d.size)}${limitInfo}${expInfo}</p>
-    <a class="btn" href="${buildDlUrl(null)}">立即下载文件</a>
+    <a class="btn" href="${buildDlUrl(null)}">${T.downloadFile}</a>
   `;
 }
 
@@ -194,7 +233,7 @@ async function unlock() {
   const d = await resp.json();
   if (d.locked) {
     currentPasscode = "";
-    load("提取码不正确，请重试");
+    load(T.wrongPasscode);
   } else {
     currentPasscode = typed;
     load();
@@ -203,14 +242,14 @@ async function unlock() {
 
 function copyTxt(btn) {
   navigator.clipboard.writeText(window._sharedText || "");
-  if (btn) btn.textContent = "已复制到剪贴板";
+  if (btn) btn.textContent = T.copiedToClipboard;
 }
 
 function copyBundleText(idx, btn) {
   const it = (window._bundleItems || [])[idx];
   if (!it) return;
   navigator.clipboard.writeText(it.text_content || it.name || "");
-  if (btn) btn.textContent = "已复制";
+  if (btn) btn.textContent = T.copied;
 }
 
 function downloadAllFiles(btn) {
@@ -225,7 +264,7 @@ function downloadAllFiles(btn) {
       document.body.removeChild(a);
     }, i * 380);
   });
-  if (btn) btn.textContent = `已触发 ${files.length} 个文件下载`;
+  if (btn) btn.textContent = T.downloadsStarted(files.length);
 }
 
 load();

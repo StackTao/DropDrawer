@@ -25,19 +25,19 @@ struct DevicesView: View {
         let split = grouped
         List {
             Section {
-                LabeledContent("节点状态") {
+                LabeledContent(String(localized: "节点状态")) {
                     HStack(spacing: 6) {
                         Circle()
                             .fill(store.p2pReady ? Color.green : Color.orange)
                             .frame(width: 8, height: 8)
-                        Text(store.p2pReady ? "运行中" : "未加载")
+                        Text(store.p2pReady ? String(localized: "运行中") : String(localized: "未加载"))
                             .foregroundStyle(.secondary)
                     }
                 }
                 if let nodeId = store.localNodeInfo?.nodeId {
                     Button {
                         UIPasteboard.general.string = nodeId
-                        store.showToast("已复制 Node ID")
+                        store.showToast(String(localized: "已复制 Node ID"))
                     } label: {
                         LabeledContent("Node ID") {
                             HStack(spacing: 6) {
@@ -53,16 +53,16 @@ struct DevicesView: View {
                     .buttonStyle(.plain)
                 }
             } header: {
-                Text("本机 P2P 节点")
+                Text(String(localized: "本机 P2P 节点"))
             } footer: {
                 Text(store.p2pReady
-                     ? "iroh QUIC 节点运行中：局域网与公网直连优先，必要时经加密中继。"
-                     : "P2P 引擎未加载，传输将自动回落到服务器与云盘。")
+                     ? String(localized: "iroh QUIC 节点运行中：局域网与公网直连优先，必要时经加密中继。")
+                     : String(localized: "P2P 引擎未加载，传输将自动回落到服务器与云盘。"))
             }
 
-            Section("同账号设备") {
+            Section(String(localized: "同账号设备")) {
                 if split.primary.isEmpty {
-                    Text("暂无设备记录")
+                    Text(String(localized: "暂无设备记录"))
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(split.primary) { device in
@@ -77,14 +77,14 @@ struct DevicesView: View {
                         deviceRow(device)
                     }
                 } header: {
-                    Text("同名离线设备（\(split.sameNameOffline.count)）")
+                    Text(String(localized: "同名离线设备（\(split.sameNameOffline.count)）"))
                 } footer: {
-                    Text("同一台设备重装或重新登录后留下的旧记录。")
+                    Text(String(localized: "同一台设备重装或重新登录后留下的旧记录。"))
                 }
             }
         }
         .listStyle(.insetGrouped)
-        .navigationTitle("设备与 P2P")
+        .navigationTitle(String(localized: "设备与 P2P"))
         .navigationBarTitleDisplayMode(.inline)
         .refreshable {
             await store.refreshAll()
@@ -98,7 +98,7 @@ struct DevicesView: View {
                 .foregroundStyle(device.online ? Color.primary : Color.secondary)
                 .frame(width: 26)
             VStack(alignment: .leading, spacing: 2) {
-                Text("\(device.displayName)\(device.id == store.deviceId ? "（本机）" : "")")
+                Text("\(device.displayName)\(device.id == store.deviceId ? String(localized: "（本机）") : "")")
                     .lineLimit(1)
                 Text(device.platform)
                     .font(.footnote)
@@ -106,7 +106,7 @@ struct DevicesView: View {
             }
             Spacer()
             HStack(spacing: 6) {
-                Text(device.online ? "在线" : "离线")
+                Text(device.online ? String(localized: "在线") : String(localized: "离线"))
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                 Circle()

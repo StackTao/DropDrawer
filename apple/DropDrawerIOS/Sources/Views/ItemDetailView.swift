@@ -26,7 +26,7 @@ struct ItemDetailView: View {
             infoSection
         }
         .listStyle(.insetGrouped)
-        .navigationTitle(item.isText ? "文本预览" : (item.isImage ? "图片预览" : "文件详情"))
+        .navigationTitle(item.isText ? String(localized: "文本预览") : (item.isImage ? String(localized: "图片预览") : String(localized: "文件详情")))
         .navigationBarTitleDisplayMode(.inline)
         .quickLookPreview($quickLookURL)
         .toolbar {
@@ -37,7 +37,7 @@ struct ItemDetailView: View {
                     } label: {
                         Image(systemName: "link")
                     }
-                    .accessibilityLabel("创建外链")
+                    .accessibilityLabel(String(localized: "创建外链"))
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
@@ -49,7 +49,7 @@ struct ItemDetailView: View {
                 } label: {
                     Image(systemName: "trash")
                 }
-                .accessibilityLabel("移出")
+                .accessibilityLabel(String(localized: "移出"))
             }
         }
     }
@@ -124,37 +124,37 @@ struct ItemDetailView: View {
             if item.isText {
                 Button {
                     UIPasteboard.general.string = item.textContent ?? item.name
-                    store.showToast("已复制到剪贴板")
+                    store.showToast(String(localized: "已复制到剪贴板"))
                 } label: {
-                    Label("复制文本", systemImage: "doc.on.doc")
+                    Label(String(localized: "复制文本"), systemImage: "doc.on.doc")
                 }
                 ShareLink(item: item.textContent ?? item.name) {
-                    Label("系统分享", systemImage: "square.and.arrow.up")
+                    Label(String(localized: "系统分享"), systemImage: "square.and.arrow.up")
                 }
             } else if let local = localURL {
                 Button {
                     quickLookURL = local
                 } label: {
-                    Label("快速预览", systemImage: "eye")
+                    Label(String(localized: "快速预览"), systemImage: "eye")
                 }
                 ShareLink(item: local) {
-                    Label("分享或用其他 App 打开", systemImage: "square.and.arrow.up")
+                    Label(String(localized: "分享或用其他 App 打开"), systemImage: "square.and.arrow.up")
                 }
                 if item.canSaveToPhotos {
                     Button {
                         Task {
                             let ok = await MediaExportHelper.saveToPhotos(fileURL: local)
-                            store.showToast(ok ? "已保存到系统相册" : "保存失败，请检查相册权限")
+                            store.showToast(ok ? String(localized: "已保存到系统相册") : String(localized: "保存失败，请检查相册权限"))
                         }
                     } label: {
-                        Label("保存到系统相册", systemImage: "square.and.arrow.down")
+                        Label(String(localized: "保存到系统相册"), systemImage: "square.and.arrow.down")
                     }
                 }
                 if !item.cloudReady && store.canUploadToCloud {
                     Button {
                         Task { await store.cacheItemToCloud(itemId: item.id, fileURL: local) }
                     } label: {
-                        Label("上传缓存到云盘", systemImage: "icloud.and.arrow.up")
+                        Label(String(localized: "上传缓存到云盘"), systemImage: "icloud.and.arrow.up")
                     }
                 }
             } else {
@@ -162,7 +162,7 @@ struct ItemDetailView: View {
                     Task { await store.downloadItem(item) }
                 } label: {
                     Label(
-                        store.canDownloadP2P(item) ? "P2P 优先下载" : "从云端下载",
+                        store.canDownloadP2P(item) ? String(localized: "P2P 优先下载") : String(localized: "从云端下载"),
                         systemImage: "arrow.down.circle"
                     )
                 }
@@ -173,14 +173,14 @@ struct ItemDetailView: View {
                 Button {
                     onCreateShare()
                 } label: {
-                    Label("创建公网外链", systemImage: "link")
+                    Label(String(localized: "创建公网外链"), systemImage: "link")
                 }
             }
         }
     }
 
     private func transferSection(_ progress: TransferProgress) -> some View {
-        Section("传输进度") {
+        Section(String(localized: "传输进度")) {
             VStack(alignment: .leading, spacing: 8) {
                 ProgressView(value: progress.indicatorValue)
                 HStack {
@@ -193,26 +193,26 @@ struct ItemDetailView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             }
-            Button("取消传输", role: .destructive) {
+            Button(String(localized: "取消传输"), role: .destructive) {
                 store.cancelTransfer(for: item.id)
             }
         }
     }
 
     private var infoSection: some View {
-        Section("信息") {
+        Section(String(localized: "信息")) {
             if !item.isText {
-                LabeledContent("文件名", value: item.name)
+                LabeledContent(String(localized: "文件名"), value: item.name)
             }
-            LabeledContent("大小", value: formatBytes(item.size))
+            LabeledContent(String(localized: "大小"), value: formatBytes(item.size))
             if let dev = item.cleanOwnerDeviceName {
-                LabeledContent("来源设备", value: dev)
+                LabeledContent(String(localized: "来源设备"), value: dev)
             }
-            LabeledContent("添加时间", value: DateParsing.formatDateTime(item.createdAt))
-            LabeledContent("传输方式", value: transferModeLabel)
-            LabeledContent("到期清理", value: item.expiresAt.map(DateParsing.formatDateTime) ?? "永不过期")
+            LabeledContent(String(localized: "添加时间"), value: DateParsing.formatDateTime(item.createdAt))
+            LabeledContent(String(localized: "传输方式"), value: transferModeLabel)
+            LabeledContent(String(localized: "到期清理"), value: item.expiresAt.map(DateParsing.formatDateTime) ?? String(localized: "永不过期"))
             if localURL != nil {
-                LabeledContent("本地缓存", value: "已保存到本机")
+                LabeledContent(String(localized: "本地缓存"), value: String(localized: "已保存到本机"))
             }
         }
     }
@@ -220,10 +220,10 @@ struct ItemDetailView: View {
     private var transferModeLabel: String {
         let p2p = store.canDownloadP2P(item)
         if p2p && item.cloudReady {
-            return "P2P 直连 + \(item.storageBackendName ?? "云端缓存")"
+            return String(localized: "P2P 直连 + \(item.storageBackendName ?? String(localized: "云端缓存"))")
         }
-        if p2p { return "仅 P2P 直连" }
-        if item.cloudReady { return item.storageBackendName ?? "已存云盘" }
-        return "来源离线"
+        if p2p { return String(localized: "仅 P2P 直连") }
+        if item.cloudReady { return item.storageBackendName ?? String(localized: "已存云盘") }
+        return String(localized: "来源离线")
     }
 }

@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/app_update_service.dart';
 import '../services/drawer_window_service.dart';
+import '../l10n/l10n.dart';
 
 enum UpdatePhase {
   /// Nothing checked yet in this session.
@@ -170,7 +171,7 @@ class AppUpdateController extends ChangeNotifier {
         phase = UpdatePhase.failed;
         message = error is UpdateException
             ? describeFailure(error)
-            : '检查更新失败，请稍后重试。';
+            : l10n.couldnTCheckForUpdatesTry;
       }
     }
     if (!_disposed) notifyListeners();
@@ -200,7 +201,7 @@ class AppUpdateController extends ChangeNotifier {
       _fail(describeFailure(error));
       return;
     } catch (_) {
-      _fail('无法保存安装包，请检查磁盘空间后重试。');
+      _fail(l10n.couldnTSaveTheInstallerCheck);
       return;
     }
 
@@ -211,37 +212,37 @@ class AppUpdateController extends ChangeNotifier {
     try {
       result = await window.installUpdate(package.path);
     } catch (_) {
-      _fail('无法启动安装程序，请稍后重试。');
+      _fail(l10n.couldnTStartTheInstallerTry);
       return;
     }
     switch (result) {
       case UpdateInstallResult.installing:
         // Desktop: the app is about to quit. Android: the system installer is open.
-        message = platform.isDesktop ? null : '请在系统安装界面中确认更新。';
+        message = platform.isDesktop ? null : l10n.confirmTheUpdateInTheSystem;
         _installWatch?.cancel();
         _installWatch = Timer(installTimeout, () {
           if (phase == UpdatePhase.installing) {
             _fail(platform.isDesktop
-                ? '更新没有完成，可以再试一次。'
-                : '如果没有完成安装，可以再点一次「更新」。');
+                ? l10n.theUpdateDidnTFinishYou
+                : l10n.ifTheInstallationDidnTFinish);
           }
         });
       case UpdateInstallResult.permissionRequired:
-        _fail('请允许 DropDrawer 安装应用，返回后再点一次「更新」。');
+        _fail(l10n.allowDropdrawerToInstallAppsThen);
       case UpdateInstallResult.signatureMismatch:
         if (platform == UpdatePlatform.macosArm64) {
           manualPackage = package;
-          _fail('新版本的签名与当前应用不同，无法自动替换。可以打开安装包手动安装。');
+          _fail(l10n.theNewVersionIsSignedDifferently);
         } else {
-          _fail('新版本使用了正式签名，与当前安装的测试版不同。请先卸载 DropDrawer 再安装新版本；抽屉内容保存在服务端，不会丢失。');
+          _fail(l10n.theNewVersionUsesTheRelease);
         }
       case UpdateInstallResult.notWritable:
         manualPackage = package;
-        _fail('没有权限替换当前的 DropDrawer，可以打开安装包手动安装。');
+        _fail(l10n.dropdrawerDoesnTHavePermissionTo);
       case UpdateInstallResult.versionTooOld:
-        _fail('这个安装包的构建号不比当前版本新，请从发布页选择对应的安装包。');
+        _fail(l10n.thisInstallerSBuildNumberIsn);
       case UpdateInstallResult.unavailable:
-        _fail('无法启动安装程序，请稍后重试。');
+        _fail(l10n.couldnTStartTheInstallerTry);
     }
     if (!_disposed) notifyListeners();
   }
@@ -258,7 +259,7 @@ class AppUpdateController extends ChangeNotifier {
     final package = manualPackage;
     if (package == null) return;
     if (!await package.exists() || !await window.openUpdatePackage(package.path)) {
-      _fail('无法打开安装包，请从发布页下载。');
+      _fail(l10n.couldnTOpenTheInstallerDownload);
     }
   }
 
@@ -285,18 +286,16 @@ class AppUpdateController extends ChangeNotifier {
 
   @visibleForTesting
   static String describeFailure(UpdateException error) => switch (error.reason) {
-        UpdateFailure.offline => '连不上 GitHub，请检查网络后重试。',
+        UpdateFailure.offline => l10n.canTReachGithubCheckYour,
         UpdateFailure.rateLimited => error.retryAfter == null
-            ? 'GitHub 暂时限制了检查次数，请稍后再试。'
-            : 'GitHub 暂时限制了检查次数，请在 ${_clock(error.retryAfter!)} 之后再试。',
-        UpdateFailure.unavailable => 'GitHub 暂时无法提供版本信息，请稍后重试。',
-        UpdateFailure.corrupted => '下载的安装包不完整或已损坏，请重新下载。',
+            ? l10n.githubIsTemporarilyLimitingUpdateChecks
+            : l10n.githubRateLimitedUntil(_clock(error.retryAfter!)),
+        UpdateFailure.unavailable => l10n.githubCanTProvideVersionInformation,
+        UpdateFailure.corrupted => l10n.theDownloadedInstallerIsIncompleteOr,
       };
 
   static String _clock(DateTime time) {
-    final local = time.toLocal();
-    String two(int v) => v.toString().padLeft(2, '0');
-    return '${two(local.hour)}:${two(local.minute)}';
+    return AppLocale.time(time.toLocal());
   }
 
   @override

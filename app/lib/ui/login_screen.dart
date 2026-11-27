@@ -6,6 +6,7 @@ import '../models/models.dart';
 import '../state/drawer_controller.dart';
 import 'phone_page.dart';
 import 'theme.dart';
+import '../l10n/l10n.dart';
 
 enum _AuthMode { login, register, resetPassword }
 
@@ -107,7 +108,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final email = _emailCtrl.text.trim();
     if (email.isEmpty || !email.contains('@')) {
       setState(() {
-        _error = '请先填写有效的邮箱地址';
+        _error = l10n.enterAValidEmailAddressFirst;
         _info = null;
       });
       return;
@@ -125,7 +126,7 @@ class _LoginScreenState extends State<LoginScreen> {
       );
       if (mounted) {
         _startCooldown();
-        setState(() => _info = '验证码已发送，请查收邮件（10 分钟内有效）');
+        setState(() => _info = l10n.verificationCodeSentCheckYourEmail);
       }
     } catch (e) {
       if (mounted) {
@@ -159,7 +160,7 @@ class _LoginScreenState extends State<LoginScreen> {
             _userCtrl.text = _emailCtrl.text.trim();
             _codeCtrl.clear();
             _passCtrl.clear();
-            _info = '密码已重置，请使用新密码登录';
+            _info = l10n.passwordResetSignInWithYour;
           });
         }
         return;
@@ -193,7 +194,7 @@ class _LoginScreenState extends State<LoginScreen> {
         (_serverConfig?.inviteCodeRequired ?? false) &&
         (inviteCode == null || inviteCode.isEmpty)) {
       setState(() {
-        _error = '当前服务器需要邀请码，请先填写邀请码再使用 Google 注册';
+        _error = l10n.thisServerRequiresAnInvitationCode;
         _info = null;
       });
       return;
@@ -236,7 +237,7 @@ class _LoginScreenState extends State<LoginScreen> {
         await widget.controller.windowService.openExternalUrl(uri.toString())) {
       return;
     }
-    if (mounted) setState(() => _error = '请先填写有效的服务器地址。');
+    if (mounted) setState(() => _error = l10n.enterAValidServerAddressFirst);
   }
 
   @override
@@ -255,9 +256,9 @@ class _LoginScreenState extends State<LoginScreen> {
     final showGoogleBtn = cfg == null || cfg.googleEnabled;
 
     final submitLabel = switch (_mode) {
-      _AuthMode.login => '继续',
-      _AuthMode.register => '创建账号并连接',
-      _AuthMode.resetPassword => '确认重置密码',
+      _AuthMode.login => l10n.continueLabel,
+      _AuthMode.register => l10n.createAccountAndConnect,
+      _AuthMode.resetPassword => l10n.resetPassword,
     };
 
     final screen = Scaffold(
@@ -308,8 +309,8 @@ class _LoginScreenState extends State<LoginScreen> {
                     const SizedBox(height: 4),
                     Text(
                       _mode == _AuthMode.resetPassword
-                          ? '通过邮箱验证码重置密码'
-                          : '跨端文件暂存抽屉',
+                          ? l10n.resetYourPasswordWithAnEmail
+                          : l10n.aDrawerForFilesAcrossYour,
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         fontSize: 12,
@@ -329,7 +330,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         children: [
                           MacFormField(
                             controller: _serverCtrl,
-                            label: '服务器',
+                            label: l10n.server,
                             placeholder: 'http://127.0.0.1:8080',
                           ),
                           if (showPasswordForm &&
@@ -338,10 +339,10 @@ class _LoginScreenState extends State<LoginScreen> {
                                 height: 0.5, thickness: 0.5, indent: 12),
                             MacFormField(
                               controller: _userCtrl,
-                              label: '账号',
+                              label: l10n.account,
                               placeholder: _mode == _AuthMode.login
-                                  ? '用户名或已验证邮箱'
-                                  : '输入用户名',
+                                  ? l10n.usernameOrVerifiedEmail
+                                  : l10n.enterYourUsername,
                             ),
                           ],
                           if (requireEmail ||
@@ -350,7 +351,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                 height: 0.5, thickness: 0.5, indent: 12),
                             MacFormField(
                               controller: _emailCtrl,
-                              label: '邮箱',
+                              label: l10n.email,
                               placeholder: 'you@example.com',
                             ),
                             const Divider(
@@ -360,8 +361,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                 Expanded(
                                   child: MacFormField(
                                     controller: _codeCtrl,
-                                    label: '验证码',
-                                    placeholder: '6 位数字',
+                                    label: l10n.verificationCode,
+                                    placeholder: l10n.n6Digits,
                                   ),
                                 ),
                                 Padding(
@@ -381,10 +382,10 @@ class _LoginScreenState extends State<LoginScreen> {
                                     ),
                                     child: Text(
                                       _sendingCode
-                                          ? '发送中…'
+                                          ? l10n.sending
                                           : (_codeCooldown > 0
                                               ? '${_codeCooldown}s'
-                                              : '获取验证码'),
+                                              : l10n.sendCode),
                                       style: TextStyle(
                                         fontSize: 11.5,
                                         color: _codeCooldown > 0
@@ -402,8 +403,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                 height: 0.5, thickness: 0.5, indent: 12),
                             MacFormField(
                               controller: _inviteCtrl,
-                              label: '邀请码',
-                              placeholder: '输入管理员发放的邀请码',
+                              label: l10n.invitationCode,
+                              placeholder: l10n.enterTheInvitationCodeFromYour,
                             ),
                           ],
                           if (showPasswordForm) ...[
@@ -412,9 +413,9 @@ class _LoginScreenState extends State<LoginScreen> {
                             MacFormField(
                               controller: _passCtrl,
                               label: _mode == _AuthMode.resetPassword
-                                  ? '新密码'
-                                  : '密码',
-                              placeholder: '至少 6 位',
+                                  ? l10n.newPassword
+                                  : l10n.password,
+                              placeholder: l10n.atLeast6Characters,
                               obscureText: true,
                               onSubmitted: (_) => _submit(),
                             ),
@@ -489,7 +490,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       if (showPasswordForm) const SizedBox(height: 8),
                       if (_waitingForGoogle) ...[
                         Text(
-                          '请在系统浏览器完成 Google 授权，然后返回 DropDrawer。',
+                          l10n.finishGoogleAuthorizationInYourBrowser,
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             color: MacPalette.textSecondary,
@@ -500,7 +501,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           onPressed: _cancelGoogle
                               ? null
                               : () => setState(() => _cancelGoogle = true),
-                          child: const Text('取消等待'),
+                          child: Text(l10n.stopWaiting),
                         ),
                       ] else
                         SizedBox(
@@ -516,8 +517,8 @@ class _LoginScreenState extends State<LoginScreen> {
                             onPressed: _loading ? null : _signInWithGoogle,
                             child: Text(
                               _mode == _AuthMode.register
-                                  ? '使用 Google 注册'
-                                  : '使用 Google 登录',
+                                  ? l10n.signUpWithGoogle
+                                  : l10n.signInWithGoogle,
                             ),
                           ),
                         ),
@@ -534,7 +535,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                 _info = null;
                               }),
                               child: Text(
-                                '忘记密码？',
+                                l10n.forgotPassword,
                                 style: TextStyle(
                                   color: MacPalette.textSecondary,
                                   fontSize: 11.5,
@@ -544,7 +545,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           TextButton(
                             onPressed: _openPrivacyNotice,
                             child: Text(
-                              '隐私说明',
+                              l10n.privacy,
                               style: TextStyle(
                                 color: MacPalette.textSecondary,
                                 fontSize: 11.5,
@@ -572,8 +573,8 @@ class _LoginScreenState extends State<LoginScreen> {
                               padding: const EdgeInsets.symmetric(vertical: 4),
                               child: Text(
                                 _mode == _AuthMode.login
-                                    ? '还没有账号？创建一个'
-                                    : '已有账号，返回登录',
+                                    ? l10n.noAccountCreateOne
+                                    : l10n.haveAnAccountSignIn,
                                 style: TextStyle(
                                   fontSize: 11.5,
                                   color: MacPalette.textSecondary,

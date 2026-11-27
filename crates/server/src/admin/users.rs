@@ -169,7 +169,7 @@ pub(super) async fn reset_password(
     Json(req): Json<AdminResetPasswordRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
     if req.new_password.len() < 6 {
-        return Err((StatusCode::BAD_REQUEST, "密码长度至少 6 位".to_string()));
+        return Err((StatusCode::BAD_REQUEST, t!("密码长度至少 6 位", "Passwords must be at least 6 characters").to_string()));
     }
     let user = require_user(&state, &id)?;
     let password = req.new_password;
@@ -214,7 +214,7 @@ pub(super) async fn update_policy(
     let user = require_user(&state, &id)?;
     policy.local_quota_bytes = policy.local_quota_bytes.filter(|&v| v > 0);
     if policy.note.as_deref().is_some_and(|n| n.chars().count() > 500) {
-        return Err((StatusCode::BAD_REQUEST, "备注最长 500 个字符".to_string()));
+        return Err((StatusCode::BAD_REQUEST, t!("备注最长 500 个字符", "Notes can be at most 500 characters").to_string()));
     }
     let before = state.db.user_policy(&id).map_err(internal_err)?;
     if !state.db.set_user_policy(&id, &policy).map_err(internal_err)? {
@@ -344,7 +344,7 @@ pub(super) async fn remove_item(
         .map_err(|_| {
             (
                 StatusCode::BAD_GATEWAY,
-                "无法删除云端文件，请稍后重试".to_string(),
+                t!("无法删除云端文件，请稍后重试", "Couldn't delete the cloud file. Try again later").to_string(),
             )
         })?;
     if !deleted {

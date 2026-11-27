@@ -25,44 +25,53 @@ use crate::{auth::issue_user_token, state::AppState};
 const CALLBACK_PATH: &str = "/api/auth/google/callback";
 pub(crate) const LIFETIME: Duration = Duration::from_secs(300);
 pub(crate) const MAX_ATTEMPTS: usize = 1024;
-type LoginError = (StatusCode, &'static str);
-const UNAVAILABLE: LoginError = (
+/// A sign-in failure. The message is a stable English key; [`IntoResponse`]
+/// and the browser page translate it for the request language.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LoginError(StatusCode, &'static str);
+
+impl IntoResponse for LoginError {
+    fn into_response(self) -> Response {
+        (self.0, localized_message(self.1)).into_response()
+    }
+}
+const UNAVAILABLE: LoginError = LoginError(
     StatusCode::SERVICE_UNAVAILABLE,
     "Google sign-in is disabled on this server",
 );
-const EXPIRED: LoginError = (
+const EXPIRED: LoginError = LoginError(
     StatusCode::NOT_FOUND,
     "Google sign-in session is invalid or expired",
 );
-const FAILED: LoginError = (
+const FAILED: LoginError = LoginError(
     StatusCode::BAD_GATEWAY,
     "Google authorization could not be verified. Try signing in again.",
 );
-const DENIED: LoginError = (
+const DENIED: LoginError = LoginError(
     StatusCode::BAD_REQUEST,
     "Google authorization was cancelled or denied",
 );
-const REGISTRATION_CLOSED: LoginError = (
+const REGISTRATION_CLOSED: LoginError = LoginError(
     StatusCode::FORBIDDEN,
     "New account registration is disabled on this server",
 );
-const INVITE_REQUIRED: LoginError = (
+const INVITE_REQUIRED: LoginError = LoginError(
     StatusCode::FORBIDDEN,
-    "当前服务器仅支持邀请码注册，请切换到注册页填写邀请码后再使用 Google 注册",
+    "An invitation code is required to sign up",
 );
-const INVITE_INVALID: LoginError = (
+const INVITE_INVALID: LoginError = LoginError(
     StatusCode::FORBIDDEN,
-    "邀请码无效、已用完或已过期，请核对后重试",
+    "The invitation code is invalid, used up or expired",
 );
-const GOOGLE_SIGNUP_DISABLED: LoginError = (
+const GOOGLE_SIGNUP_DISABLED: LoginError = LoginError(
     StatusCode::FORBIDDEN,
-    "当前服务器已关闭 Google 新用户注册，仅允许已有账号登录",
+    "New Google sign-ups are disabled on this server",
 );
-const EMAIL_DOMAIN_REJECTED: LoginError = (
+const EMAIL_DOMAIN_REJECTED: LoginError = LoginError(
     StatusCode::FORBIDDEN,
-    "该 Google 邮箱域名不在当前服务器允许注册范围内",
+    "This Google email domain is not allowed to sign up",
 );
-const INTERNAL: LoginError = (
+const INTERNAL: LoginError = LoginError(
     StatusCode::INTERNAL_SERVER_ERROR,
     "Could not create a DropDrawer session",
 );
@@ -244,7 +253,7 @@ pub(crate) async fn start(
     let mut attempts = google.attempts.lock().await;
     attempts.retain(|_, attempt| attempt.started.elapsed() < LIFETIME);
     if attempts.len() >= MAX_ATTEMPTS {
-        return Err((
+        return Err(LoginError(
             StatusCode::TOO_MANY_REQUESTS,
             "Too many Google sign-in attempts. Try again shortly.",
         ));
@@ -409,7 +418,7 @@ async fn complete(
         .is_user_disabled_or_missing(&user.id)
         .unwrap_or(true)
     {
-        return Err((
+        return Err(LoginError(
             StatusCode::FORBIDDEN,
             "Your DropDrawer account has been disabled by an administrator",
         ));
@@ -481,15 +490,21 @@ pub(crate) fn random_secret() -> String {
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
-fn localized_browser_detail(message: &'static str) -> &'static str {
+/// The text for a [`LoginError`] key in the request language.
+fn localized_message(message: &'static str) -> &'static str {
     match message {
-        "Google sign-in is disabled on this server" => "当前服务器尚未启用 Google 登录。",
-        "Google sign-in session is invalid or expired" => "登录会话无效或已过期，请返回 DropDrawer 重新发起登录。",
-        "Google authorization could not be verified. Try signing in again." => "无法验证 Google 授权信息，请返回 DropDrawer 重试。",
-        "Google authorization was cancelled or denied" => "你已取消或拒绝了 Google 授权。",
-        "New account registration is disabled on this server" => "当前服务器已关闭新用户注册，仅允许已有账号登录。",
-        "Your DropDrawer account has been disabled by an administrator" => "该账号已被管理员禁用，请联系服务器管理员。",
-        "Could not create a DropDrawer session" => "创建登录会话失败，请稍后重试。",
+        "Google sign-in is disabled on this server" => t!("当前服务器尚未启用 Google 登录。", "Google sign-in isn't enabled on this server."),
+        "Google sign-in session is invalid or expired" => t!("登录会话无效或已过期，请返回 DropDrawer 重新发起登录。", "The sign-in session is invalid or expired. Return to DropDrawer and sign in again."),
+        "Google authorization could not be verified. Try signing in again." => t!("无法验证 Google 授权信息，请返回 DropDrawer 重试。", "Google authorization couldn't be verified. Return to DropDrawer and try again."),
+        "Google authorization was cancelled or denied" => t!("你已取消或拒绝了 Google 授权。", "You canceled or denied Google authorization."),
+        "New account registration is disabled on this server" => t!("当前服务器已关闭新用户注册，仅允许已有账号登录。", "This server doesn't accept new accounts. Only existing accounts can sign in."),
+        "Your DropDrawer account has been disabled by an administrator" => t!("该账号已被管理员禁用，请联系服务器管理员。", "An administrator has disabled this account. Contact the server administrator."),
+        "Too many Google sign-in attempts. Try again shortly." => t!("Google 登录尝试过于频繁，请稍后再试。", "Too many Google sign-in attempts. Try again shortly."),
+        "Could not create a DropDrawer session" => t!("创建登录会话失败，请稍后重试。", "Couldn't create a DropDrawer session. Try again later."),
+        "An invitation code is required to sign up" => t!("当前服务器仅支持邀请码注册，请切换到注册页填写邀请码后再使用 Google 注册", "This server only accepts sign-ups with an invitation code. Switch to Create account, enter the code, then sign up with Google"),
+        "The invitation code is invalid, used up or expired" => t!("邀请码无效、已用完或已过期，请核对后重试", "The invitation code is invalid, used up or expired. Check it and try again"),
+        "New Google sign-ups are disabled on this server" => t!("当前服务器已关闭 Google 新用户注册，仅允许已有账号登录", "This server doesn't accept new Google sign-ups. Only existing accounts can sign in"),
+        "This Google email domain is not allowed to sign up" => t!("该 Google 邮箱域名不在当前服务器允许注册范围内", "This Google email domain isn't allowed to sign up on this server"),
         _ => message,
     }
 }
@@ -509,9 +524,10 @@ pub(crate) fn render_oauth_result_page(
     } else {
         r#"<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v5.2M12 16.6h.01"/></svg>"#
     };
+    let lang = crate::i18n::current().html_tag();
     let html = format!(
         r#"<!doctype html>
-<html lang="zh-CN">
+<html lang="{lang}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -567,16 +583,16 @@ fn browser_page(result: Result<(), LoginError>) -> Response {
         Ok(()) => render_oauth_result_page(
             StatusCode::OK,
             true,
-            "Google 登录已完成",
-            "授权成功，请返回 DropDrawer 客户端继续使用。",
-            "此标签页可安全关闭",
+            t!("Google 登录已完成", "Google sign-in complete"),
+            t!("授权成功，请返回 DropDrawer 客户端继续使用。", "You're signed in. Return to DropDrawer to continue."),
+            t!("此标签页可安全关闭", "You can close this tab"),
         ),
-        Err((status, message)) => render_oauth_result_page(
+        Err(LoginError(status, message)) => render_oauth_result_page(
             status,
             false,
-            "无法完成 Google 登录",
-            localized_browser_detail(message),
-            "你可以关闭此页面，返回 DropDrawer 重新尝试或更换登录方式",
+            t!("无法完成 Google 登录", "Couldn't finish Google sign-in"),
+            localized_message(message),
+            t!("你可以关闭此页面，返回 DropDrawer 重新尝试或更换登录方式", "You can close this page and return to DropDrawer to try again or use another sign-in method"),
         ),
     }
 }

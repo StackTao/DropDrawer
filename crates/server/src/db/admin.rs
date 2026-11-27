@@ -304,7 +304,7 @@ impl Database {
                  s.code,
                  s.user_id,
                  u.username,
-                 COALESCE(NULLIF(s.title, ''), i.name, '(已删除)'),
+                 COALESCE(NULLIF(s.title, ''), i.name, ''),
                  COALESCE(i.size, 0),
                  s.passcode_hash IS NOT NULL,
                  s.max_downloads,

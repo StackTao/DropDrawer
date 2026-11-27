@@ -126,12 +126,21 @@ struct DropDrawerCoreTests {
         #expect(store.items.isEmpty)
     }
 
-    @Test("Relative time formatting matches Chinese labels")
+    @Test("Relative time labels are localized")
     func relativeDateLabels() {
+        // The test process picks Chinese or English from the machine's languages.
         let now = Date(timeIntervalSince1970: 1_795_660_000)
-        #expect(DateParsing.formatRelative(now.addingTimeInterval(-15), now: now) == "刚刚")
-        #expect(DateParsing.formatRelative(now.addingTimeInterval(-420), now: now) == "7 分钟前")
-        #expect(DateParsing.formatRelative(now.addingTimeInterval(-10800), now: now) == "3 小时前")
+        #expect(["刚刚", "Just now"].contains(DateParsing.formatRelative(now.addingTimeInterval(-15), now: now)))
+        #expect(["1 分钟前", "1 minute ago"].contains(DateParsing.formatRelative(now.addingTimeInterval(-60), now: now)))
+        #expect(["7 分钟前", "7 minutes ago"].contains(DateParsing.formatRelative(now.addingTimeInterval(-420), now: now)))
+        #expect(["3 小时前", "3 hours ago"].contains(DateParsing.formatRelative(now.addingTimeInterval(-10800), now: now)))
+        #expect(["1 小时前", "1 hour ago"].contains(DateParsing.formatRelative(now.addingTimeInterval(-3600), now: now)))
+    }
+
+    @Test("Server requests carry the UI language")
+    func acceptLanguageMatchesTheUILanguage() {
+        #expect(AppLanguage.acceptLanguage == (AppLanguage.isChinese ? "zh-CN" : "en"))
+        #expect(AppLanguage.locale.identifier == (AppLanguage.isChinese ? "zh-Hans" : "en"))
     }
 
     @Test("DropDrawerStore restores persisted session synchronously on init to avoid login flash")

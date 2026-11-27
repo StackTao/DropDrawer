@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:ui' as ui;
 
+import 'package:dropdrawer_app/l10n/l10n.dart';
 import 'package:dropdrawer_app/models/models.dart';
 import 'package:dropdrawer_app/services/drawer_window_service.dart';
 import 'package:dropdrawer_app/state/drawer_controller.dart';
@@ -1056,5 +1057,108 @@ void main() {
     });
     expect(closed.registrationAllowed, isFalse);
     expect(closed.googleEnabled, isFalse);
+  });
+
+  group('English layout', () {
+    setUp(() => AppLocale.apply(AppLanguage.english));
+    tearDown(() => AppLocale.apply(AppLanguage.chinese));
+
+    TransferProgress progress({required String channel, bool awaiting = false}) =>
+        TransferProgress(
+          itemId: 'x',
+          transferred: 990,
+          total: 1000,
+          speedBps: 1024 * 1024,
+          channel: channel,
+          finished: false,
+          awaitingUploadConfirmation: awaiting,
+        );
+
+    testWidgets('desktop edge drawer with transfers', (tester) async {
+      tester.view.physicalSize = const Size(410, 645);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final window = _FakeWindowService(windows: true)
+        ..edgeMode = true
+        ..drawerMode = 'expanded';
+      final ctrl = _TestController(window);
+      addTearDown(ctrl.dispose);
+      ctrl.user = UserProfile(id: 'u1', username: 'alice');
+      ctrl.token = 'tok';
+      ctrl.items.addAll([
+        _item('a', cloud: true),
+        _item('b', name: 'A rather long quarterly report name.pdf'),
+        _item('t', kind: 'text', name: 'note', text: 'hello'),
+      ]);
+      ctrl.activeTransfers['a'] = progress(channel: 'p2p_relay');
+      ctrl.activeTransfers['b'] = progress(channel: 'upload', awaiting: true);
+      ctrl.pendingDrops.add(PendingDrop(id: 'p', name: 'incoming.zip'));
+      await tester.pumpWidget(MaterialApp(home: DrawerScreen(controller: ctrl)));
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      expect(find.textContaining('Drop, choose or paste'), findsOneWidget);
+      expect(find.text('Cancel upload'), findsOneWidget);
+    });
+
+    testWidgets('Windows guide pill fits with larger text', (tester) async {
+      tester.view.physicalSize = const Size(252, 48);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final window = _FakeWindowService(windows: true)
+        ..edgeMode = true
+        ..drawerMode = 'drag_pill';
+      final ctrl = _TestController(window);
+      addTearDown(ctrl.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(1.25)),
+            child: child!,
+          ),
+          home: DrawerScreen(controller: ctrl),
+        ),
+      );
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      final label = find.text(l10n.dragHereToDropIntoThe);
+      expect(tester.getRect(label).right, lessThanOrEqualTo(252));
+    });
+
+    for (final platform in [TargetPlatform.android, TargetPlatform.iOS]) {
+      testWidgets('phone home on ${platform.name}', (tester) async {
+        await _pumpPhone(
+          tester,
+          platform: platform,
+          textScale: 1.3,
+          items: [
+            _item('a', cloud: true),
+            _item('t', kind: 'text', name: 'note', text: 'hello'),
+          ],
+        );
+        expect(tester.takeException(), isNull);
+      });
+    }
+
+    testWidgets('desktop and phone preferences', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      for (final mobile in [false, true]) {
+        tester.view.physicalSize = mobile ? const Size(390, 844) : const Size(410, 645);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final ctrl = _TestController(_FakeWindowService(mobile: mobile, windows: !mobile));
+        addTearDown(ctrl.dispose);
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: buildAppTheme(mobile: mobile, android: false),
+            home: Scaffold(
+              body: PreferencesView(controller: ctrl, onBack: () {}),
+            ),
+          ),
+        );
+        await tester.pump();
+        expect(tester.takeException(), isNull, reason: 'mobile=$mobile');
+        expect(find.text('Language'), findsWidgets);
+      }
+    });
   });
 }

@@ -3,6 +3,8 @@ import PackageDescription
 
 let package = Package(
     name: "DropDrawerCore",
+    // Strings are written in Chinese; Resources/Localizable.xcstrings adds English.
+    defaultLocalization: "zh-Hans",
     platforms: [
         .iOS(.v18),
         .macOS(.v15),
@@ -21,6 +23,7 @@ let package = Package(
         .target(
             name: "DropDrawerCore",
             dependencies: ["DropDrawerP2P"],
+            resources: [.process("Resources")],
             linkerSettings: [
                 .linkedFramework("Security"),
                 .linkedFramework("SystemConfiguration"),

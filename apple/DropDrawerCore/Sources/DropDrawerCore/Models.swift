@@ -312,11 +312,11 @@ public struct StorageBackendSummary: Codable, Sendable, Equatable, Identifiable 
     public var kindDisplayName: String {
         switch kind {
         case "google_drive": "Google Drive"
-        case "quark": "夸克网盘"
-        case "baidu_netdisk": "百度网盘"
+        case "quark": String(localized: "夸克网盘", bundle: Bundle.module)
+        case "baidu_netdisk": String(localized: "百度网盘", bundle: Bundle.module)
         case "s3": "S3 / R2"
         case "web_dav": "WebDAV"
-        case "local": "服务器本地盘"
+        case "local": String(localized: "服务器本地盘", bundle: Bundle.module)
         default: kind
         }
     }
@@ -491,14 +491,14 @@ public struct TransferProgress: Sendable, Equatable {
 
     public var channelLabel: String {
         switch channel {
-        case "preparing": "准备中"
-        case "p2p_connecting": "P2P 连接中"
-        case "p2p_replica": "局域网副本"
-        case "p2p_direct": "P2P 直连"
-        case "p2p_relay": "P2P 加密中继"
-        case "cloud": "云端下载"
-        case "upload": awaitingUploadConfirmation ? "等待存储确认…" : "正在发送文件"
-        case "cancelling": "正在取消…"
+        case "preparing": String(localized: "准备中", bundle: Bundle.module)
+        case "p2p_connecting": String(localized: "P2P 连接中", bundle: Bundle.module)
+        case "p2p_replica": String(localized: "局域网副本", bundle: Bundle.module)
+        case "p2p_direct": String(localized: "P2P 直连", bundle: Bundle.module)
+        case "p2p_relay": String(localized: "P2P 加密中继", bundle: Bundle.module)
+        case "cloud": String(localized: "云端下载", bundle: Bundle.module)
+        case "upload": awaitingUploadConfirmation ? String(localized: "等待存储确认…", bundle: Bundle.module) : String(localized: "正在发送文件", bundle: Bundle.module)
+        case "cancelling": String(localized: "正在取消…", bundle: Bundle.module)
         default: channel
         }
     }
@@ -523,9 +523,9 @@ public enum DropPolicy: String, CaseIterable, Sendable, Identifiable {
 
     public var title: String {
         switch self {
-        case .smart: "智能"
-        case .p2pOnly: "纯 P2P"
-        case .cloudCached: "存云盘"
+        case .smart: String(localized: "智能", bundle: Bundle.module)
+        case .p2pOnly: String(localized: "纯 P2P", bundle: Bundle.module)
+        case .cloudCached: String(localized: "存云盘", bundle: Bundle.module)
         }
     }
 }
@@ -539,9 +539,9 @@ public enum ItemFilterKind: String, CaseIterable, Sendable, Identifiable {
 
     public var title: String {
         switch self {
-        case .all: "全部"
-        case .file: "文件"
-        case .text: "文本"
+        case .all: String(localized: "全部", bundle: Bundle.module)
+        case .file: String(localized: "文件", bundle: Bundle.module)
+        case .text: String(localized: "文本", bundle: Bundle.module)
         }
     }
 }
@@ -607,23 +607,25 @@ public enum DateParsing {
 
     public static func formatRelative(_ date: Date, now: Date = Date()) -> String {
         let diff = now.timeIntervalSince(date)
-        if diff < 60 { return "刚刚" }
-        if diff < 3600 { return "\(Int(diff / 60)) 分钟前" }
-        if diff < 86400 { return "\(Int(diff / 3600)) 小时前" }
+        if diff < 60 { return String(localized: "刚刚", bundle: Bundle.module) }
+        if diff < 3600 { return String(localized: "\(Int(diff / 60)) 分钟前", bundle: Bundle.module, locale: AppLanguage.locale) }
+        if diff < 86400 { return String(localized: "\(Int(diff / 3600)) 小时前", bundle: Bundle.module, locale: AppLanguage.locale) }
         let cal = Calendar.current
-        if cal.isDateInYesterday(date) { return "昨天" }
+        if cal.isDateInYesterday(date) { return String(localized: "昨天", bundle: Bundle.module) }
         let fmt = DateFormatter()
-        fmt.locale = Locale(identifier: "zh_CN")
-        fmt.dateFormat = cal.component(.year, from: date) == cal.component(.year, from: now)
-            ? "M月d日"
-            : "yyyy年M月d日"
+        fmt.locale = AppLanguage.locale
+        fmt.setLocalizedDateFormatFromTemplate(
+            cal.component(.year, from: date) == cal.component(.year, from: now) ? "MMMd" : "yMMMd"
+        )
         return fmt.string(from: date)
     }
 
+    /// Date and time in the app language ("Mar 5, 2026 at 2:03 PM" / "2026年3月5日 14:03").
     public static func formatDateTime(_ date: Date) -> String {
         let fmt = DateFormatter()
-        fmt.locale = Locale(identifier: "zh_CN")
-        fmt.dateFormat = "yyyy-MM-dd HH:mm"
+        fmt.locale = AppLanguage.locale
+        fmt.dateStyle = .medium
+        fmt.timeStyle = .short
         return fmt.string(from: date)
     }
 }

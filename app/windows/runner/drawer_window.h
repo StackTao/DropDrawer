@@ -5,6 +5,7 @@
 #include <flutter/encodable_value.h>
 #include <flutter/method_channel.h>
 
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -49,6 +50,8 @@ class DrawerWindow {
   bool RegisterShortcut();
   bool SetShortcut(UINT key, UINT modifiers);
   std::string ShortcutLabel() const;
+  // Tray menu and dialog text in the app language (see setNativeStrings).
+  std::wstring Text(const char* key, const wchar_t* fallback) const;
   void FinishRecording(bool recorded, bool ok);
 
   HWND window_;
@@ -78,6 +81,7 @@ class DrawerWindow {
   bool modal_open_ = false;
   bool main_drawer_active_ = false;
   int active_transfer_count_ = 0;
+  std::map<std::string, std::wstring> strings_;
   bool dock_left_ = false;
   bool show_taskbar_ = false;
   bool tray_added_ = false;

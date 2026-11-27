@@ -10,6 +10,7 @@
 
     <application
         android:label="DropDrawer"
+        android:localeConfig="@xml/locales_config"
         android:name=".DropDrawerApplication"
         android:icon="@mipmap/ic_launcher">
         <activity

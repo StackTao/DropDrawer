@@ -87,7 +87,7 @@ struct LoginView: View {
                             .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
                         Text("DropDrawer")
                             .font(.title2.weight(.bold))
-                        Text(mode == .resetPassword ? "通过邮箱验证码重置密码" : "跨端文件传输与云端同步")
+                        Text(mode == .resetPassword ? String(localized: "通过邮箱验证码重置密码") : String(localized: "跨端文件传输与云端同步"))
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
@@ -97,7 +97,7 @@ struct LoginView: View {
                 }
 
                 Section {
-                    LabeledContent("服务器") {
+                    LabeledContent(String(localized: "服务器")) {
                         TextField("https://your-server", text: $serverUrl)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
@@ -106,8 +106,8 @@ struct LoginView: View {
                     }
 
                     if showPasswordForm && mode != .resetPassword {
-                        LabeledContent("账号") {
-                            TextField(mode == .login ? "用户名或已验证邮箱" : "输入用户名", text: $username)
+                        LabeledContent(String(localized: "账号")) {
+                            TextField(mode == .login ? String(localized: "用户名或已验证邮箱") : String(localized: "输入用户名"), text: $username)
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled()
                                 .multilineTextAlignment(.trailing)
@@ -115,7 +115,7 @@ struct LoginView: View {
                     }
 
                     if requireEmail || mode == .resetPassword {
-                        LabeledContent("邮箱") {
+                        LabeledContent(String(localized: "邮箱")) {
                             TextField("you@example.com", text: $email)
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled()
@@ -123,8 +123,8 @@ struct LoginView: View {
                                 .multilineTextAlignment(.trailing)
                         }
                         HStack {
-                            Text("验证码")
-                            TextField("6 位数字", text: $emailCode)
+                            Text(String(localized: "验证码"))
+                            TextField(String(localized: "6 位数字"), text: $emailCode)
                                 .keyboardType(.numberPad)
                                 .multilineTextAlignment(.trailing)
                             Button {
@@ -134,7 +134,7 @@ struct LoginView: View {
                                     ProgressView()
                                         .controlSize(.small)
                                 } else {
-                                    Text(cooldownSeconds > 0 ? "\(cooldownSeconds)s" : "获取验证码")
+                                    Text(cooldownSeconds > 0 ? "\(cooldownSeconds)s" : String(localized: "获取验证码"))
                                         .font(.footnote.weight(.medium))
                                 }
                             }
@@ -145,8 +145,8 @@ struct LoginView: View {
                     }
 
                     if requireInvite {
-                        LabeledContent("邀请码") {
-                            TextField("输入管理员邀请码", text: $inviteCode)
+                        LabeledContent(String(localized: "邀请码")) {
+                            TextField(String(localized: "输入管理员邀请码"), text: $inviteCode)
                                 .textInputAutocapitalization(.characters)
                                 .autocorrectionDisabled()
                                 .multilineTextAlignment(.trailing)
@@ -154,8 +154,8 @@ struct LoginView: View {
                     }
 
                     if showPasswordForm {
-                        LabeledContent(mode == .resetPassword ? "新密码" : "密码") {
-                            SecureField("至少 6 位", text: $password)
+                        LabeledContent(mode == .resetPassword ? String(localized: "新密码") : String(localized: "密码")) {
+                            SecureField(String(localized: "至少 6 位"), text: $password)
                                 .multilineTextAlignment(.trailing)
                         }
                     }
@@ -207,10 +207,10 @@ struct LoginView: View {
                                 HStack(spacing: 8) {
                                     if googleBusy {
                                         ProgressView()
-                                        Text("等待 Google 授权…")
+                                        Text(String(localized: "等待 Google 授权…"))
                                     } else {
                                         Image(systemName: "globe")
-                                        Text(mode == .register ? "使用 Google 注册" : "使用 Google 登录")
+                                        Text(mode == .register ? String(localized: "使用 Google 注册") : String(localized: "使用 Google 登录"))
                                             .fontWeight(.medium)
                                     }
                                 }
@@ -224,7 +224,7 @@ struct LoginView: View {
 
                         VStack(spacing: 10) {
                             if showRegisterToggle || mode != .login {
-                                Button(mode == .login ? "还没有账号？创建一个" : "已有账号？返回登录") {
+                                Button(mode == .login ? String(localized: "还没有账号？创建一个") : String(localized: "已有账号？返回登录")) {
                                     withAnimation {
                                         mode = mode == .login ? .register : .login
                                         store.authError = nil
@@ -236,7 +236,7 @@ struct LoginView: View {
 
                             HStack(spacing: 16) {
                                 if showResetEntry {
-                                    Button("忘记密码？") {
+                                    Button(String(localized: "忘记密码？")) {
                                         withAnimation {
                                             mode = .resetPassword
                                             store.authError = nil
@@ -248,7 +248,7 @@ struct LoginView: View {
                                 }
 
                                 if let privacy = URL(string: "\(serverUrl.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "/+$", with: "", options: .regularExpression))/privacy") {
-                                    Button("隐私说明") {
+                                    Button(String(localized: "隐私说明")) {
                                         openURL(privacy)
                                     }
                                     .font(.footnote)
@@ -280,9 +280,9 @@ struct LoginView: View {
 
     private var primaryButtonTitle: String {
         switch mode {
-        case .login: return "继续"
-        case .register: return "创建账号并登录"
-        case .resetPassword: return "确认重置密码"
+        case .login: return String(localized: "继续")
+        case .register: return String(localized: "创建账号并登录")
+        case .resetPassword: return String(localized: "确认重置密码")
         }
     }
 
@@ -311,7 +311,7 @@ struct LoginView: View {
     private func sendVerificationCode() {
         let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedEmail.isEmpty, trimmedEmail.contains("@") else {
-            store.authError = "请先填写有效的邮箱地址"
+            store.authError = String(localized: "请先填写有效的邮箱地址")
             return
         }
         sendingCode = true
@@ -322,7 +322,7 @@ struct LoginView: View {
             defer { sendingCode = false }
             do {
                 try await store.sendEmailCode(server: serverUrl, email: trimmedEmail, purpose: purpose)
-                infoMessage = "验证码已发送，请查收邮件（10 分钟内有效）"
+                infoMessage = String(localized: "验证码已发送，请查收邮件（10 分钟内有效）")
                 startCooldown()
             } catch {
                 store.authError = error.localizedDescription
@@ -360,7 +360,7 @@ struct LoginView: View {
                     username = email.trimmingCharacters(in: .whitespacesAndNewlines)
                     emailCode = ""
                     password = ""
-                    infoMessage = "密码已重置，请使用新密码登录"
+                    infoMessage = String(localized: "密码已重置，请使用新密码登录")
                 }
             } catch {
                 store.authError = error.localizedDescription
@@ -382,7 +382,7 @@ struct LoginView: View {
     private func startGoogleFlow() {
         let trimmedInvite = mode == .register ? inviteCode.trimmingCharacters(in: .whitespacesAndNewlines) : ""
         if mode == .register && requireInvite && trimmedInvite.isEmpty {
-            store.authError = "当前服务器需要邀请码，请先填写邀请码再使用 Google 注册"
+            store.authError = String(localized: "当前服务器需要邀请码，请先填写邀请码再使用 Google 注册")
             infoMessage = nil
             return
         }

@@ -1389,10 +1389,10 @@ impl StorageBackendRecord {
                 format!("Google Drive (folder: {folder_id})")
             }
             StorageBackendConfig::Quark { root_folder_id, .. } => {
-                format!("夸克网盘 (fid: {root_folder_id})")
+                tf!("夸克网盘 (fid: {root_folder_id})", "Quark Drive (fid: {root_folder_id})")
             }
             StorageBackendConfig::BaiduNetdisk { root_path, .. } => {
-                format!("百度网盘 ({root_path})")
+                tf!("百度网盘 ({root_path})", "Baidu Netdisk ({root_path})")
             }
             StorageBackendConfig::WebDav { base_url, .. } => base_url.clone(),
             StorageBackendConfig::S3 {

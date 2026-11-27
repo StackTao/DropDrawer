@@ -301,12 +301,11 @@ impl StorageProvider for BaiduNetdiskProvider {
         let resp = self.http.get(&url).send().await?;
         let quota: BaiduQuotaResp = resp.json().await?;
         if quota.errno != 0 {
-            anyhow::bail!("百度网盘凭证无效 (errno {})", quota.errno);
+            anyhow::bail!("{}", tf!("百度网盘凭证无效 (errno {})", "Baidu Netdisk credentials are invalid (errno {})", quota.errno));
         }
         let used_gb = quota.used as f64 / 1e9;
         let total_gb = quota.total as f64 / 1e9;
-        Ok(format!(
-            "百度网盘已连接 · 已用 {used_gb:.2} GB / {total_gb:.1} GB"
+        Ok(tf!("百度网盘已连接 · 已用 {used_gb:.2} GB / {total_gb:.1} GB", "Baidu Netdisk connected · {used_gb:.2} GB of {total_gb:.1} GB used"
         ))
     }
 }

@@ -184,6 +184,7 @@ section { position: relative; padding-block: clamp(84px, 9.5vw, 136px); }
 .nav-right { display: flex; align-items: center; gap: 10px; }
 .nav-gh { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 10px; border-radius: 8px; font-size: 13px; font-weight: 500; color: rgba(255, 255, 255, 0.68); transition: color 0.16s; }
 .nav-gh:hover { color: #fff; }
+.nav-lang { background: none; border: 0; font-family: inherit; cursor: pointer; }
 @media (max-width: 780px) { .nav-links { display: none; } .nav-right { margin-left: auto; } .nav-gh span { display: none; } }
 
 /* =========================================================
@@ -289,6 +290,9 @@ section { position: relative; padding-block: clamp(84px, 9.5vw, 136px); }
   max-width: 440px;
   text-shadow: 0 2px 24px rgba(0, 0, 0, 0.9), 0 0 36px rgba(0, 0, 0, 0.75);
 }
+html[lang="en"] .hero-center { width: min(820px, 100%); }
+html[lang="en"] .hero h1 { font-size: clamp(38px, 5.6vw, 68px); }
+html[lang="en"] .hero-sub { max-width: 600px; }
 .hero-bottom {
   position: relative;
   z-index: 2;
@@ -1032,6 +1036,10 @@ footer { border-top: 1px solid var(--line); padding-block: 30px calc(30px + env(
       <a href="#download">下载</a>
     </nav>
     <div class="nav-right">
+      <button type="button" class="nav-gh nav-lang" data-lang-switch>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3Z"/></svg>
+        <span>English</span>
+      </button>
       <a class="nav-gh" href="https://github.com/StackTao/DropDrawer" target="_blank" rel="noopener">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.71 1.22 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/></svg>
         <span>GitHub</span>
@@ -1121,7 +1129,7 @@ footer { border-top: 1px solid var(--line); padding-block: 30px calc(30px + env(
                   <span class="fs-lbl">个人收藏</span>
                   <span class="fs-row">隔空投送</span>
                   <span class="fs-row on">桌面</span>
-                  <span class="fs-row">下载</span>
+                  <span class="fs-row" data-en="Downloads">下载</span>
                   <span class="fs-row">文稿</span>
                 </div>
               </div>
@@ -1568,8 +1576,287 @@ footer { border-top: 1px solid var(--line); padding-block: 30px calc(30px + env(
 </footer>
 
 <script>
+/* Site language. The page is written in Chinese; English visitors get the
+ * strings below. Order: ?lang=zh|en, then the visitor's earlier choice, then
+ * the browser languages (Chinese for zh-*, English for everything else).
+ * English entries may hold "singular|plural", picked by the first number. */
+(() => {
+  const KEY = 'dd_site_lang';
+  const EN = {
+    "DropDrawer — 文件拖进边缘，全端即刻取走": "DropDrawer — Drop files at the screen edge, pick them up on any device",
+    "贴边隐身的开源跨端文件抽屉。在线基于 iroh QUIC 端到端直连，离线自动回落到你自己的云盘，支持 macOS、Windows、Android 与 iOS。": "An open-source, cross-platform file drawer that hides at the screen edge. Online it connects devices end to end over iroh QUIC; offline it falls back to your own cloud storage. For macOS, Windows, Android and iOS.",
+    "DropDrawer · 跨端文件抽屉": "DropDrawer · Cross-device file drawer",
+    "贴边隐身的跨端文件抽屉，支持 P2P 传输和自有云盘。": "A cross-device file drawer that hides at the screen edge, with P2P transfer and your own cloud storage.",
+    "DropDrawer 首页": "DropDrawer home",
+    "主导航": "Main navigation",
+    "演示": "Demo",
+    "特性": "Features",
+    "架构": "Architecture",
+    "策略": "Policy",
+    "自托管": "Self-host",
+    "下载": "Download",
+    "拖到这儿，放入跨端抽屉": "Drop here to add to the drawer",
+    "文件拖进边缘": "Drop files at the edge.",
+    "全端即刻取走": "Pick them up anywhere.",
+    "贴边隐身的开源跨端文件抽屉。": "An open-source file drawer that hides at the screen edge.",
+    "在线 P2P 直连，离线自有云盘兜底。": "P2P when devices are online, your own cloud when they're not.",
+    "下载 DropDrawer": "Download DropDrawer",
+    "正式版": "Latest release",
+    "交互演示": "Interactive demo",
+    "自托管服务端": "Self-hosted server",
+    "MIT 开源": "MIT licensed",
+    "拖到右边缘，手机立刻收到": "Drag to the right edge, get it on your phone",
+    "把访达里的文件拖向右侧抽屉，或点「自动演示」看全过程。": "Drag a file from Finder to the drawer on the right, or click \"Play demo\" to watch it all.",
+    "DropDrawer 桌面与手机同步交互演示": "DropDrawer desktop and phone sync demo",
+    "访达": "Finder",
+    "文件": "File",
+    "编辑": "Edit",
+    "显示": "View",
+    "前往": "Go",
+    "周三 14:32": "Wed 2:32 PM",
+    "访达文件列表": "Finder file list",
+    "个人收藏": "Favorites",
+    "隔空投送": "AirDrop",
+    "桌面": "Desktop",
+    "文稿": "Documents",
+    "桌面 · 工作区": "Desktop · Workspace",
+    "3 项 · 拖入抽屉": "3 items · Drag to drawer",
+    "点击展开抽屉": "Click to open the drawer",
+    "macOS 贴边抽屉": "macOS edge drawer",
+    "2 设备在线": "2 online",
+    "拖入、选取或 ⌘V 粘贴": "Drag, pick or paste with ⌘V",
+    "小于 20MB 自动云存 · 大文件纯 P2P 直连": "Under 20 MB goes to the cloud · Larger files go P2P only",
+    "演示抽屉存储策略": "Demo drawer storage policy",
+    "智能(<20M上云)": "Smart (<20 MB to cloud)",
+    "纯 P2P 直连": "P2P only",
+    "强制存云盘": "Always cloud",
+    "抽屉内容 · 3 项": "Drawer · 3 items",
+    "搜索 · 多选 · 全部下载": "Search · Multi-select · Download all",
+    "iroh P2P 就绪 · 局域网与公网直连优先": "iroh P2P ready · LAN and internet direct first",
+    "3 项": "3 items",
+    "iPhone 端抽屉": "iPhone drawer",
+    "选文件": "Files",
+    "选相册": "Photos",
+    "粘贴": "Paste",
+    "iroh P2P 就绪": "iroh P2P ready",
+    "拖入或点击访达中的任意文件。": "Drag or click any file in Finder.",
+    "▶ 自动演示一次": "▶ Play demo",
+    "展开 / 收起": "Open / Close",
+    "重置": "Reset",
+    "不是网盘，": "Not a cloud drive, ",
+    "也不是": "nor a ",
+    "聊天窗口": "chat window",
+    "每一个交互细节都为高频跨端传文件而设计。": "Every detail is built for moving files between devices, many times a day.",
+    "松手立即放入抽屉": "Let go to drop it in",
+    "切换贴边抽屉三态": "Switch between the three drawer states",
+    "01 贴边隐身": "01 Hidden at the edge",
+    "02 拖近引导": "02 Guide on approach",
+    "03 展开接住": "03 Open to catch",
+    "贴边隐身，拖近即现": "Hidden at the edge, there when you drag",
+    "平时极细手柄隐身不打扰；拖起文件靠近屏幕边缘才逐级展开，文件夹自动打包。": "A thin handle stays out of the way. Drag a file toward the screen edge and the drawer opens step by step. Folders are zipped automatically.",
+    "2.4 MB · 云端": "2.4 MB · Cloud",
+    "分享 → DropDrawer": "Share → DropDrawer",
+    "原生相册 & 系统分享直入": "Photos & share sheet",
+    "已同步": "Synced",
+    "iOS & Android 原生集成": "Native on iOS & Android",
+    "Android 可从微信、相册等任意 App「分享 → DropDrawer」；iOS 支持「用 DropDrawer 打开」。收到的照片一键存相册。": "On Android, share from any app to DropDrawer; on iOS, use \"Open in DropDrawer\". Save received photos to your library in one tap.",
+    "交付素材包 · 3 个文件": "Delivery kit · 3 files",
+    "7 天有效 · 2/5 次": "7 days left · 2/5 uses",
+    "复制外链": "Copy link",
+    "可控公网外链分享": "Public share links you control",
+    "无需对方安装，多文件自动打包 ZIP，支持提取码、有效期、次数上限与随时撤销。": "No app needed on the other side. Multiple files are zipped, with optional access code, expiry, download limit, and revoke anytime.",
+    "夸克网盘": "Quark Drive",
+    "百度网盘": "Baidu Netdisk",
+    "本地磁盘": "Local disk",
+    "多后端切换": "Switch backends",
+    "零 Sidecar，直连你的云盘": "No sidecar, straight to your cloud",
+    "所有云盘适配器均内置于 Rust 服务端，无需部署 Alist/OpenList，S3/R2 预签名直链下载。": "Every storage adapter is built into the Rust server. No Alist/OpenList to deploy; S3/R2 downloads use presigned links.",
+    "交互式全局快捷键按键": "Interactive global hotkey keys",
+    "按 ⌥ ⇧ D 或点击按键试试": "Press ⌥ ⇧ D or click the keys",
+    "全局热键与剪贴板直贴": "Global hotkey and clipboard paste",
+    "任何界面一键呼出抽屉；截完图或复制文件后直接 ⌘V 粘贴即刻全端同步。": "Summon the drawer from anywhere. Take a screenshot or copy a file, press ⌘V, and it's on all your devices.",
+    "1.1 GB · 256 KiB 分块": "1.1 GB · 256 KiB chunks",
+    "0x4444 已落盘": "0x4444 saved to disk",
+    "断点续传与 BLAKE3 校验": "Resume and BLAKE3 verification",
+    "断网重连直接从断点续传，整文件哈希校验通过后原子落盘并回传确认。": "After a dropped connection, transfers pick up where they left off. The whole file is hash-checked, saved atomically, and confirmed back.",
+    "在线直连，离线兜底": "Direct online, covered offline",
+    "服务端只做信令与鉴权，文件本体优先端到端加密传输。": "The server only handles signaling and auth. Files travel end-to-end encrypted whenever possible.",
+    "选择网络场景": "Choose a network scenario",
+    "同一 Wi-Fi · 直连": "Same Wi-Fi · Direct",
+    "跨网络 · 打洞升级": "Across networks · Hole punching",
+    "对方离线 · 云端回落": "Recipient offline · Cloud fallback",
+    "DropDrawer 三种传输路径示意图": "Diagram of DropDrawer's three transfer paths",
+    "加密中继": "Encrypted relay",
+    "仅转发密文 · 6s 打洞": "Ciphertext · 6 s punch",
+    "自托管服务端 + 云盘": "Self-hosted server + cloud",
+    "S3 · R2 · 网盘 · 本地": "S3 · R2 · Drives · Local",
+    "小文件留底": "Small files cached,",
+    "大文件直传": "large files go direct",
+    "默认 20 MB 智能阈值，小文件双路径保障，大文件零云盘占用。": "A smart 20 MB threshold by default: small files get both paths, large files take no cloud space.",
+    "选择存储策略": "Choose a storage policy",
+    "智能 · 20MB": "Smart · 20 MB",
+    "文件体积": "File size",
+    "20 MB 阈值": "20 MB threshold",
+    "P2P 直连": "P2P direct",
+    "优先直连": "Direct first",
+    "云盘留底": "Cloud copy",
+    "≤ 20 MB 上传": "≤ 20 MB uploaded",
+    "离线可取": "Available offline",
+    "合盖仍可下": "Sender can sleep",
+    "一条命令，私有部署": "One command, your own server",
+    "单个 Rust 二进制（Axum + SQLite + WebSocket），数据全在自己手里。": "A single Rust binary (Axum + SQLite + WebSocket). Your data stays with you.",
+    "部署方式": "Deployment method",
+    "Cargo 本地": "Cargo (local)",
+    "复制命令": "Copy command",
+    "留空即可，首次启动自动生成高熵密钥并持久化。": "Leave it empty: a strong key is generated and saved on first start.",
+    "创建账号后设为 false 可关闭新用户注册。": "Set to false after creating accounts to close sign-ups.",
+    "可选配置。填写 Google OAuth 客户端 ID、密钥和回调地址。": "Optional. Your Google OAuth client ID, secret and redirect URI.",
+    "全平台原生客户端": "Native apps for every platform",
+    "macOS、Windows 和 Android 支持软件内更新。": "macOS, Windows and Android update in the app.",
+    "原生贴边抽屉、全局热键、拖拽进出访达与自动更新。": "Native edge drawer, global hotkey, drag in and out of Finder, and automatic updates.",
+    "下载 DMG": "Download DMG",
+    "Win32 贴边抽屉、托盘常驻，软件内一键静默升级。": "Win32 edge drawer in the tray, with one-click silent updates in the app.",
+    "下载安装程序": "Download installer",
+    "原生系统相册、系统分享接收、零权限存相册与 P2P。": "Native photo library, system share sheet, saving to Photos without extra permissions, and P2P.",
+    "下载 ARM64 APK": "Download ARM64 APK",
+    "下载通用 APK": "Download universal APK",
+    "适用于 iOS / iPadOS 18 及以上。下载后请自行签名安装。": "For iOS / iPadOS 18 and later. Sign it yourself before installing.",
+    "下载原生 IPA": "Download native IPA",
+    "版本发布说明": "Release notes",
+    "SHA-256 校验清单": "SHA-256 checksums",
+    "下一个文件，丢进抽屉": "Your next file goes in the drawer",
+    "开源、可自托管，文件只在你的设备与云盘间流动。": "Open source and self-hostable. Files move only between your devices and your cloud.",
+    "选择平台下载": "Choose your platform",
+    "GitHub 源码": "Source on GitHub",
+    "页脚链接": "Footer links",
+    "架构文档": "Architecture docs",
+    "更新机制": "How updates work",
+    "隐私政策": "Privacy policy",
+    "问题反馈": "Report an issue",
+    "下载 iOS IPA": "Download the iOS IPA",
+    "下载 Android 版": "Download for Android",
+    "下载 Windows x64 版": "Download for Windows x64",
+    "下载 macOS 版（Apple 芯片）": "Download for macOS (Apple silicon)",
+    "会议纪要 · 架构评审": "Meeting notes · Architecture review",
+    "所有文件仅设备间 P2P 直连 · 不占云盘": "Every file goes P2P between devices · No cloud storage used",
+    "所有文件放入时自动缓存到云盘": "Every file is cached to the cloud when added",
+    "文本 · 已同步": "Text · Synced",
+    "已存云盘": "In the cloud",
+    "P2P · 云端": "P2P · Cloud",
+    "抽屉内容 · {n} 项": "Drawer · {n} item|Drawer · {n} items",
+    "{n} 项": "{n} item|{n} items",
+    "文本": "Text",
+    "建立 QUIC 传输…": "Opening QUIC transfer…",
+    "拖入或点击同步 {fName}": "Drag or click to send {fName}",
+    "云端高速分发": "Served from the cloud",
+    "QUIC 直连 · 46.2 MB/s": "QUIC direct · 46.2 MB/s",
+    "QUIC 直连 · 24.8 MB/s": "QUIC direct · 24.8 MB/s",
+    "{fName}：纯 P2P 直连，不占云盘。": "{fName}: P2P direct, no cloud storage used.",
+    "{fName}：已存云盘，离线可取。": "{fName}: Stored in the cloud, available offline.",
+    "{fName}：P2P 直连 + 云端留底。": "{fName}: P2P direct + cloud copy.",
+    "已复制 ✓": "Copied ✓",
+    "✓ 已呼出演示抽屉": "✓ Demo drawer opened",
+    "✓ 已收起至边缘": "✓ Tucked back to the edge",
+    "BLAKE3 <b>流式校验中…</b>": "BLAKE3 <b>Verifying stream…</b>",
+    "RECEIPT <b>传输中</b>": "RECEIPT <b>Transferring</b>",
+    "62.5% · 断点续传中": "62.5% · Resuming",
+    "OFFSET <b class=\"warn\">692 MB 断点已保留</b>": "OFFSET <b class=\"warn\">692 MB checkpoint kept</b>",
+    "RECEIPT <b class=\"warn\">自动重连…</b>": "RECEIPT <b class=\"warn\">Reconnecting…</b>",
+    "BLAKE3 <b>续传校验中…</b>": "BLAKE3 <b>Verifying resumed data…</b>",
+    "100% · 校验通过": "100% · Verified",
+    "RECEIPT <b class=\"ok\">0x4444 已落盘</b>": "RECEIPT <b class=\"ok\">0x4444 saved to disk</b>",
+    "签发一次性票据": "Issue a one-time ticket",
+    "服务端确认双方在线，签发 10 分钟有效的一次性传输令牌。": "The server confirms both devices are online and issues a one-time transfer token valid for 10 minutes.",
+    "局域网 QUIC 直连": "Direct QUIC on your LAN",
+    "设备间直接建立端到端加密通道，文件不经过你的服务器。": "Devices open an end-to-end encrypted channel. Files never pass through your server.",
+    "BLAKE3 落盘确认": "BLAKE3 delivery check",
+    "收完做整文件校验，原子替换落盘并回传 0x4444 送达回执。": "The whole file is verified, swapped in atomically, and a 0x4444 delivery receipt is sent back.",
+    "加密中继立即起跑": "Start right away over an encrypted relay",
+    "跨 NAT 时先经中继建链，传输秒开，中继仅能看到密文。": "Across NATs the connection starts through a relay so the transfer begins instantly. The relay sees only ciphertext.",
+    "并发 NAT 打洞探测": "Hole punching in parallel",
+    "传输同时后台穿透；6 秒后仍在中继则自动重探直连。": "NAT traversal runs in the background during the transfer. If it's still relayed after 6 seconds, it probes for a direct path again.",
+    "无感升级为直连": "Seamless upgrade to direct",
+    "打洞成功后同一连接直接切到 P2P 直连，进度零中断。": "Once hole punching succeeds, the same connection switches to P2P with no break in progress.",
+    "入屉即写入云盘": "Written to your cloud on drop",
+    "符合策略的文件放入抽屉时已由服务端原生写入你的云盘。": "Files that match your policy are written to your cloud by the server the moment they're added.",
+    "预签名直链取回": "Fetched over presigned links",
+    "来源设备离线时改走云端；S3 / R2 直链不占服务器带宽。": "When the sending device is offline, files come from the cloud. S3 / R2 direct links use none of your server's bandwidth.",
+    "原子替换保护原文件": "Atomic replace protects originals",
+    "先写入同卷临时文件，校验完整后再安全覆盖目标路径。": "Data goes to a temporary file on the same volume and replaces the target only after it's verified.",
+    "超过阈值跳过": "Over threshold, skipped",
+    "合盖仍可取": "Sender can sleep",
+    "需来源在线": "Sender must be online",
+    "始终直连": "Always direct",
+    "绝不上传": "Never uploaded",
+    "跳过做种": "No seeding",
+    "入屉上传": "Uploaded on drop",
+    "随时下载": "Download anytime",
+    "请手动复制": "Copy it manually",
+    "正在加入抽屉…": "Adding to drawer…",
+    "拖入 →": "Drag in →",
+    "14:32": "2:32"
+  };
+  const store = (v) => { try { localStorage.setItem(KEY, v); } catch { /* private mode */ } };
+  const detect = () => {
+    const q = new URLSearchParams(location.search).get('lang');
+    if (q === 'zh' || q === 'en') { store(q); return q; }
+    try { const saved = localStorage.getItem(KEY); if (saved === 'zh' || saved === 'en') return saved; } catch { /* ignore */ }
+    for (const tag of navigator.languages || [navigator.language || '']) {
+      const l = String(tag).toLowerCase().split('-')[0];
+      if (l === 'zh') return 'zh';
+      if (l === 'en') return 'en';
+    }
+    return 'en';
+  };
+  const lang = detect();
+  const has = (k) => Object.prototype.hasOwnProperty.call(EN, k);
+  const pick = (text, vars) => {
+    if (!text.includes('|') || !vars) return text;
+    const n = Number(String(Object.values(vars)[0]).replace(/[^0-9.-]/g, ''));
+    const [one, other] = text.split('|');
+    return n === 1 ? one : other;
+  };
+  const t = (zh, vars) => {
+    let text = lang === 'en' && has(zh) ? pick(EN[zh], vars) : zh;
+    if (vars) text = text.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m));
+    return text;
+  };
+  document.documentElement.lang = lang === 'en' ? 'en' : 'zh-CN';
+  if (lang === 'en') {
+    const tr = (raw) => { const k = raw.trim(); return k && has(k) ? raw.replace(k, EN[k]) : raw; };
+    document.title = tr(document.title);
+    for (const m of document.querySelectorAll('meta[name="description"], meta[property^="og:"]')) {
+      const v = m.getAttribute('content'); if (v) m.setAttribute('content', tr(v));
+    }
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+      acceptNode: (n) => (n.parentElement && /^(SCRIPT|STYLE)$/.test(n.parentElement.tagName) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+    });
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) n.nodeValue = tr(n.nodeValue);
+    for (const el of document.querySelectorAll('[aria-label],[title],[alt]')) {
+      for (const a of ['aria-label', 'title', 'alt']) { const v = el.getAttribute(a); if (v) el.setAttribute(a, tr(v)); }
+    }
+    // Words that read differently in English depending on where they appear.
+    for (const el of document.querySelectorAll('[data-en]')) el.textContent = el.dataset.en;
+  }
+  // The switch names the language it changes to, in that language.
+  for (const b of document.querySelectorAll('[data-lang-switch]')) {
+    const next = lang === 'en' ? 'zh' : 'en';
+    b.querySelector('span').textContent = next === 'zh' ? '中文' : 'English';
+    b.setAttribute('aria-label', next === 'zh' ? '切换到中文' : 'Switch to English');
+    b.lang = next === 'zh' ? 'zh-CN' : 'en';
+    b.addEventListener('click', () => {
+      store(next);
+      const url = new URL(location.href); url.searchParams.delete('lang');
+      location.replace(url.href);
+    });
+  }
+  window.DDSite = Object.freeze({ lang, t });
+})();
+</script>
+<script>
 (() => {
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const { t } = window.DDSite;
   const $ = (s, el = document) => el.querySelector(s);
   const wait = (ms) => new Promise((r) => setTimeout(r, reduce ? 0 : ms));
   const fmt = (mb) => mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : mb >= 1 ? (mb >= 100 ? Math.round(mb) : +mb.toFixed(1)) + ' MB' : Math.round(mb * 1024) + ' KB';
@@ -1773,18 +2060,18 @@ footer { border-top: 1px solid var(--line); padding-block: 30px calc(30px + env(
   let platform;
   if (isIOS) {
     platform = 'ios';
-    ctaLabel.textContent = '下载 iOS IPA';
+    ctaLabel.textContent = t("下载 iOS IPA");
   } else if (/Android/i.test(ua)) {
     platform = 'android';
-    ctaLabel.textContent = '下载 Android 版';
+    ctaLabel.textContent = t("下载 Android 版");
   } else if (/Windows/i.test(ua)) {
     platform = 'windows';
-    ctaLabel.textContent = '下载 Windows x64 版';
+    ctaLabel.textContent = t("下载 Windows x64 版");
     ctaIco.innerHTML = WIN_SVG;
     navDlIco.innerHTML = WIN_SVG;
   } else if (/Macintosh|Mac OS X/i.test(ua)) {
     platform = 'macos';
-    ctaLabel.textContent = '下载 macOS 版（Apple 芯片）';
+    ctaLabel.textContent = t("下载 macOS 版（Apple 芯片）");
     ctaIco.innerHTML = APPLE_SVG;
     navDlIco.innerHTML = APPLE_SVG;
   }
@@ -1849,14 +2136,14 @@ footer { border-top: 1px solid var(--line); padding-block: 30px calc(30px + env(
   const INITIAL_ITEMS = [
     { name: 'Design-preview.png', kind: 'png', mb: 3.2, mode: 'both' },
     { name: 'Release-checklist.pdf', kind: 'pdf', mb: 0.4, mode: 'cloud' },
-    { name: '会议纪要 · 架构评审', kind: 'txt', mb: 0.002, mode: 'cloud', text: true },
+    { name: t("会议纪要 · 架构评审"), kind: 'txt', mb: 0.002, mode: 'cloud', text: true },
   ];
   const THRESHOLD = 20;
   let demoPolicy = 'smart', busy = false;
   const POLICY_SUB = {
-    smart: '小于 20MB 自动云存 · 大文件纯 P2P 直连',
-    p2p: '所有文件仅设备间 P2P 直连 · 不占云盘',
-    cloud: '所有文件放入时自动缓存到云盘',
+    smart: t("小于 20MB 自动云存 · 大文件纯 P2P 直连"),
+    p2p: t("所有文件仅设备间 P2P 直连 · 不占云盘"),
+    cloud: t("所有文件放入时自动缓存到云盘"),
   };
 
   function thumbHtml(kind, sizeClass = '') {
@@ -1864,31 +2151,31 @@ footer { border-top: 1px solid var(--line); padding-block: 30px calc(30px + env(
     return `<span class="fthumb ${kind} ${sizeClass}"></span>`;
   }
   function routeTag(it) {
-    if (it.text) return { cls: 'cloud', text: '文本 · 已同步' };
-    if (it.mode === 'p2p') return { cls: 'p2p', text: 'P2P 直连' };
-    if (it.mode === 'cloud') return { cls: 'cloud', text: '已存云盘' };
-    return { cls: 'p2p', text: 'P2P · 云端' };
+    if (it.text) return { cls: 'cloud', text: t("已同步") };
+    if (it.mode === 'p2p') return { cls: 'p2p', text: t("P2P 直连") };
+    if (it.mode === 'cloud') return { cls: 'cloud', text: t("已存云盘") };
+    return { cls: 'p2p', text: t("P2P · 云端") };
   }
   function updateCounts() {
     const n = dlist.children.length;
-    drawerCount.textContent = `抽屉内容 · ${n} 项`;
-    drawerFootCount.textContent = `${n} 项`;
-    phoneFootCount.textContent = `${n} 项`;
+    drawerCount.textContent = t("抽屉内容 · {n} 项", { n });
+    drawerFootCount.textContent = t("{n} 项", { n });
+    phoneFootCount.textContent = t("{n} 项", { n });
   }
   function makeDrawerItem(it, pending = false) {
     const li = document.createElement('li'); li.className = 'md-item';
     if (pending) {
-      li.innerHTML = `<span class="fthumb txt sm"><span class="spin"></span></span><div><b>${esc(it.name)}</b><small>正在加入抽屉…</small></div><span></span>`;
+      li.innerHTML = `<span class="fthumb txt sm"><span class="spin"></span></span><div><b>${esc(it.name)}</b><small>${t('正在加入抽屉…')}</small></div><span></span>`;
       return li;
     }
     const r = routeTag(it);
-    li.innerHTML = `${thumbHtml(it.kind, 'sm')}<div><b>${esc(it.name)}</b><small><span class="sdot ${r.cls}"></span>${it.text ? '文本' : fmt(it.mb)} · ${r.text}</small></div><div class="md-act" aria-hidden="true"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v8m0 0-3-3m3 3 3-3"/></svg></div>`;
+    li.innerHTML = `${thumbHtml(it.kind, 'sm')}<div><b>${esc(it.name)}</b><small><span class="sdot ${r.cls}"></span>${it.text ? t("文本") : fmt(it.mb)} · ${r.text}</small></div><div class="md-act" aria-hidden="true"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v8m0 0-3-3m3 3 3-3"/></svg></div>`;
     return li;
   }
   function makePhoneItem(it, receiving = false) {
     const li = document.createElement('li'); li.className = 'ios-item';
     const r = routeTag(it);
-    li.innerHTML = `${thumbHtml(it.kind, 'xs')}<div><b>${esc(it.name)}</b><small>${receiving ? '建立 QUIC 传输…' : (it.text ? '文本' : fmt(it.mb)) + ' · ' + r.text}</small></div>`;
+    li.innerHTML = `${thumbHtml(it.kind, 'xs')}<div><b>${esc(it.name)}</b><small>${receiving ? t("建立 QUIC 传输…") : (it.text ? t("文本") : fmt(it.mb)) + ' · ' + r.text}</small></div>`;
     if (receiving) li.insertAdjacentHTML('beforeend', '<span class="ios-bar"><i></i></span>');
     return li;
   }
@@ -1898,14 +2185,14 @@ footer { border-top: 1px solid var(--line); padding-block: 30px calc(30px + env(
     DESKTOP_FILES.forEach((f) => {
       const btn = document.createElement('button');
       btn.type = 'button'; btn.className = 'drag-file'; btn.dataset.id = f.id;
-      btn.setAttribute('aria-label', `拖入或点击同步 ${f.name}`);
-      btn.innerHTML = `${thumbHtml(f.kind)}<div><b>${esc(f.name)}</b><small>${fmt(f.mb)}</small></div><span class="drag-cta">拖入 →</span>`;
+      btn.setAttribute('aria-label', t("拖入或点击同步 {fName}", { fName: f.name }));
+      btn.innerHTML = `${thumbHtml(f.kind)}<div><b>${esc(f.name)}</b><small>${fmt(f.mb)}</small></div><span class="drag-cta">${t('拖入 →')}</span>`;
       filesEl.appendChild(btn);
     });
     dlist.innerHTML = ''; plist.innerHTML = '';
     INITIAL_ITEMS.forEach((it) => { dlist.appendChild(makeDrawerItem(it)); plist.appendChild(makePhoneItem(it)); });
     updateCounts(); desk.dataset.mode = 'open'; resetBtn.hidden = true;
-    hintText.textContent = '拖入或点击访达中的任意文件。';
+    hintText.textContent = t("拖入或点击访达中的任意文件。");
   }
   function resolveMode(mb) { return demoPolicy === 'p2p' ? 'p2p' : demoPolicy === 'cloud' ? 'cloud' : (mb <= THRESHOLD ? 'both' : 'p2p'); }
   async function deliver(f) {
@@ -1919,8 +2206,8 @@ footer { border-top: 1px solid var(--line); padding-block: 30px calc(30px + env(
     const pItem = makePhoneItem(it, true);
     plist.prepend(pItem); trimList(plist, 4); updateCounts();
     const dur = Math.min(2000, Math.max(740, f.mb * 1.7));
-    pItem.querySelector('small').textContent = mode === 'cloud' ? '云端高速分发' : (f.mb > THRESHOLD ? 'QUIC 直连 · 46.2 MB/s' : 'QUIC 直连 · 24.8 MB/s');
-    hintText.textContent = mode === 'p2p' ? `${f.name}：纯 P2P 直连，不占云盘。` : mode === 'cloud' ? `${f.name}：已存云盘，离线可取。` : `${f.name}：P2P 直连 + 云端留底。`;
+    pItem.querySelector('small').textContent = mode === 'cloud' ? t("云端高速分发") : (f.mb > THRESHOLD ? t("QUIC 直连 · 46.2 MB/s") : t("QUIC 直连 · 24.8 MB/s"));
+    hintText.textContent = mode === 'p2p' ? t("{fName}：纯 P2P 直连，不占云盘。", { fName: f.name }) : mode === 'cloud' ? t("{fName}：已存云盘，离线可取。", { fName: f.name }) : t("{fName}：P2P 直连 + 云端留底。", { fName: f.name });
     const bar = pItem.querySelector('.ios-bar > i');
     bar.style.transitionDuration = (reduce ? 0 : dur) + 'ms';
     requestAnimationFrame(() => requestAnimationFrame(() => { bar.style.width = '100%'; }));
@@ -2002,7 +2289,7 @@ footer { border-top: 1px solid var(--line); padding-block: 30px calc(30px + env(
 
   /* ---------- Share Copy ---------- */
   const shareCopyBtn = $('#demo-share-copy');
-  shareCopyBtn.addEventListener('click', () => { shareCopyBtn.textContent = '已复制 ✓'; setTimeout(() => { shareCopyBtn.textContent = '复制外链'; }, 1600); });
+  shareCopyBtn.addEventListener('click', () => { shareCopyBtn.textContent = t("已复制 ✓"); setTimeout(() => { shareCopyBtn.textContent = t("复制外链"); }, 1600); });
 
   /* ---------- Keyboard Plate ---------- */
   const caps = [...document.querySelectorAll('.hw-key')], hkStatus = $('#hk-status');
@@ -2010,7 +2297,7 @@ footer { border-top: 1px solid var(--line); padding-block: 30px calc(30px + env(
   function triggerChord() {
     const open = desk.dataset.mode !== 'open';
     desk.dataset.mode = open ? 'open' : 'collapsed';
-    hkStatus.textContent = open ? '✓ 已呼出演示抽屉' : '✓ 已收起至边缘';
+    hkStatus.textContent = open ? t("✓ 已呼出演示抽屉") : t("✓ 已收起至边缘");
   }
   addEventListener('keydown', (e) => { capFor(e)?.classList.add('down'); if (e.altKey && e.shiftKey && e.code === 'KeyD') { e.preventDefault(); triggerChord(); } });
   addEventListener('keyup', (e) => { capFor(e)?.classList.remove('down'); if (e.key === 'Alt' || e.key === 'Shift') caps.forEach((c) => c.dataset.key === e.key && c.classList.remove('down')); });
@@ -2030,17 +2317,17 @@ footer { border-top: 1px solid var(--line); padding-block: 30px calc(30px + env(
       step = (step + 1) % 24;
       if (step < 10) {
         paintChunks(step + 1, 'run'); resSpeed.textContent = `${Math.round(((step + 1) / 16) * 100)}% · 44.8 MB/s`;
-        resHash.innerHTML = 'BLAKE3 <b>流式校验中…</b>'; resReceipt.innerHTML = 'RECEIPT <b>传输中</b>';
+        resHash.innerHTML = t("BLAKE3 <b>流式校验中…</b>"); resReceipt.innerHTML = t("RECEIPT <b>传输中</b>");
       } else if (step < 12) {
-        paintChunks(10, 'warn'); resSpeed.textContent = '62.5% · 断点续传中';
-        resHash.innerHTML = 'OFFSET <b class="warn">692 MB 断点已保留</b>'; resReceipt.innerHTML = 'RECEIPT <b class="warn">自动重连…</b>';
+        paintChunks(10, 'warn'); resSpeed.textContent = t("62.5% · 断点续传中");
+        resHash.innerHTML = t("OFFSET <b class=\"warn\">692 MB 断点已保留</b>"); resReceipt.innerHTML = t("RECEIPT <b class=\"warn\">自动重连…</b>");
       } else if (step < 18) {
         const done = Math.min(16, 10 + (step - 11)); paintChunks(done, 'run');
         resSpeed.textContent = `${Math.round((done / 16) * 100)}% · 48.1 MB/s`;
-        resHash.innerHTML = 'BLAKE3 <b>续传校验中…</b>'; resReceipt.innerHTML = 'RECEIPT <b>传输中</b>';
+        resHash.innerHTML = t("BLAKE3 <b>续传校验中…</b>"); resReceipt.innerHTML = t("RECEIPT <b>传输中</b>");
       } else {
-        paintChunks(16, 'verified'); resSpeed.textContent = '100% · 校验通过';
-        resHash.innerHTML = 'BLAKE3 <b class="ok">✓ 9f2c…e41a</b>'; resReceipt.innerHTML = 'RECEIPT <b class="ok">0x4444 已落盘</b>';
+        paintChunks(16, 'verified'); resSpeed.textContent = t("100% · 校验通过");
+        resHash.innerHTML = 'BLAKE3 <b class="ok">✓ 9f2c…e41a</b>'; resReceipt.innerHTML = t("RECEIPT <b class=\"ok\">0x4444 已落盘</b>");
       }
     }, 520);
   }
@@ -2050,25 +2337,25 @@ footer { border-top: 1px solid var(--line); padding-block: 30px calc(30px + env(
     lan: {
       tel: 'QUIC DIRECT · END-TO-END ENCRYPTED',
       steps: [
-        ['01', '签发一次性票据', '服务端确认双方在线，签发 10 分钟有效的一次性传输令牌。'],
-        ['02', '局域网 QUIC 直连', '设备间直接建立端到端加密通道，文件不经过你的服务器。'],
-        ['03', 'BLAKE3 落盘确认', '收完做整文件校验，原子替换落盘并回传 0x4444 送达回执。'],
+        ['01', t("签发一次性票据"), t("服务端确认双方在线，签发 10 分钟有效的一次性传输令牌。")],
+        ['02', t("局域网 QUIC 直连"), t("设备间直接建立端到端加密通道，文件不经过你的服务器。")],
+        ['03', t("BLAKE3 落盘确认"), t("收完做整文件校验，原子替换落盘并回传 0x4444 送达回执。")],
       ],
     },
     wan: {
       tel: 'ENCRYPTED RELAY → 6s HOLE PUNCH',
       steps: [
-        ['01', '加密中继立即起跑', '跨 NAT 时先经中继建链，传输秒开，中继仅能看到密文。'],
-        ['02', '并发 NAT 打洞探测', '传输同时后台穿透；6 秒后仍在中继则自动重探直连。'],
-        ['03', '无感升级为直连', '打洞成功后同一连接直接切到 P2P 直连，进度零中断。'],
+        ['01', t("加密中继立即起跑"), t("跨 NAT 时先经中继建链，传输秒开，中继仅能看到密文。")],
+        ['02', t("并发 NAT 打洞探测"), t("传输同时后台穿透；6 秒后仍在中继则自动重探直连。")],
+        ['03', t("无感升级为直连"), t("打洞成功后同一连接直接切到 P2P 直连，进度零中断。")],
       ],
     },
     cloud: {
       tel: 'ZERO SIDECAR · PRESIGNED DIRECT URL',
       steps: [
-        ['01', '入屉即写入云盘', '符合策略的文件放入抽屉时已由服务端原生写入你的云盘。'],
-        ['02', '预签名直链取回', '来源设备离线时改走云端；S3 / R2 直链不占服务器带宽。'],
-        ['03', '原子替换保护原文件', '先写入同卷临时文件，校验完整后再安全覆盖目标路径。'],
+        ['01', t("入屉即写入云盘"), t("符合策略的文件放入抽屉时已由服务端原生写入你的云盘。")],
+        ['02', t("预签名直链取回"), t("来源设备离线时改走云端；S3 / R2 直链不占服务器带宽。")],
+        ['03', t("原子替换保护原文件"), t("先写入同卷临时文件，校验完整后再安全覆盖目标路径。")],
       ],
     },
   };
@@ -2103,17 +2390,17 @@ footer { border-top: 1px solid var(--line); padding-block: 30px calc(30px + env(
     const mb = toMb(val); sizeOut.textContent = fmt(mb); sizeInput.setAttribute('aria-valuetext', fmt(mb));
     const small = mb <= THRESHOLD;
     if (activePolicy === 'smart') {
-      setPill('op-p2p', true, '优先直连');
-      setPill('op-cloud', small, small ? '≤ 20 MB 上传' : '超过阈值跳过');
-      setPill('op-off', small, small ? '合盖仍可取' : '需来源在线');
+      setPill('op-p2p', true, t("优先直连"));
+      setPill('op-cloud', small, small ? t("≤ 20 MB 上传") : t("超过阈值跳过"));
+      setPill('op-off', small, small ? t("合盖仍可取") : t("需来源在线"));
     } else if (activePolicy === 'p2p') {
-      setPill('op-p2p', true, '始终直连');
-      setPill('op-cloud', false, '绝不上传');
-      setPill('op-off', false, '需来源在线');
+      setPill('op-p2p', true, t("始终直连"));
+      setPill('op-cloud', false, t("绝不上传"));
+      setPill('op-off', false, t("需来源在线"));
     } else {
-      setPill('op-p2p', false, '跳过做种');
-      setPill('op-cloud', true, '入屉上传');
-      setPill('op-off', true, '随时下载');
+      setPill('op-p2p', false, t("跳过做种"));
+      setPill('op-cloud', true, t("入屉上传"));
+      setPill('op-off', true, t("随时下载"));
     }
   }
   document.querySelectorAll('[data-policy]').forEach((b) => b.addEventListener('click', () => {
@@ -2140,9 +2427,9 @@ footer { border-top: 1px solid var(--line); padding-block: 30px calc(30px + env(
   document.querySelectorAll('[data-term]').forEach((b) => b.addEventListener('click', () => renderTerm(b.dataset.term)));
   renderTerm('docker');
   copyBtn.addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText(TERM_SNIPPETS[activeTerm].raw); copyBtn.textContent = '已复制 ✓'; }
-    catch { copyBtn.textContent = '请手动复制'; }
-    setTimeout(() => { copyBtn.textContent = '复制命令'; }, 2000);
+    try { await navigator.clipboard.writeText(TERM_SNIPPETS[activeTerm].raw); copyBtn.textContent = t("已复制 ✓"); }
+    catch { copyBtn.textContent = t("请手动复制"); }
+    setTimeout(() => { copyBtn.textContent = t("复制命令"); }, 2000);
   });
 })();
 </script>

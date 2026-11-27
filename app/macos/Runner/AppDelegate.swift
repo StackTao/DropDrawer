@@ -55,7 +55,7 @@ class AppDelegate: FlutterAppDelegate, NSMenuDelegate {
     let isLeft = win?.currentDockSideIsLeft ?? false
 
     let toggleItem = NSMenuItem(
-      title: "展开 / 收起",
+      title: NativeStrings.text("trayToggle", "展开 / 收起"),
       action: #selector(toggleDrawer),
       keyEquivalent: ""
     )
@@ -63,7 +63,7 @@ class AppDelegate: FlutterAppDelegate, NSMenuDelegate {
     menu.addItem(toggleItem)
 
     let modeItem = NSMenuItem(
-      title: isEdge ? "常规窗口" : "边缘抽屉",
+      title: isEdge ? NativeStrings.text("trayRegularWindow", "常规窗口") : NativeStrings.text("trayEdgeDrawer", "边缘抽屉"),
       action: #selector(toggleWindowMode),
       keyEquivalent: ""
     )
@@ -71,7 +71,7 @@ class AppDelegate: FlutterAppDelegate, NSMenuDelegate {
     menu.addItem(modeItem)
 
     let sideItem = NSMenuItem(
-      title: isLeft ? "停靠右侧" : "停靠左侧",
+      title: isLeft ? NativeStrings.text("dockRight", "停靠右侧") : NativeStrings.text("dockLeft", "停靠左侧"),
       action: #selector(toggleDockSide),
       keyEquivalent: ""
     )
@@ -81,7 +81,7 @@ class AppDelegate: FlutterAppDelegate, NSMenuDelegate {
     menu.addItem(NSMenuItem.separator())
 
     let quitItem = NSMenuItem(
-      title: "退出应用",
+      title: NativeStrings.text("quit", "退出应用"),
       action: #selector(quitApp),
       keyEquivalent: "q"
     )
@@ -117,10 +117,14 @@ class AppDelegate: FlutterAppDelegate, NSMenuDelegate {
     }
     let alert = NSAlert()
     alert.alertStyle = .warning
-    alert.messageText = "还有 \(activeCount) 项传输正在进行"
-    alert.informativeText = "退出软件会中断当前传输，下次打开软件时未完成的云盘上传会自动续传。是否仍要退出？"
-    alert.addButton(withTitle: "后台继续")
-    alert.addButton(withTitle: "仍要退出")
+    alert.messageText = NativeStrings.text("quitActiveTitle", "还有 {count} 项传输正在进行")
+      .replacingOccurrences(of: "{count}", with: String(activeCount))
+    alert.informativeText = NativeStrings.text(
+      "quitActiveMessage",
+      "退出软件会中断当前传输，下次打开软件时未完成的云盘上传会自动续传。是否仍要退出？"
+    )
+    alert.addButton(withTitle: NativeStrings.text("quitKeepRunning", "后台继续"))
+    alert.addButton(withTitle: NativeStrings.text("quitAnyway", "仍要退出"))
     let response = alert.runModal()
     if response == .alertSecondButtonReturn {
       return .terminateNow

@@ -84,7 +84,7 @@ public final class DropDrawerStore {
     private func handleSessionRevoked(by client: APIClient) {
         guard api === client, isLoggedIn else { return }
         logout()
-        authError = "登录状态已失效（可能被管理员强制下线或账号已停用），请重新登录"
+        authError = String(localized: "登录状态已失效（可能被管理员强制下线或账号已停用），请重新登录", bundle: Bundle.module)
     }
 
     public var maxItemTtlHours: Int? { clientConfig?.features.maxItemTtlHours }
@@ -152,7 +152,7 @@ public final class DropDrawerStore {
     public var defaultStorageBackendName: String {
         storageBackends.first(where: \.isDefault)?.name
             ?? storageBackends.first?.name
-            ?? "云盘"
+            ?? String(localized: "云盘", bundle: Bundle.module)
     }
 
     public func canDownloadP2P(_ item: DrawerItem) -> Bool {
@@ -299,7 +299,7 @@ public final class DropDrawerStore {
             try? await Task.sleep(for: .seconds(1.5))
         }
         if authError == nil && !isLoggedIn {
-            authError = "Google 登录已超时，请重试。"
+            authError = String(localized: "Google 登录已超时，请重试。", bundle: Bundle.module)
         }
     }
 
@@ -413,13 +413,13 @@ public final class DropDrawerStore {
             storage.deviceId = info.id
         } catch APIError.httpStatus(426, let body) {
             // The administrator requires a newer app version.
-            showToast(body.isEmpty ? "当前版本过低，请更新 DropDrawer" : body)
+            showToast(body.isEmpty ? String(localized: "当前版本过低，请更新 DropDrawer", bundle: Bundle.module) : body)
         } catch APIError.httpStatus(401, let body) {
             // Session revoked or this device was removed by an administrator.
             logout()
-            authError = body.isEmpty ? "登录状态已失效，请重新登录" : body
+            authError = body.isEmpty ? String(localized: "登录状态已失效，请重新登录", bundle: Bundle.module) : body
         } catch {
-            showToast("设备注册失败：\(error.localizedDescription)")
+            showToast(String(localized: "设备注册失败：\(error.localizedDescription)", bundle: Bundle.module))
         }
     }
 
@@ -561,11 +561,11 @@ public final class DropDrawerStore {
                     let wasCancelling = cancellingSends.remove(ev.transferId) != nil
                     outgoingTransfers.removeValue(forKey: ev.transferId)
                     if ev.cancelled {
-                        showToast("已取消发送")
+                        showToast(String(localized: "已取消发送", bundle: Bundle.module))
                     } else if let err = ev.error {
-                        showToast("P2P 发送失败：\(err)")
+                        showToast(String(localized: "P2P 发送失败：\(err)", bundle: Bundle.module))
                     } else if wasCancelling {
-                        showToast("发送已完成")
+                        showToast(String(localized: "发送已完成", bundle: Bundle.module))
                     }
                 } else {
                     outgoingTransfers[ev.transferId] = progress
@@ -583,7 +583,7 @@ public final class DropDrawerStore {
             }
             if ev.cancelled {
                 activeTransfers.removeValue(forKey: ev.itemId)
-                showToast("已取消下载")
+                showToast(String(localized: "已取消下载", bundle: Bundle.module))
                 continue
             }
             activeTransfers[ev.itemId] = progress
@@ -599,17 +599,17 @@ public final class DropDrawerStore {
                     } else if item.cloudReady {
                         Task { await downloadItem(item, cloudOnly: true) }
                     } else {
-                        showToast("下载失败：\(ev.error ?? "")")
+                        showToast(String(localized: "下载失败：\(ev.error ?? "")", bundle: Bundle.module))
                     }
                 }
             } else if ev.finished, ev.savedPath != nil {
                 let transport = switch channel {
-                case "p2p_replica": "局域网副本"
-                case "p2p_direct": "P2P 直连"
-                case "p2p_relay": "P2P 加密中继"
+                case "p2p_replica": String(localized: "局域网副本", bundle: Bundle.module)
+                case "p2p_direct": String(localized: "P2P 直连", bundle: Bundle.module)
+                case "p2p_relay": String(localized: "P2P 加密中继", bundle: Bundle.module)
                 default: "P2P"
                 }
-                showToast("已通过\(transport)下载完成")
+                showToast(String(localized: "已通过\(transport)下载完成", bundle: Bundle.module))
                 activeTransfers.removeValue(forKey: ev.itemId)
             }
         }
@@ -840,9 +840,9 @@ public final class DropDrawerStore {
             )
             items.removeAll { $0.id == created.id }
             items.insert(created, at: 0)
-            showToast("已同步文本")
+            showToast(String(localized: "已同步文本", bundle: Bundle.module))
         } catch {
-            showToast("发送文本失败：\(error.localizedDescription)")
+            showToast(String(localized: "发送文本失败：\(error.localizedDescription)", bundle: Bundle.module))
         }
     }
 
@@ -908,12 +908,12 @@ public final class DropDrawerStore {
                 if shouldUploadCloud && canUploadToCloud {
                     await cacheItemToCloud(itemId: created.id, fileURL: localCopy)
                 } else if shouldUploadCloud {
-                    showToast("服务器已关闭云端上传，文件将只通过 P2P 传输")
+                    showToast(String(localized: "服务器已关闭云端上传，文件将只通过 P2P 传输", bundle: Bundle.module))
                 } else {
-                    showToast("已加入列表（P2P 直连）")
+                    showToast(String(localized: "已加入列表（P2P 直连）", bundle: Bundle.module))
                 }
             } catch {
-                showToast("添加失败：\(error.localizedDescription)")
+                showToast(String(localized: "添加失败：\(error.localizedDescription)", bundle: Bundle.module))
             }
         }
     }
@@ -968,7 +968,7 @@ public final class DropDrawerStore {
     public func cacheItemToCloud(itemId: String, fileURL: URL) async {
         guard let api, activeCancelTokens[itemId] == nil else { return }
         guard canUploadToCloud else {
-            showToast("服务器已关闭云端上传，请使用设备间 P2P 传输")
+            showToast(String(localized: "服务器已关闭云端上传，请使用设备间 P2P 传输", bundle: Bundle.module))
             return
         }
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
@@ -1034,19 +1034,19 @@ public final class DropDrawerStore {
             activeTransfers.removeValue(forKey: itemId)
             activeCancelTokens.removeValue(forKey: itemId)
             syncBackgroundExecutionGuard()
-            showToast("已缓存到云盘")
+            showToast(String(localized: "已缓存到云盘", bundle: Bundle.module))
         } catch is TransferCancelledError {
             pendingCloudUploads.removeValue(forKey: itemId)
             storage.pendingCloudUploads = pendingCloudUploads
             activeTransfers.removeValue(forKey: itemId)
             activeCancelTokens.removeValue(forKey: itemId)
             syncBackgroundExecutionGuard()
-            showToast("已取消上传")
+            showToast(String(localized: "已取消上传", bundle: Bundle.module))
         } catch {
             activeTransfers.removeValue(forKey: itemId)
             activeCancelTokens.removeValue(forKey: itemId)
             syncBackgroundExecutionGuard()
-            showToast("云盘上传失败：\(error.localizedDescription)")
+            showToast(String(localized: "云盘上传失败：\(error.localizedDescription)", bundle: Bundle.module))
         }
     }
 
@@ -1102,7 +1102,7 @@ public final class DropDrawerStore {
             guard let cloud = plan.cloud else {
                 activeTransfers.removeValue(forKey: item.id)
                 activeCancelTokens.removeValue(forKey: item.id)
-                showToast("来源设备离线且未缓存到云盘")
+                showToast(String(localized: "来源设备离线且未缓存到云盘", bundle: Bundle.module))
                 return
             }
 
@@ -1130,15 +1130,15 @@ public final class DropDrawerStore {
             }
             activeTransfers.removeValue(forKey: item.id)
             activeCancelTokens.removeValue(forKey: item.id)
-            showToast("已从云端下载完成")
+            showToast(String(localized: "已从云端下载完成", bundle: Bundle.module))
         } catch is TransferCancelledError {
             activeTransfers.removeValue(forKey: item.id)
             activeCancelTokens.removeValue(forKey: item.id)
-            showToast("已取消下载")
+            showToast(String(localized: "已取消下载", bundle: Bundle.module))
         } catch {
             activeTransfers.removeValue(forKey: item.id)
             activeCancelTokens.removeValue(forKey: item.id)
-            showToast("下载失败：\(error.localizedDescription)")
+            showToast(String(localized: "下载失败：\(error.localizedDescription)", bundle: Bundle.module))
         }
     }
 
@@ -1192,7 +1192,7 @@ public final class DropDrawerStore {
             cleanupLocalFile(for: itemId)
             if p2pReady { _ = try? p2p.unregisterFile(itemId: itemId) }
         } catch {
-            showToast("移出失败：\(error.localizedDescription)")
+            showToast(String(localized: "移出失败：\(error.localizedDescription)", bundle: Bundle.module))
         }
     }
 
@@ -1206,9 +1206,9 @@ public final class DropDrawerStore {
                 cleanupLocalFile(for: id)
                 if p2pReady { _ = try? p2p.unregisterFile(itemId: id) }
             }
-            showToast(clearAll ? "已清空 \(removed.count) 项" : "已移出 \(removed.count) 项")
+            showToast(clearAll ? String(localized: "已清空 \(removed.count) 项", bundle: Bundle.module, locale: AppLanguage.locale) : String(localized: "已移出 \(removed.count) 项", bundle: Bundle.module, locale: AppLanguage.locale))
         } catch {
-            showToast("批量清理失败：\(error.localizedDescription)")
+            showToast(String(localized: "批量清理失败：\(error.localizedDescription)", bundle: Bundle.module))
         }
     }
 
@@ -1265,7 +1265,7 @@ public final class DropDrawerStore {
         pendingCloudUploads = [:]
         storage.pendingCloudUploads = [:]
         thumbnailCache.removeAll()
-        showToast(removedCount > 0 ? "已清理 \(removedCount) 个本地缓存文件" : "本地缓存已清空")
+        showToast(removedCount > 0 ? String(localized: "已清理 \(removedCount) 个本地缓存文件", bundle: Bundle.module, locale: AppLanguage.locale) : String(localized: "本地缓存已清空", bundle: Bundle.module))
         return removedCount
     }
 
@@ -1278,11 +1278,11 @@ public final class DropDrawerStore {
         expiresHours: Int? = nil,
         maxDownloads: Int? = nil
     ) async throws -> ShareLinkInfo {
-        guard let api else { throw APIError.message("未登录") }
-        guard canCreateShares else { throw APIError.message("服务器已关闭外链分享") }
+        guard let api else { throw APIError.message(String(localized: "未登录", bundle: Bundle.module)) }
+        guard canCreateShares else { throw APIError.message(String(localized: "服务器已关闭外链分享", bundle: Bundle.module)) }
         if clientConfig?.features.shareRequiresPasscode == true,
            (passcode ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            throw APIError.message("服务器要求外链必须设置提取码")
+            throw APIError.message(String(localized: "服务器要求外链必须设置提取码", bundle: Bundle.module))
         }
         // Ensure files are uploaded to cloud before creating public share links.
         for item in targetItems where !item.isText && !item.cloudReady {
@@ -1316,9 +1316,9 @@ public final class DropDrawerStore {
         do {
             try await api.deleteShareLink(code: code)
             shareLinks.removeAll { $0.code == code }
-            showToast("已撤销外链")
+            showToast(String(localized: "已撤销外链", bundle: Bundle.module))
         } catch {
-            showToast("撤销失败：\(error.localizedDescription)")
+            showToast(String(localized: "撤销失败：\(error.localizedDescription)", bundle: Bundle.module))
         }
     }
 
@@ -1329,13 +1329,13 @@ public final class DropDrawerStore {
         config: [String: JSONValue],
         isDefault: Bool
     ) async throws {
-        guard let api else { throw APIError.message("未登录") }
+        guard let api else { throw APIError.message(String(localized: "未登录", bundle: Bundle.module)) }
         _ = try await api.createStorageBackend(name: name, config: config, isDefault: isDefault)
         await refreshStorageBackends()
     }
 
     public func getStorageCapacity(id: String) async throws -> Int? {
-        guard let api else { throw APIError.message("未登录") }
+        guard let api else { throw APIError.message(String(localized: "未登录", bundle: Bundle.module)) }
         return try await api.getStorageCapacity(id: id)
     }
 
@@ -1344,7 +1344,7 @@ public final class DropDrawerStore {
         name: String,
         config: [String: JSONValue]
     ) async throws {
-        guard let api else { throw APIError.message("未登录") }
+        guard let api else { throw APIError.message(String(localized: "未登录", bundle: Bundle.module)) }
         let backends = try await api.updateStorageBackend(id: id, name: name, config: config)
         guard self.api === api else { return }
         storageRevision += 1
@@ -1352,7 +1352,7 @@ public final class DropDrawerStore {
     }
 
     public func setDefaultStorageBackend(id: String) async throws {
-        guard let api else { throw APIError.message("未登录") }
+        guard let api else { throw APIError.message(String(localized: "未登录", bundle: Bundle.module)) }
         let backends = try await api.setDefaultStorageBackend(id: id)
         guard self.api === api else { return }
         storageRevision += 1
@@ -1364,14 +1364,14 @@ public final class DropDrawerStore {
         do {
             try await api.deleteStorageBackend(id: id)
             storageBackends.removeAll { $0.id == id }
-            showToast("已删除存储策略")
+            showToast(String(localized: "已删除存储策略", bundle: Bundle.module))
         } catch {
-            showToast("删除失败：\(error.localizedDescription)")
+            showToast(String(localized: "删除失败：\(error.localizedDescription)", bundle: Bundle.module))
         }
     }
 
     public func testStorageBackend(id: String) async throws -> (Bool, String) {
-        guard let api else { throw APIError.message("未登录") }
+        guard let api else { throw APIError.message(String(localized: "未登录", bundle: Bundle.module)) }
         return try await api.checkStorageHealth(id: id)
     }
 
@@ -1382,7 +1382,7 @@ public final class DropDrawerStore {
         folderId: String,
         isDefault: Bool
     ) async throws -> URL {
-        guard let api else { throw APIError.message("未登录") }
+        guard let api else { throw APIError.message(String(localized: "未登录", bundle: Bundle.module)) }
         return try await api.startGoogleOAuth(
             name: name,
             clientId: clientId,

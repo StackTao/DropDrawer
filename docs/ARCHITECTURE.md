@@ -96,6 +96,16 @@ DropDrawer 将**控制面**与**数据面**解耦：
 
 ---
 
+### 多语言
+
+界面支持简体中文和英文，中文是源语言。客户端默认跟随系统语言：系统语言为中文时显示中文，其他语言显示英文。
+
+- **Flutter**：使用 `gen_l10n`（`app/lib/l10n/`），偏好设置里可选「跟随系统 / 简体中文 / English」。Android 13+ 的应用语言设置和 iOS 的应用语言设置都会反映到「跟随系统」。
+- **iOS 原生客户端**：使用 String Catalog，语言在「设置 › DropDrawer › 语言」中切换。
+- **服务端**：客户端每个请求都带 `Accept-Language`。`crate::i18n` 中间件把语言存进 task-local，处理函数用 `t!` / `tf!` 选择消息，验证码邮件、Google 授权结果页和公网外链页也按这个语言输出。没有该请求头的旧客户端得到中文。
+- **管理端**：语言跟随浏览器，右上角或侧边栏可以切换，选择保存在浏览器本地。
+- **官网**：同样跟随浏览器，导航栏有切换按钮，也可以用 `?lang=en` / `?lang=zh` 直接指定。
+
 ## 4. 桌面原生层 (`com.dropdrawer/drawer_window`)
 
 Dart 侧通过 [drawer_window_service.dart](../app/lib/services/drawer_window_service.dart) 统一与 macOS / Windows 原生窗口通信。

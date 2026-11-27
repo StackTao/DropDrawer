@@ -9,6 +9,7 @@ import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../models/models.dart';
+import '../l10n/l10n.dart';
 
 Future<String> _computeFileSha256(String path) async {
   final digest = await sha256.bind(File(path).openRead()).first;
@@ -17,7 +18,7 @@ Future<String> _computeFileSha256(String path) async {
 
 class TransferCancelledException implements Exception {
   @override
-  String toString() => '传输已取消';
+  String toString() => l10n.transferCanceled;
 }
 
 class TransferCancelToken {
@@ -58,6 +59,7 @@ class ApiClient {
   String get _cleanBase => baseUrl.trim().replaceAll(RegExp(r'/+$'), '');
 
   Map<String, String> _headers({bool json = true}) => {
+        'Accept-Language': AppLocale.tag,
         if (json) 'Content-Type': 'application/json',
         if (token != null) 'Authorization': 'Bearer $token',
       };
@@ -65,7 +67,7 @@ class ApiClient {
   Future<AuthPublicConfig?> fetchAuthConfig() async {
     try {
       final resp = await http
-          .get(Uri.parse('$_cleanBase/api/auth/config'))
+          .get(Uri.parse('$_cleanBase/api/auth/config'), headers: _headers(json: false))
           .timeout(const Duration(seconds: 6));
       if (resp.statusCode == 404) return null;
       _check(resp);
@@ -151,22 +153,20 @@ class ApiClient {
       server.host,
     );
     if (server.scheme != 'https' && !(server.scheme == 'http' && loopback)) {
-      throw const HttpException('Google 登录需要 HTTPS 服务器地址。');
+      throw HttpException(l10n.googleSignInRequiresAnHttps);
     }
     final trimmedInvite = inviteCode?.trim() ?? '';
     final response = await http
         .post(
           Uri.parse('$_cleanBase/api/auth/google/start'),
-          headers: trimmedInvite.isNotEmpty
-              ? const {'Content-Type': 'application/json'}
-              : null,
+          headers: _headers(json: trimmedInvite.isNotEmpty),
           body: trimmedInvite.isNotEmpty
               ? jsonEncode({'invite_code': trimmedInvite})
               : null,
         )
         .timeout(const Duration(seconds: 10));
     if (response.statusCode == 404 || response.statusCode == 503) {
-      throw const HttpException('此服务器尚未启用 Google 登录。');
+      throw HttpException(l10n.googleSignInIsNotEnabled);
     }
     _check(response);
     final data = jsonDecode(response.body) as Map<String, dynamic>;
@@ -174,7 +174,7 @@ class ApiClient {
     if (url.scheme != 'https' ||
         url.host != 'accounts.google.com' ||
         url.userInfo.isNotEmpty) {
-      throw const HttpException('服务器返回了无效的 Google 授权地址。');
+      throw HttpException(l10n.theServerReturnedAnInvalidGoogle);
     }
     return (
       url: url.toString(),
@@ -397,7 +397,7 @@ class ApiClient {
         targetUri,
         file,
         {
-          if (token != null) 'Authorization': 'Bearer $token',
+          ..._headers(json: false),
           'Content-Type': 'application/octet-stream',
         },
         total,
@@ -502,6 +502,7 @@ class ApiClient {
       final req = await client.getUrl(uri);
       if (!cloud.isDirectUrl && token != null) {
         req.headers.set('Authorization', 'Bearer $token');
+        req.headers.set('Accept-Language', AppLocale.tag);
       }
       final resp = await req.close();
       if (resp.statusCode < 200 || resp.statusCode >= 300) {
@@ -737,7 +738,10 @@ class ApiClient {
     );
     return IOWebSocketChannel.connect(
       uri,
-      headers: {'Authorization': 'Bearer ${token ?? ''}'},
+      headers: {
+        'Authorization': 'Bearer ${token ?? ''}',
+        'Accept-Language': AppLocale.tag,
+      },
       pingInterval: const Duration(seconds: 20),
       connectTimeout: const Duration(seconds: 10),
     );

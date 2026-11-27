@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../state/app_update_controller.dart';
 import 'theme.dart';
+import '../l10n/l10n.dart';
 
 /// A slim bar above the drawer's footer when an update is available, with a
 /// one-click install. Hidden when there is nothing to install or after "稍后".
@@ -23,15 +24,15 @@ class UpdateBanner extends StatelessWidget {
         final fontSize = mobile ? 14.0 : 11.5;
         final String text;
         if (phase == UpdatePhase.downloading) {
-          text = '正在下载 ${update.version} · ${((updates.progress ?? 0) * 100).round()}%';
+          text = l10n.downloadingUpdateProgress(update.version, ((updates.progress ?? 0) * 100).round());
         } else if (phase == UpdatePhase.installing) {
           text = updates.platform.isDesktop
-              ? '正在安装 ${update.version}，DropDrawer 将自动重启'
-              : (updates.message ?? '正在打开系统安装界面');
+              ? l10n.installingDropdrawerWillRestartAutomatically(update.version)
+              : (updates.message ?? l10n.openingTheSystemInstaller);
         } else if (phase == UpdatePhase.failed) {
-          text = updates.message ?? '更新失败';
+          text = updates.message ?? l10n.updateFailed;
         } else {
-          text = '新版本 ${update.version} 可用';
+          text = l10n.versionIsAvailable(update.version);
         }
         final actionable =
             phase == UpdatePhase.available || phase == UpdatePhase.failed;
@@ -68,16 +69,16 @@ class UpdateBanner extends StatelessWidget {
                     ),
                   ),
                   if (updates.manualPackage != null)
-                    _action('打开安装包', updates.openManualPackage, fontSize, strong: true)
+                    _action(l10n.openInstaller, updates.openManualPackage, fontSize, strong: true)
                   else if (actionable)
                     _action(
-                      phase == UpdatePhase.failed ? '重试' : '更新',
+                      phase == UpdatePhase.failed ? l10n.retry : l10n.update,
                       updates.install,
                       fontSize,
                       strong: true,
                     ),
                   if (actionable)
-                    _action('稍后', updates.dismiss, fontSize),
+                    _action(l10n.later, updates.dismiss, fontSize),
                 ],
               ),
               if (phase == UpdatePhase.downloading || phase == UpdatePhase.installing) ...[

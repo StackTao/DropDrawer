@@ -16,6 +16,7 @@ import '../services/api_client.dart';
 import '../services/drawer_window_service.dart';
 import '../services/p2p_ffi.dart';
 import 'app_update_controller.dart';
+import '../l10n/l10n.dart';
 
 class DropDrawerController extends ChangeNotifier {
   static final bool _tracksLiveP2pPath =
@@ -228,7 +229,7 @@ class DropDrawerController extends ChangeNotifier {
   Future<bool> _handleAuthFailure(Object error) async {
     if (!isLoggedIn || !error.toString().contains('HTTP 401')) return false;
     await logout();
-    statusBanner = '登录状态已失效（可能被管理员强制下线或账号已停用），请重新登录';
+    statusBanner = l10n.yourSessionHasExpiredAnAdministrator;
     return true;
   }
 
@@ -271,7 +272,7 @@ class DropDrawerController extends ChangeNotifier {
     for (final b in storageBackends) {
       if (b.isDefault) return b.name;
     }
-    return storageBackends.isNotEmpty ? storageBackends.first.name : '默认云盘';
+    return storageBackends.isNotEmpty ? storageBackends.first.name : l10n.defaultCloudStorage;
   }
 
   void setBanner(String? message) {
@@ -302,10 +303,10 @@ class DropDrawerController extends ChangeNotifier {
         final upgradeRequired = e.toString().contains('HTTP 426');
         if (upgradeRequired) {
           // The administrator requires a newer app; keep the session and point to the updater.
-          statusBanner = _serverMessage(e) ?? '当前版本过低，请更新 DropDrawer 后再使用';
+          statusBanner = _serverMessage(e) ?? l10n.thisVersionIsTooOldUpdate;
           unawaited(updates.check());
         } else if (isUnauthorized) {
-          statusBanner = '登录状态已失效，请重新登录';
+          statusBanner = l10n.yourSessionHasExpiredSignIn;
           token = null;
           user = null;
           _api = null;
@@ -313,7 +314,7 @@ class DropDrawerController extends ChangeNotifier {
             await windowService.setEdgeDrawerMode(false);
           }
         } else {
-          statusBanner = '暂时无法连接服务器，请下拉刷新重试';
+          statusBanner = l10n.canTReachTheServerRight;
           if (deviceId != null) {
             unawaited(_connectWs());
           }
@@ -392,7 +393,7 @@ class DropDrawerController extends ChangeNotifier {
     final attempt = await api.startGoogleSignIn(inviteCode: inviteCode);
     if (isCancelled()) return;
     if (!await windowService.openExternalUrl(attempt.url)) {
-      throw const HttpException('无法打开系统浏览器。');
+      throw HttpException(l10n.couldnTOpenTheBrowser);
     }
     if (isCancelled()) return;
     onBrowserOpened();
@@ -410,7 +411,7 @@ class DropDrawerController extends ChangeNotifier {
       }
       await Future<void>.delayed(const Duration(seconds: 1));
     }
-    if (!isCancelled()) throw const HttpException('Google 登录已超时，请重试。');
+    if (!isCancelled()) throw HttpException(l10n.googleSignInTimedOutTry);
   }
 
   Future<void> _finishAuthentication(
@@ -518,7 +519,7 @@ class DropDrawerController extends ChangeNotifier {
     if (!isLoggedIn || _api == null || deviceId == null) {
       _pendingSharedFiles.addAll(files);
       _pendingSharedTexts.addAll(texts);
-      statusBanner = '已接收外部分享内容，登录后将自动同步到抽屉';
+      statusBanner = l10n.sharedContentReceivedItWillSync;
       notifyListeners();
       return;
     }
@@ -681,11 +682,11 @@ class DropDrawerController extends ChangeNotifier {
         if (finished) {
           structural = true;
           if (_cancellingSends.remove(transferId) && !cancelled && err == null) {
-            statusBanner = '发送已完成';
+            statusBanner = l10n.sent;
           }
           outgoingTransfers.remove(transferId);
-          if (cancelled) statusBanner = '已取消发送';
-          if (err != null) statusBanner = 'P2P 发送失败：$err';
+          if (cancelled) statusBanner = l10n.sendingCanceled;
+          if (err != null) statusBanner = l10n.p2pSendFailed(err);
         } else {
           outgoingTransfers[transferId] = progress;
         }
@@ -702,7 +703,7 @@ class DropDrawerController extends ChangeNotifier {
       if (cancelled) {
         structural = true;
         activeTransfers.remove(itemId);
-        statusBanner = '已取消下载';
+        statusBanner = l10n.downloadCanceled;
         continue;
       }
       activeTransfers[itemId] = progress;
@@ -719,7 +720,7 @@ class DropDrawerController extends ChangeNotifier {
         }
       } else if (finished && savedPath != null) {
         final transport = switch (channel) {
-          'p2p_replica' => '局域网副本',
+          'p2p_replica' => l10n.lanCopy,
           'p2p_direct' => 'P2P Direct',
           'p2p_relay' => 'P2P Relay',
           _ => 'P2P',
@@ -973,13 +974,13 @@ class DropDrawerController extends ChangeNotifier {
 
     if (FileSystemEntity.isDirectorySync(rawPath)) {
       final folderName = p.basename(rawPath);
-      statusBanner = '正在打包文件夹「$folderName」...';
+      statusBanner = l10n.packingFolder(folderName);
       notifyListeners();
       try {
         filePath = await _archiveFolderToZip(rawPath);
         displayName = '$folderName.zip';
       } catch (e) {
-        statusBanner = '打包文件夹「$folderName」失败: $e';
+        statusBanner = l10n.packingFolderFailed(folderName, e);
         notifyListeners();
         return;
       }
@@ -1029,7 +1030,7 @@ class DropDrawerController extends ChangeNotifier {
       shouldAutoCloud = false;
       shouldRegisterP2p = p2pReady;
       mode = 'p2p_only';
-      statusBanner = '服务器已关闭云端上传，文件将只通过设备间 P2P 传输';
+      statusBanner = l10n.cloudUploadsAreTurnedOffOn;
     }
 
     try {
@@ -1053,17 +1054,17 @@ class DropDrawerController extends ChangeNotifier {
         try {
           p2p.registerFile(created.id, filePath);
         } catch (e) {
-          statusBanner = 'P2P 注册提示: $e';
+          statusBanner = l10n.p2pRegisterNotice(e);
         }
       }
 
       if (shouldAutoCloud) {
         unawaited(cacheItemToCloud(created.id, filePath));
       } else {
-        statusBanner = '已加入「$name」(纯 P2P 端到端直连)';
+        statusBanner = l10n.addedP2pOnly(name);
       }
     } catch (e) {
-      statusBanner = '添加「$name」失败: $e';
+      statusBanner = l10n.addItemFailed(name, e);
     }
     notifyListeners();
   }
@@ -1083,7 +1084,7 @@ class DropDrawerController extends ChangeNotifier {
       transferMode: 'cloud_cached',
       ttlHours: defaultTtlHours > 0 ? defaultTtlHours : null,
     );
-    statusBanner = '文本已同步到所有设备';
+    statusBanner = l10n.textSyncedToAllDevices;
     notifyListeners();
   }
 
@@ -1102,10 +1103,10 @@ class DropDrawerController extends ChangeNotifier {
     if (!_cancellingSends.add(transferId)) return;
     try {
       p2p.cancelTransfer(transferId);
-      setBanner('正在取消发送');
+      setBanner(l10n.cancelingSend);
     } catch (e) {
       _cancellingSends.remove(transferId);
-      setBanner('取消发送失败：$e');
+      setBanner(l10n.cancelSendFailed(e));
     }
   }
 
@@ -1189,16 +1190,16 @@ class DropDrawerController extends ChangeNotifier {
         ? running.first
         : outgoingTransfers.values.firstWhere((t) => !t.finished);
     final itemName =
-        items.where((i) => i.id == primary.itemId).firstOrNull?.name ?? '文件';
+        items.where((i) => i.id == primary.itemId).firstOrNull?.name ?? l10n.file;
     final isUpload = primary.channel == 'upload';
     final pct = primary.total > 0
         ? ((primary.transferred * 100) ~/ primary.total).clamp(0, 100)
         : 0;
     final title = isUpload
-        ? (count > 1 ? '正在上传 $count 个文件到云盘' : '正在上传到云盘')
-        : (count > 1 ? '正在传输 $count 个文件' : '正在传输文件');
+        ? (count > 1 ? l10n.uploadingFilesToCloud(count) : l10n.uploadingToTheCloud)
+        : (count > 1 ? l10n.transferringFiles(count) : l10n.transferringFile);
     final detail = primary.awaitingUploadConfirmation
-        ? '$itemName · 等待云盘确认…'
+        ? l10n.itemAwaitingCloudConfirmation(itemName)
         : (primary.total > 0 ? '$itemName · $pct%' : itemName);
     unawaited(windowService.updateMobileTransferService(
       active: true,
@@ -1217,7 +1218,7 @@ class DropDrawerController extends ChangeNotifier {
   }) async {
     if (_api == null) return;
     if (!canUploadToCloud) {
-      statusBanner = '服务器已关闭云端上传，请使用设备间 P2P 传输';
+      statusBanner = l10n.cloudUploadsAreTurnedOffOn2;
       notifyListeners();
       return;
     }
@@ -1300,12 +1301,12 @@ class DropDrawerController extends ChangeNotifier {
         finished: true,
         savedPath: filePath,
       );
-      statusBanner = '已转存到「$defaultStorageBackendName」';
+      statusBanner = l10n.savedToBackend(defaultStorageBackendName);
     } on TransferCancelledException {
       _pendingCloudUploads.remove(itemId);
       unawaited(_persistPendingCloudUploads());
       activeTransfers.remove(itemId);
-      statusBanner = '已取消上传';
+      statusBanner = l10n.uploadCanceled;
     } catch (e) {
       activeTransfers[itemId] = TransferProgress(
         itemId: itemId,
@@ -1316,7 +1317,7 @@ class DropDrawerController extends ChangeNotifier {
         finished: true,
         error: e.toString(),
       );
-      statusBanner = '上传云端失败: $e';
+      statusBanner = l10n.cloudUploadFailed(e);
     } finally {
       _activeCancelTokens.remove(itemId);
       _syncPlatformTransferState();
@@ -1347,9 +1348,9 @@ class DropDrawerController extends ChangeNotifier {
       if (activeTransfers[item.id]?.channel == 'preparing') {
         _activeCancelTokens.remove(item.id);
         activeTransfers.remove(item.id);
-        setBanner('已取消下载');
+        setBanner(l10n.downloadCanceled);
       } else {
-        setBanner('正在取消下载');
+        setBanner(l10n.cancelingDownload);
       }
     });
     notifyListeners();
@@ -1386,7 +1387,7 @@ class DropDrawerController extends ChangeNotifier {
           try {
             p2p.cancelTransfer(id);
           } catch (e) {
-            setBanner('取消下载失败：$e');
+            setBanner(l10n.cancelDownloadFailed(e));
           }
         });
         activeTransfers[item.id] = TransferProgress(
@@ -1407,11 +1408,11 @@ class DropDrawerController extends ChangeNotifier {
         return;
       }
 
-      throw StateError('来源设备离线，文件尚未存到云端');
+      throw StateError(l10n.theSourceDeviceIsOfflineAnd);
     } catch (e) {
       if (_activeCancelTokens[item.id] != cancel) return;
       activeTransfers.remove(item.id);
-      statusBanner = cancel.isCancelled ? '已取消下载' : '下载失败：$e';
+      statusBanner = cancel.isCancelled ? l10n.downloadCanceled : l10n.downloadFailedError(e);
       notifyListeners();
     } finally {
       if (!_p2pDownloadIds.containsKey(item.id) &&
@@ -1485,11 +1486,11 @@ class DropDrawerController extends ChangeNotifier {
         finished: true,
         savedPath: saved,
       );
-      statusBanner = '已从「${cloud.backendName}」下载完成';
+      statusBanner = l10n.downloadedFromBackend(cloud.backendName);
     } on TransferCancelledException {
       if (_activeCancelTokens[itemId] == cancelToken) {
         activeTransfers.remove(itemId);
-        statusBanner = '已取消下载';
+        statusBanner = l10n.downloadCanceled;
       }
     } catch (e) {
       if (cancelToken.isCancelled) return;
@@ -1502,7 +1503,7 @@ class DropDrawerController extends ChangeNotifier {
         finished: true,
         error: e.toString(),
       );
-      statusBanner = '云端下载失败: $e';
+      statusBanner = l10n.cloudDownloadFailed(e);
     }
     _syncPlatformTransferState();
     notifyListeners();
@@ -1527,12 +1528,12 @@ class DropDrawerController extends ChangeNotifier {
         .where((it) => it.kind == 'file' && (canDownloadP2p(it) || it.cloudReady))
         .toList();
     if (files.isEmpty) {
-      statusBanner = '没有可下载的文件（纯文本或离线未上云文件已跳过）';
+      statusBanner = l10n.nothingToDownloadTextItemsAnd;
       notifyListeners();
       return;
     }
 
-    statusBanner = '正在批量下载 ${files.length} 个文件...';
+    statusBanner = l10n.downloadingFilesBatch(files.length);
     notifyListeners();
     var okCount = 0;
     for (final item in files) {
@@ -1542,7 +1543,7 @@ class DropDrawerController extends ChangeNotifier {
       } catch (_) {}
     }
     final dir = await _resolveDownloadDir();
-    statusBanner = '已发起/完成 $okCount 个文件下载 → $dir';
+    statusBanner = l10n.downloadsStartedTo(okCount, dir);
     notifyListeners();
   }
 
@@ -1555,12 +1556,12 @@ class DropDrawerController extends ChangeNotifier {
             localFilePaths.containsKey(it.id))
         .toList();
     if (eligible.isEmpty) {
-      statusBanner = '所选条目均已存云盘或不在本机';
+      statusBanner = l10n.theSelectedItemsAreAlreadyIn;
       notifyListeners();
       return;
     }
 
-    statusBanner = '正在批量上传 ${eligible.length} 个文件到「$defaultStorageBackendName」...';
+    statusBanner = l10n.uploadingFilesBatchTo(eligible.length, defaultStorageBackendName);
     notifyListeners();
     for (final item in eligible) {
       final path = localFilePaths[item.id];
@@ -1568,7 +1569,7 @@ class DropDrawerController extends ChangeNotifier {
         await cacheItemToCloud(item.id, path);
       }
     }
-    statusBanner = '已完成 ${eligible.length} 个文件的云端转存';
+    statusBanner = l10n.savedFilesToCloud(eligible.length);
     notifyListeners();
   }
 
@@ -1613,15 +1614,15 @@ class DropDrawerController extends ChangeNotifier {
       final deleted = deletedIds.length;
       final failed = result.failedIds.length;
       if (failed > 0) {
-        statusBanner = '已清理 $deleted 项，$failed 项资源删除失败，条目已保留，可重试。';
+        statusBanner = l10n.clearedWithFailures(deleted, failed);
       } else if (clearAll && items.isEmpty) {
-        statusBanner = '已清空抽屉（共清理 $deleted 项）';
+        statusBanner = l10n.drawerCleared(deleted);
       } else {
-        statusBanner = '已移出 $deleted 个条目';
+        statusBanner = l10n.removedItems(deleted);
       }
     } catch (_) {
       if (!identical(api, _api)) return;
-      statusBanner = '清理结果未确认，请稍后重试。';
+      statusBanner = l10n.couldnTConfirmTheCleanupTry;
     }
     notifyListeners();
   }
@@ -1632,11 +1633,11 @@ class DropDrawerController extends ChangeNotifier {
     await prefs.setString('drop_policy', policy);
     final mb = autoCloudThresholdBytes ~/ (1024 * 1024);
     if (policy == 'p2p_only') {
-      statusBanner = '新文件策略：纯 P2P 直连（不上传服务器/云盘）';
+      statusBanner = l10n.newFilesP2pOnlyNothingIs;
     } else if (policy == 'cloud_cached') {
-      statusBanner = '新文件策略：强制上传至「$defaultStorageBackendName」';
+      statusBanner = l10n.policyAlwaysUpload(defaultStorageBackendName);
     } else {
-      statusBanner = '新文件策略：智能分流（<${mb}MB 自动云存，大文件纯 P2P）';
+      statusBanner = l10n.policySmart(mb);
     }
     notifyListeners();
   }
@@ -1665,8 +1666,8 @@ class DropDrawerController extends ChangeNotifier {
       await prefs.setString('custom_download_dir', customDownloadDir!);
     }
     statusBanner = customDownloadDir == null
-        ? '已恢复默认下载目录'
-        : '下载目录已改为 $customDownloadDir';
+        ? l10n.downloadFolderResetToTheDefault
+        : l10n.downloadFolderChanged(customDownloadDir!);
     notifyListeners();
   }
 
@@ -1693,13 +1694,13 @@ class DropDrawerController extends ChangeNotifier {
     int? maxDownloads,
   }) async {
     if (_api == null) {
-      throw StateError('未连接到服务器');
+      throw StateError(l10n.notConnectedToTheServer);
     }
     if (!canCreateShares) {
-      throw StateError('服务器已关闭外链分享');
+      throw StateError(l10n.shareLinksAreTurnedOffOn);
     }
     if (targets.isEmpty) {
-      throw StateError('请至少选择一个条目');
+      throw StateError(l10n.selectAtLeastOneItem);
     }
 
     for (final item in targets) {
@@ -1707,15 +1708,15 @@ class DropDrawerController extends ChangeNotifier {
         final localPath = localFilePaths[item.id];
         if (localPath == null || !File(localPath).existsSync()) {
           throw StateError(
-            '文件「${item.name}」仅存在于来源设备且尚未上云，请在原设备先点“存云盘”后再分享',
+            l10n.fileOnlyOnSourceDevice(item.name),
           );
         }
-        statusBanner = '外链分享前正在自动转存「${item.name}」到云端...';
+        statusBanner = l10n.savingBeforeSharing(item.name);
         notifyListeners();
         await cacheItemToCloud(item.id, localPath);
         final latestTransfer = activeTransfers[item.id];
         if (latestTransfer?.error != null) {
-          throw StateError('「${item.name}」自动上传失败：${latestTransfer!.error}');
+          throw StateError(l10n.autoUploadFailed(item.name, latestTransfer!.error!));
         }
       }
     }
@@ -1735,7 +1736,7 @@ class DropDrawerController extends ChangeNotifier {
             maxDownloads: maxDownloads,
           );
     await refreshShareLinks();
-    statusBanner = '已生成外链分享：${buildFullShareUrl(link.sharePath)}';
+    statusBanner = l10n.shareLinkCreated(buildFullShareUrl(link.sharePath));
     notifyListeners();
     return link;
   }
@@ -1758,7 +1759,7 @@ class DropDrawerController extends ChangeNotifier {
     if (_api == null) return;
     await _api!.deleteShareLink(code);
     shareLinks.removeWhere((e) => e.code == code);
-    statusBanner = '已撤销外链分享';
+    statusBanner = l10n.shareLinkRevoked;
     notifyListeners();
   }
 
@@ -1776,7 +1777,7 @@ class DropDrawerController extends ChangeNotifier {
 
   Future<void> setDefaultStorageBackend(String id) async {
     final api = _api;
-    if (api == null) throw StateError('未连接服务器');
+    if (api == null) throw StateError(l10n.notConnectedToServer);
     final backends = await api.setDefaultStorageBackend(id);
     if (!identical(api, _api)) return;
     _storageRevision++;
@@ -1786,7 +1787,7 @@ class DropDrawerController extends ChangeNotifier {
 
   Future<int?> getStorageCapacity(String id) async {
     final api = _api;
-    if (api == null) throw StateError('未连接服务器');
+    if (api == null) throw StateError(l10n.notConnectedToServer);
     return api.getStorageCapacity(id);
   }
 
@@ -1796,7 +1797,7 @@ class DropDrawerController extends ChangeNotifier {
     required Map<String, dynamic> config,
   }) async {
     final api = _api;
-    if (api == null) throw StateError('未连接服务器');
+    if (api == null) throw StateError(l10n.notConnectedToServer);
     final backends = await api.updateStorageBackend(id, name: name, config: config);
     if (!identical(api, _api)) return;
     _storageRevision++;

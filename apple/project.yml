@@ -4,6 +4,7 @@ options:
   deploymentTarget:
     iOS: "18.0"
   xcodeVersion: "16.0"
+  developmentLanguage: zh-Hans
   createIntermediateGroups: true
   defaultConfig: Debug
 
@@ -51,6 +52,7 @@ targets:
       path: DropDrawerIOS/Info.plist
       properties:
         CFBundleDisplayName: DropDrawer
+        CFBundleLocalizations: [zh-Hans, en]
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         CFBundleURLTypes:
@@ -92,6 +94,7 @@ targets:
       path: DropDrawerShareExtension/Info.plist
       properties:
         CFBundleDisplayName: DropDrawer
+        CFBundleLocalizations: [zh-Hans, en]
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         NSExtension:

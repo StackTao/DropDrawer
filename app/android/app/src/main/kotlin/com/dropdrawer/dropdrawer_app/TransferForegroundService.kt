@@ -70,7 +70,7 @@ class TransferForegroundService : Service() {
             return START_NOT_STICKY
         }
 
-        val title = intent?.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { "DropDrawer 正在传输" }
+        val title = intent?.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { getString(R.string.transfer_notification_title) }
         val detail = intent?.getStringExtra(EXTRA_DETAIL).orEmpty()
         val progress = intent?.getIntExtra(EXTRA_PROGRESS, 0) ?: 0
         val max = intent?.getIntExtra(EXTRA_MAX, 0) ?: 0
@@ -112,13 +112,14 @@ class TransferForegroundService : Service() {
     private fun ensureChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = getSystemService(NotificationManager::class.java) ?: return
-        if (manager.getNotificationChannel(CHANNEL_ID) != null) return
+        // Re-registering an existing channel only updates its name and
+        // description, which keeps them in the current language.
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "文件传输进度",
+            getString(R.string.transfer_channel_name),
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
-            description = "后台上传或下载文件时保持连接并显示进度"
+            description = getString(R.string.transfer_channel_description)
             setShowBadge(false)
         }
         manager.createNotificationChannel(channel)

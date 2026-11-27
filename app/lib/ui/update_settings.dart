@@ -4,6 +4,7 @@ import '../services/app_update_service.dart';
 import '../state/app_update_controller.dart';
 import 'phone_page.dart';
 import 'theme.dart';
+import '../l10n/l10n.dart';
 
 /// "关于与更新" in Preferences: version, automatic checks and manual actions.
 class UpdateSettings extends StatelessWidget {
@@ -42,7 +43,7 @@ class UpdateSettings extends StatelessWidget {
                   ),
                   if (updates.canUpdate)
                     Text(
-                      '自动检查',
+                      l10n.checkAutomatically,
                       style: TextStyle(fontSize: noteSize, color: MacPalette.textSecondary),
                     ),
                   if (updates.canUpdate)
@@ -82,7 +83,7 @@ class UpdateSettings extends StatelessWidget {
                     OutlinedButton(
                       style: OutlinedButton.styleFrom(minimumSize: Size(0, buttonHeight)),
                       onPressed: updates.busy ? null : () => updates.check(),
-                      child: const Text('检查更新'),
+                      child: Text(l10n.checkForUpdates),
                     ),
                   if (updates.update != null && updates.manualPackage == null)
                     FilledButton(
@@ -94,12 +95,12 @@ class UpdateSettings extends StatelessWidget {
                     FilledButton(
                       style: FilledButton.styleFrom(minimumSize: Size(0, buttonHeight)),
                       onPressed: updates.openManualPackage,
-                      child: const Text('打开安装包'),
+                      child: Text(l10n.openInstaller),
                     ),
                   TextButton(
                     style: TextButton.styleFrom(minimumSize: Size(0, buttonHeight)),
                     onPressed: updates.openReleasePage,
-                    child: Text(updates.update == null ? '发布页' : '更新说明'),
+                    child: Text(updates.update == null ? l10n.releases : l10n.releaseNotes),
                   ),
                 ],
               ),
@@ -115,13 +116,13 @@ class UpdateSettings extends StatelessWidget {
   Widget _buildPhone(String? version) {
     final busy = updates.busy;
     return PhoneSection(
-      header: '关于与更新',
+      header: l10n.aboutUpdates,
       footer: _status(),
       children: [
         PhoneRow(title: 'DropDrawer', value: version ?? '—'),
         if (updates.canUpdate)
           PhoneRow(
-            title: '自动检查更新',
+            title: l10n.checkForUpdatesAutomatically,
             trailing: AdaptiveSwitch(
               value: updates.autoCheck,
               onChanged: updates.setAutoCheck,
@@ -149,18 +150,18 @@ class UpdateSettings extends StatelessWidget {
           ),
         if (updates.manualPackage != null)
           PhoneRow(
-            title: '打开安装包',
+            title: l10n.openInstaller,
             action: true,
             onTap: updates.openManualPackage,
           ),
         if (updates.canUpdate)
           PhoneRow(
-            title: '检查更新',
+            title: l10n.checkForUpdates,
             action: true,
             onTap: busy ? null : () => updates.check(),
           ),
         PhoneRow(
-          title: updates.update == null ? '发布页' : '更新说明',
+          title: updates.update == null ? l10n.releases : l10n.releaseNotes,
           action: true,
           onTap: updates.openReleasePage,
         ),
@@ -171,32 +172,32 @@ class UpdateSettings extends StatelessWidget {
   String _installLabel(AppUpdate update) {
     final mb = (update.package.size / 1048576).toStringAsFixed(1);
     return updates.platform.isDesktop
-        ? '更新到 ${update.version}（$mb MB）并重启'
-        : '更新到 ${update.version}（$mb MB）';
+        ? l10n.updateToMbAndRestart(update.version, mb)
+        : l10n.updateToMb(update.version, mb);
   }
 
   String _status() {
     final installed = updates.installed;
-    if (installed == null) return '正在读取版本…';
+    if (installed == null) return l10n.readingVersion;
     if (updates.platform == UpdatePlatform.unsupported) {
-      return '这个平台的新版本请从发布页获取。';
+      return l10n.getNewVersionsForThisPlatform;
     }
     if (!installed.isRelease) {
-      return '开发版本（构建时未指定发布标签），不检查更新。';
+      return l10n.developmentBuildNoReleaseTagAt;
     }
     return switch (updates.phase) {
-      UpdatePhase.idle => updates.autoCheck ? '每天自动检查一次新版本。' : '已关闭自动检查。',
-      UpdatePhase.checking => '正在检查更新…',
+      UpdatePhase.idle => updates.autoCheck ? l10n.checksForANewVersionOnce : l10n.automaticChecksAreOff,
+      UpdatePhase.checking => l10n.checkingForUpdates,
       UpdatePhase.upToDate => updates.hasNewerReleaseForOtherPlatforms
-          ? '已有新版本发布，但还没有这个平台的安装包。'
-          : '已是最新版本。',
-      UpdatePhase.available => '新版本 ${updates.update!.version} 可以更新。',
+          ? l10n.aNewVersionWasReleasedBut
+          : l10n.youReUpToDate,
+      UpdatePhase.available => l10n.versionIsReadyToInstall(updates.update!.version),
       UpdatePhase.downloading =>
-        '正在下载并校验 ${((updates.progress ?? 0) * 100).round()}%…',
+        l10n.downloadingAndVerifyingProgress(((updates.progress ?? 0) * 100).round()),
       UpdatePhase.installing => updates.platform.isDesktop
-          ? '正在安装，DropDrawer 将自动重启。'
-          : (updates.message ?? '正在打开系统安装界面…'),
-      UpdatePhase.failed => updates.message ?? '更新失败，请重试。',
+          ? l10n.installingDropdrawerWillRestartAutomatically2
+          : (updates.message ?? l10n.openingTheSystemInstaller2),
+      UpdatePhase.failed => updates.message ?? l10n.updateFailedTryAgain,
     };
   }
 }

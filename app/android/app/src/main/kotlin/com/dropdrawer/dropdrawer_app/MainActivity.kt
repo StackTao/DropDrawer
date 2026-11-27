@@ -108,7 +108,7 @@ class MainActivity : FlutterActivity() {
             "updateTransferNotification" -> {
                 val active = call.argument<Boolean>("active") ?: false
                 if (active) {
-                    val title = call.argument<String>("title") ?: "DropDrawer 正在传输"
+                    val title = call.argument<String>("title") ?: getString(R.string.transfer_notification_title)
                     val detail = call.argument<String>("detail") ?: ""
                     val progress = call.argument<Int>("progress") ?: 0
                     val max = call.argument<Int>("max") ?: 0
@@ -382,7 +382,7 @@ class MainActivity : FlutterActivity() {
                 }
             }
             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            startActivity(Intent.createChooser(intent, "分享文件"))
+            startActivity(Intent.createChooser(intent, getString(R.string.share_file_chooser)))
             true
         } catch (_: Exception) {
             false
@@ -416,7 +416,7 @@ class MainActivity : FlutterActivity() {
                 type = "text/plain"
                 putExtra(Intent.EXTRA_TEXT, text)
             }
-            startActivity(Intent.createChooser(intent, "分享文本"))
+            startActivity(Intent.createChooser(intent, getString(R.string.share_text_chooser)))
             true
         } catch (_: Exception) {
             false

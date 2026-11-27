@@ -54,6 +54,16 @@ constexpr int kBackdropAcrylic = 3;
 
 constexpr int kShortcutId = 1;
 
+std::wstring WideFromUtf8(const std::string& text) {
+  if (text.empty()) return {};
+  const int length = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, nullptr, 0);
+  if (length <= 0) return {};
+  std::wstring wide(length, L'\0');
+  MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, wide.data(), length);
+  wide.pop_back();
+  return wide;
+}
+
 template <class T>
 T Arg(const Map* args, const char* key, T fallback = {}) {
   if (!args) return fallback;
@@ -259,6 +269,15 @@ void DrawerWindow::HandleCall(const flutter::MethodCall<Value>& call,
     modal_open_ = Arg<bool>(args, "open");
   } else if (method == "setMainDrawerActive") {
     main_drawer_active_ = Arg<bool>(args, "active");
+  } else if (method == "setNativeStrings") {
+    strings_.clear();
+    if (args) {
+      for (const auto& [key, value] : *args) {
+        const auto* k = std::get_if<std::string>(&key);
+        const auto* v = std::get_if<std::string>(&value);
+        if (k && v) strings_[*k] = WideFromUtf8(*v);
+      }
+    }
   } else if (method == "setActiveTransferCount") {
     active_transfer_count_ = std::max(0, Arg<int32_t>(args, "count"));
   } else if (method == "getSystemSettings") {
@@ -651,16 +670,25 @@ bool DrawerWindow::AddTrayIcon() {
   return Shell_NotifyIconW(NIM_ADD, &icon) != FALSE;
 }
 
+std::wstring DrawerWindow::Text(const char* key, const wchar_t* fallback) const {
+  const auto it = strings_.find(key);
+  return it == strings_.end() ? std::wstring(fallback) : it->second;
+}
+
 void DrawerWindow::ShowTrayMenu() {
   POINT cursor{};
   if (!GetCursorPos(&cursor)) return;
   HMENU menu = CreatePopupMenu();
   if (!menu) return;
-  AppendMenuW(menu, MF_STRING, 1, L"展开 / 收起");
-  AppendMenuW(menu, MF_STRING, 2, edge_ ? L"常规窗口" : L"边缘抽屉");
-  AppendMenuW(menu, MF_STRING, 3, dock_left_ ? L"停靠右侧" : L"停靠左侧");
+  AppendMenuW(menu, MF_STRING, 1, Text("trayToggle", L"展开 / 收起").c_str());
+  AppendMenuW(menu, MF_STRING, 2,
+              (edge_ ? Text("trayRegularWindow", L"常规窗口")
+                     : Text("trayEdgeDrawer", L"边缘抽屉")).c_str());
+  AppendMenuW(menu, MF_STRING, 3,
+              (dock_left_ ? Text("dockRight", L"停靠右侧")
+                          : Text("dockLeft", L"停靠左侧")).c_str());
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-  AppendMenuW(menu, MF_STRING, 4, L"退出应用");
+  AppendMenuW(menu, MF_STRING, 4, Text("quit", L"退出应用").c_str());
   const bool was_modal = modal_open_;
   modal_open_ = true;
   SetForegroundWindow(window_);
@@ -678,9 +706,16 @@ void DrawerWindow::ShowTrayMenu() {
     case 3: SetDockLeft(!dock_left_); break;
     case 4:
       if (active_transfer_count_ > 0) {
+        std::wstring title =
+            Text("quitActiveTitle", L"还有 {count} 项传输正在进行");
+        const auto at = title.find(L"{count}");
+        if (at != std::wstring::npos) {
+          title.replace(at, 7, std::to_wstring(active_transfer_count_));
+        }
         const std::wstring msg =
-            L"还有 " + std::to_wstring(active_transfer_count_) +
-            L" 项传输正在进行。\n\n退出软件会中断当前传输，下次打开时未完成的云盘上传会自动续传。是否仍要退出？";
+            title + L"\n\n" +
+            Text("quitActiveMessage",
+                 L"退出软件会中断当前传输，下次打开时未完成的云盘上传会自动续传。是否仍要退出？");
         if (MessageBoxW(window_, msg.c_str(), L"DropDrawer",
                         MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) {
           break;

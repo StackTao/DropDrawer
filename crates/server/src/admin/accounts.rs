@@ -32,7 +32,7 @@ fn validate_admin_username(name: &str) -> Result<(), ApiError> {
             .all(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | '@'))
     {
         return Err(bad_request(
-            "管理员用户名需为 2-32 位字母、数字或 _ - . @",
+            t!("管理员用户名需为 2-32 位字母、数字或 _ - . @", "Administrator usernames must be 2–32 letters, digits or _ - . @"),
         ));
     }
     Ok(())
@@ -40,8 +40,7 @@ fn validate_admin_username(name: &str) -> Result<(), ApiError> {
 
 fn validate_admin_password(password: &str) -> Result<(), ApiError> {
     if password.chars().count() < MIN_PASSWORD_LEN {
-        return Err(bad_request(format!(
-            "管理员密码至少 {MIN_PASSWORD_LEN} 位"
+        return Err(bad_request(tf!("管理员密码至少 {MIN_PASSWORD_LEN} 位", "Administrator passwords must be at least {MIN_PASSWORD_LEN} characters"
         )));
     }
     Ok(())
@@ -66,7 +65,7 @@ fn require_account(state: &AppState, id: &str) -> ApiResult<AdminAccount> {
 /// so a super administrator cannot lock themselves out by accident.
 fn not_self(session: &AdminSession, id: &str) -> Result<(), ApiError> {
     if session.account_id == id {
-        return Err(bad_request("请在「我的账号」中修改自己的账号"));
+        return Err(bad_request(t!("请在「我的账号」中修改自己的账号", "Change your own account under My account")));
     }
     Ok(())
 }
@@ -104,7 +103,7 @@ pub(super) async fn create(
         .map_err(internal_err)?
         .is_some()
     {
-        return Err((StatusCode::CONFLICT, "该管理员用户名已存在".to_string()));
+        return Err((StatusCode::CONFLICT, t!("该管理员用户名已存在", "An administrator with this username already exists").to_string()));
     }
     let id = uuid::Uuid::new_v4().to_string();
     let hash = hash_blocking(req.password).await?;
@@ -229,7 +228,7 @@ pub(super) async fn change_own_password(
         .await
         .unwrap_or(false);
     if !ok {
-        return Err(bad_request("当前密码不正确"));
+        return Err(bad_request(t!("当前密码不正确", "The current password is incorrect")));
     }
     let new_hash = hash_blocking(req.new_password).await?;
     state
@@ -261,7 +260,7 @@ pub(super) async fn totp_setup(
 ) -> ApiResult<Json<TotpSetup>> {
     let account = own_account(&state, &admin)?;
     if account.totp_enabled {
-        return Err(bad_request("两步验证已启用，如需更换请先关闭"));
+        return Err(bad_request(t!("两步验证已启用，如需更换请先关闭", "Two-step verification is already on. Turn it off before setting it up again")));
     }
     let secret = totp::generate_secret();
     state
@@ -285,15 +284,15 @@ fn check_code(state: &AppState, account: &AdminAccount, code: &str) -> Result<()
     let secret = account
         .totp_secret
         .as_deref()
-        .ok_or_else(|| bad_request("请先生成两步验证密钥"))?;
+        .ok_or_else(|| bad_request(t!("请先生成两步验证密钥", "Generate a two-step verification key first")))?;
     let step = totp::verify(secret, code, chrono::Utc::now().timestamp())
-        .ok_or_else(|| bad_request("验证码不正确，请检查手机时间是否准确"))?;
+        .ok_or_else(|| bad_request(t!("验证码不正确，请检查手机时间是否准确", "Incorrect code. Check that your phone's clock is correct")))?;
     if !state
         .db
         .consume_admin_totp_step(&account.id, step)
         .map_err(internal_err)?
     {
-        return Err(bad_request("该验证码已使用，请等待下一个"));
+        return Err(bad_request(t!("该验证码已使用，请等待下一个", "This code has already been used. Wait for the next one")));
     }
     Ok(())
 }
@@ -320,7 +319,7 @@ pub(super) async fn totp_disable(
 ) -> ApiResult<Json<serde_json::Value>> {
     let account = own_account(&state, &admin)?;
     if !account.totp_enabled {
-        return Err(bad_request("两步验证尚未启用"));
+        return Err(bad_request(t!("两步验证尚未启用", "Two-step verification isn't on")));
     }
     check_code(&state, &account, &req.code)?;
     state

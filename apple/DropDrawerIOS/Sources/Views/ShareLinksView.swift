@@ -20,7 +20,7 @@ struct ShareLinksView: View {
     private var isBundle: Bool { targetItems.count > 1 }
 
     private static func hoursLabel(_ h: Int) -> String {
-        h % 24 == 0 ? "\(h / 24) 天" : "\(h) 小时"
+        h % 24 == 0 ? String(localized: "\(h / 24) 天", locale: AppLanguage.locale) : String(localized: "\(h) 小时", locale: AppLanguage.locale)
     }
 
     /// Applies an administrator cap: drops "unlimited" (0) and larger choices and
@@ -34,16 +34,16 @@ struct ShareLinksView: View {
 
     private var expiryOptions: [(Int, String)] {
         Self.capped(
-            [(1, "1 小时"), (24, "24 小时"), (168, "7 天"), (0, "永久")],
+            [(1, String(localized: "1 小时")), (24, String(localized: "24 小时")), (168, String(localized: "7 天")), (0, String(localized: "永久"))],
             cap: store.maxShareExpiresHours
-        ) { "\(Self.hoursLabel($0))（上限）" }
+        ) { String(localized: "\(Self.hoursLabel($0))（上限）") }
     }
 
     private var downloadOptions: [(Int, String)] {
         Self.capped(
-            [(0, "不限"), (1, "1 次（阅后即焚）"), (5, "5 次"), (20, "20 次")],
+            [(0, String(localized: "不限")), (1, String(localized: "1 次（阅后即焚）")), (5, String(localized: "5 次")), (20, String(localized: "20 次"))],
             cap: store.maxShareDownloads
-        ) { "\($0) 次（上限）" }
+        ) { String(localized: "\($0) 次（上限）") }
     }
 
     /// Keeps the selected values inside the administrator's caps.
@@ -75,7 +75,7 @@ struct ShareLinksView: View {
             existingLinksSection
         }
         .listStyle(.insetGrouped)
-        .navigationTitle(targetItems.isEmpty ? "外链管理" : (isBundle ? "创建合集外链" : "创建外链"))
+        .navigationTitle(targetItems.isEmpty ? String(localized: "外链管理") : (isBundle ? String(localized: "创建合集外链") : String(localized: "创建外链")))
         .navigationBarTitleDisplayMode(.inline)
         .refreshable {
             await store.refreshShareLinks()
@@ -84,7 +84,7 @@ struct ShareLinksView: View {
             await store.refreshShareLinks()
         }
         .confirmationDialog(
-            selectedLink?.itemName ?? "外链操作",
+            selectedLink?.itemName ?? String(localized: "外链操作"),
             isPresented: Binding(
                 get: { selectedLink != nil },
                 set: { if !$0 { selectedLink = nil } }
@@ -92,19 +92,19 @@ struct ShareLinksView: View {
             titleVisibility: .visible
         ) {
             if let link = selectedLink {
-                Button("复制链接") {
+                Button(String(localized: "复制链接")) {
                     UIPasteboard.general.string = store.buildFullShareURL(link.sharePath)
-                    store.showToast("已复制外链")
+                    store.showToast(String(localized: "已复制外链"))
                 }
                 if let url = URL(string: store.buildFullShareURL(link.sharePath)) {
-                    Button("在浏览器中打开") {
+                    Button(String(localized: "在浏览器中打开")) {
                         openURL(url)
                     }
                 }
-                Button("撤销外链", role: .destructive) {
+                Button(String(localized: "撤销外链"), role: .destructive) {
                     Task { await store.deleteShareLink(code: link.code) }
                 }
-                Button("取消", role: .cancel) {}
+                Button(String(localized: "取消"), role: .cancel) {}
             }
         }
     }
@@ -123,32 +123,32 @@ struct ShareLinksView: View {
                 }
             }
             if targetItems.count > 8 {
-                Text("以及另外 \(targetItems.count - 8) 项")
+                Text(String(localized: "以及另外 \(targetItems.count - 8) 项", locale: AppLanguage.locale))
                     .foregroundStyle(.secondary)
             }
         } header: {
-            Text(isBundle ? "打包 \(targetItems.count) 项 · \(formatBytes(totalBytes))" : "分享内容")
+            Text(isBundle ? String(localized: "打包 \(targetItems.count) 项 · \(formatBytes(totalBytes))") : String(localized: "分享内容"))
         } footer: {
             if pendingUploadCount > 0 {
-                Text("生成前会先把 \(pendingUploadCount) 个文件上传到「\(store.defaultStorageBackendName)」，拿到链接的人用浏览器即可下载，无需登录。")
+                Text(String(localized: "生成前会先把 \(pendingUploadCount) 个文件上传到「\(store.defaultStorageBackendName)」，拿到链接的人用浏览器即可下载，无需登录。"))
             } else {
-                Text("拿到链接的人用浏览器即可下载，无需登录。")
+                Text(String(localized: "拿到链接的人用浏览器即可下载，无需登录。"))
             }
         }
 
         if isBundle {
-            Section("合集标题") {
-                TextField("\(targetItems.first?.name ?? "文件") 等 \(targetItems.count) 项", text: $bundleTitle)
+            Section(String(localized: "合集标题")) {
+                TextField(String(localized: "\(targetItems.first?.name ?? String(localized: "文件")) 等 \(targetItems.count) 项", locale: AppLanguage.locale), text: $bundleTitle)
             }
         }
 
         Section {
-            Picker("有效期", selection: $expiresHours) {
+            Picker(String(localized: "有效期"), selection: $expiresHours) {
                 ForEach(expiryOptions, id: \.0) { option in
                     Text(option.1).tag(option.0)
                 }
             }
-            Picker("下载次数", selection: $maxDownloads) {
+            Picker(String(localized: "下载次数"), selection: $maxDownloads) {
                 ForEach(downloadOptions, id: \.0) { option in
                     Text(option.1).tag(option.0)
                 }
@@ -157,8 +157,8 @@ struct ShareLinksView: View {
                 clampChoices()
             }
             HStack {
-                Text(store.shareRequiresPasscode ? "提取码（必填）" : "提取码")
-                TextField(store.shareRequiresPasscode ? "必填" : "留空为公开", text: $passcode)
+                Text(store.shareRequiresPasscode ? String(localized: "提取码（必填）") : String(localized: "提取码"))
+                TextField(store.shareRequiresPasscode ? String(localized: "必填") : String(localized: "留空为公开"), text: $passcode)
                     .multilineTextAlignment(.trailing)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -168,14 +168,14 @@ struct ShareLinksView: View {
                     Image(systemName: "sparkles")
                 }
                 .buttonStyle(.borderless)
-                .accessibilityLabel("随机生成提取码")
+                .accessibilityLabel(String(localized: "随机生成提取码"))
             }
         } header: {
-            Text("访问设置")
+            Text(String(localized: "访问设置"))
         } footer: {
             Text(store.shareRequiresPasscode
-                 ? "服务器要求外链必须设置提取码。"
-                 : "提取码留空时，任何拿到链接的人都能下载。")
+                 ? String(localized: "服务器要求外链必须设置提取码。")
+                 : String(localized: "提取码留空时，任何拿到链接的人都能下载。"))
         }
 
         if let errorMessage {
@@ -195,11 +195,11 @@ struct ShareLinksView: View {
                     if creating {
                         ProgressView()
                             .padding(.trailing, 6)
-                        Text("正在生成…")
+                        Text(String(localized: "正在生成…"))
                     } else {
                         Text(pendingUploadCount > 0
-                             ? "上传并生成外链"
-                             : (isBundle ? "生成合集外链并复制" : "生成外链并复制"))
+                             ? String(localized: "上传并生成外链")
+                             : (isBundle ? String(localized: "生成合集外链并复制") : String(localized: "生成外链并复制")))
                             .fontWeight(.semibold)
                     }
                     Spacer()
@@ -211,16 +211,16 @@ struct ShareLinksView: View {
 
     private func createdSection(_ link: ShareLinkInfo) -> some View {
         let copyText = formatCopyText(link, plainPasscode: justCreatedPasscode)
-        return Section("已生成并复制到剪贴板") {
+        return Section(String(localized: "已生成并复制到剪贴板")) {
             Text(copyText)
                 .font(.footnote.monospaced())
                 .textSelection(.enabled)
-            Button("再次复制") {
+            Button(String(localized: "再次复制")) {
                 UIPasteboard.general.string = copyText
-                store.showToast("已复制外链信息")
+                store.showToast(String(localized: "已复制外链信息"))
             }
             if let url = shareOpenURL(link, plainPasscode: justCreatedPasscode) {
-                Button("在浏览器中打开") {
+                Button(String(localized: "在浏览器中打开")) {
                     openURL(url)
                 }
             }
@@ -230,7 +230,7 @@ struct ShareLinksView: View {
     private var existingLinksSection: some View {
         Section {
             if store.shareLinks.isEmpty {
-                Text("还没有外链")
+                Text(String(localized: "还没有外链"))
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(store.shareLinks) { link in
@@ -250,7 +250,7 @@ struct ShareLinksView: View {
                             }
                             Spacer()
                             if inactive {
-                                Text(link.isExpired ? "已过期" : "已用完")
+                                Text(link.isExpired ? String(localized: "已过期") : String(localized: "已用完"))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             } else {
@@ -264,30 +264,30 @@ struct ShareLinksView: View {
                         Button(role: .destructive) {
                             Task { await store.deleteShareLink(code: link.code) }
                         } label: {
-                            Label("撤销", systemImage: "trash")
+                            Label(String(localized: "撤销"), systemImage: "trash")
                         }
                     }
                 }
             }
         } header: {
-            Text("已创建的外链（\(store.shareLinks.count)）")
+            Text(String(localized: "已创建的外链（\(store.shareLinks.count)）"))
         } footer: {
             Text(store.shareLinks.isEmpty
-                 ? "在首页长按或打开任意一项即可创建外链；多选后可打包成合集。"
-                 : "点按外链可复制、打开或撤销，左滑可直接撤销。")
+                 ? String(localized: "在首页长按或打开任意一项即可创建外链；多选后可打包成合集。")
+                 : String(localized: "点按外链可复制、打开或撤销，左滑可直接撤销。"))
         }
     }
 
     private func linkSubtitle(_ link: ShareLinkInfo) -> String {
         var parts: [String] = []
-        if link.itemCount > 1 { parts.append("\(link.itemCount) 项合集") }
+        if link.itemCount > 1 { parts.append(String(localized: "\(link.itemCount) 项合集")) }
         parts.append(formatBytes(link.itemSize))
         if let max = link.maxDownloads {
-            parts.append("已下 \(link.downloadCount)/\(max) 次")
+            parts.append(String(localized: "已下 \(link.downloadCount)/\(max) 次", locale: AppLanguage.locale))
         } else {
-            parts.append("已下 \(link.downloadCount) 次")
+            parts.append(String(localized: "已下 \(link.downloadCount) 次", locale: AppLanguage.locale))
         }
-        if link.hasPasscode { parts.append("需提取码") }
+        if link.hasPasscode { parts.append(String(localized: "需提取码")) }
         return parts.joined(separator: " · ")
     }
 
@@ -308,7 +308,7 @@ struct ShareLinksView: View {
             justCreatedPasscode = trimmedPass.isEmpty ? nil : trimmedPass
             let text = formatCopyText(link, plainPasscode: justCreatedPasscode)
             UIPasteboard.general.string = text
-            store.showToast("已生成外链并复制")
+            store.showToast(String(localized: "已生成外链并复制"))
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -317,7 +317,7 @@ struct ShareLinksView: View {
     private func formatCopyText(_ link: ShareLinkInfo, plainPasscode: String?) -> String {
         let url = store.buildFullShareURL(link.sharePath)
         if let pass = plainPasscode, !pass.isEmpty {
-            return "\(url)\n提取码：\(pass)"
+            return String(localized: "\(url)\n提取码：\(pass)")
         }
         return url
     }

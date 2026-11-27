@@ -27,13 +27,13 @@ pub(crate) struct AdminAttempt {
 }
 
 fn disabled() -> ApiError {
-    (StatusCode::NOT_FOUND, "管理员 Google 登录未启用".into())
+    (StatusCode::NOT_FOUND, t!("管理员 Google 登录未启用", "Administrator Google sign-in is not enabled").into())
 }
 
 fn expired() -> ApiError {
     (
         StatusCode::BAD_REQUEST,
-        "Google 登录会话已过期，请重新登录".into(),
+        t!("Google 登录会话已过期，请重新登录", "The Google sign-in session has expired. Sign in again").into(),
     )
 }
 
@@ -87,7 +87,7 @@ pub(super) async fn start(
     if state.admin_google_starts.is_blocked(&ip) {
         return Err((
             StatusCode::TOO_MANY_REQUESTS,
-            "Google 登录请求过多，请稍后再试".into(),
+            t!("Google 登录请求过多，请稍后再试", "Too many Google sign-in requests. Try again later").into(),
         ));
     }
     state.admin_google_starts.record_failure(&ip);
@@ -101,7 +101,7 @@ pub(super) async fn start(
     if attempts.len() >= MAX_ATTEMPTS {
         return Err((
             StatusCode::TOO_MANY_REQUESTS,
-            "Google 登录请求过多，请稍后再试".into(),
+            t!("Google 登录请求过多，请稍后再试", "Too many Google sign-in requests. Try again later").into(),
         ));
     }
     let cookie = flow_cookie(
@@ -218,7 +218,7 @@ pub(crate) async fn callback(
     };
     let Some(account) = account else {
         attempts.remove(&flow_id);
-        let _ = auth::fail_login(state, ip, None, "Google 登录失败");
+        let _ = auth::fail_login(state, ip, None, t!("Google 登录失败", "Google sign-in failed"));
         return Some(failure());
     };
     if account.totp_enabled {

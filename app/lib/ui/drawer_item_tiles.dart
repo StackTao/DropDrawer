@@ -49,21 +49,21 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
             // Size and time first: a long device name is what gets truncated.
             formatBytes(item.size),
             relativeTimeLabel(item.createdAt),
-            if (hasDevice) '来自 $cleanDeviceName',
+            if (hasDevice) l10n.fromDevice(cleanDeviceName),
             // Text lives on the server, so it never depends on the source device.
             if (item.kind == 'file' && !c.canDownloadP2p(item) && !item.cloudReady)
-              '来源离线',
+              l10n.sourceOffline,
           ]
         : <String>[
             formatBytes(item.size),
             if (c.canDownloadP2p(item) && item.cloudReady)
-              'P2P · 云端'
+              l10n.p2pCloud
             else if (c.canDownloadP2p(item))
-              'P2P 直连'
+              l10n.p2pDirect
             else if (item.cloudReady)
-              item.storageBackendName ?? '已存云盘'
+              item.storageBackendName ?? l10n.savedToCloud
             else
-              '来源离线',
+              l10n.sourceOffline,
             if (hasDevice) cleanDeviceName,
           ];
     final textPreview = isMobile && item.kind == 'text'
@@ -185,28 +185,28 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                     if (c.canCreateShares)
                     MacIconButton(
                       icon: CupertinoIcons.link,
-                      tooltip: '创建外链分享',
+                      tooltip: l10n.createShareLink,
                       size: isMobile ? 16 : 13.5,
                       boxSize: actionBox,
                       onPressed: widget.onShare,
                     ),
                     MacIconButton(
                       icon: CupertinoIcons.doc_on_doc,
-                      tooltip: '复制文本',
+                      tooltip: l10n.copyText,
                       size: isMobile ? 16.5 : 14,
                       boxSize: actionBox,
                       onPressed: () {
                         Clipboard.setData(
                           ClipboardData(text: item.textContent ?? item.name),
                         );
-                        c.setBanner('已复制到剪贴板');
+                        c.setBanner(l10n.copiedToClipboard);
                       },
                     ),
                   ] else ...[
                     if (c.canCreateShares)
                     MacIconButton(
                       icon: CupertinoIcons.link,
-                      tooltip: '创建外链分享',
+                      tooltip: l10n.createShareLink,
                       size: isMobile ? 16 : 13.5,
                       boxSize: actionBox,
                       onPressed: widget.onShare,
@@ -214,7 +214,7 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                     if (isMine && !item.cloudReady && localPath != null && c.canUploadToCloud)
                       MacIconButton(
                         icon: CupertinoIcons.cloud_upload,
-                        tooltip: '转存到云盘 (离线可下)',
+                        tooltip: l10n.saveToCloudAvailableOffline,
                         size: isMobile ? 17 : 14.5,
                         boxSize: actionBox,
                         onPressed: () => c.cacheItemToCloud(item.id, localPath),
@@ -223,39 +223,39 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                       MacIconButton(
                         icon: CupertinoIcons.doc_on_doc,
                         tooltip: c.windowService.isWindows
-                            ? '复制文件 (可直接 Ctrl+V 粘贴到资源管理器)'
-                            : '复制文件 (可直接 ⌘V 粘贴到微信/访达)',
+                            ? l10n.copyFilePasteIntoFileExplorer
+                            : l10n.copyFilePasteIntoFinderOr,
                         size: 14,
                         onPressed: () async {
                           final ok = await c.windowService
                               .copyFileToClipboard(localPath);
-                          c.setBanner(ok ? '已复制文件，可直接 ${c.windowService.pasteShortcutLabel} 粘贴' : '复制文件失败');
+                          c.setBanner(ok ? l10n.fileCopiedPasteItWith(c.windowService.pasteShortcutLabel) : l10n.couldnTCopyTheFile);
                         },
                       ),
                       MacIconButton(
                         icon: CupertinoIcons.folder,
                         tooltip: c.windowService.isWindows
-                            ? '在资源管理器中显示 (也可直接按住卡片拖出)'
-                            : '在访达中显示 (也可直接按住卡片拖出)',
+                            ? l10n.showInFileExplorerOrDrag
+                            : l10n.showInFinderOrDragThe,
                         size: 14.5,
                         onPressed: () => c.windowService.revealInFinder(localPath),
                       ),
                     ] else if (localPath != null && isMobile) ...[
                       MacIconButton(
                         icon: CupertinoIcons.share,
-                        tooltip: '系统分享 / 其他应用打开',
+                        tooltip: l10n.shareOpenInAnotherApp,
                         size: 17.5,
                         boxSize: actionBox,
                         onPressed: () async {
                           final ok = await c.windowService
                               .shareFilesNative([localPath]);
-                          if (!ok) c.setBanner('打开系统分享失败');
+                          if (!ok) c.setBanner(l10n.couldnTOpenTheShareSheet);
                         },
                       ),
                     ] else
                       MacIconButton(
                         icon: CupertinoIcons.arrow_down_circle,
-                        tooltip: c.canDownloadP2p(item) ? 'P2P 优先下载' : '从云端下载',
+                        tooltip: c.canDownloadP2p(item) ? l10n.downloadP2pFirst : l10n.downloadFromCloud,
                         color: MacPalette.textPrimary,
                         size: isMobile ? 19 : 16,
                         boxSize: actionBox,
@@ -265,13 +265,13 @@ class _DrawerItemTileState extends State<_DrawerItemTile> {
                   if (_hovered)
                     MacIconButton(
                       icon: CupertinoIcons.xmark,
-                      tooltip: '移出抽屉',
+                      tooltip: l10n.removeFromDrawer,
                       size: 13,
                       onPressed: () async {
                         try {
                           await c.deleteItem(item.id);
                         } catch (e) {
-                          c.setBanner('移出失败：$e');
+                          c.setBanner(l10n.removeFailedError(e));
                         }
                       },
                     ),
@@ -323,21 +323,26 @@ Widget _transferSection(
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(
+            Flexible(
+              child: Text(
               switch (progress.channel) {
-                'preparing' => '正在准备下载',
+                'preparing' => l10n.preparingDownload,
                 'upload' => progress.uploadLabel,
-                'p2p_connecting' => '正在建立 P2P 连接',
-                'p2p_replica' => 'P2P 局域网副本',
-                'p2p_direct' => 'P2P 端到端直连',
-                'p2p_relay' => 'P2P 加密中继',
-                _ => '云端高速下载',
+                'p2p_connecting' => l10n.connectingOverP2p,
+                'p2p_replica' => l10n.p2pLanCopy,
+                'p2p_direct' => l10n.p2pDirectConnection,
+                'p2p_relay' => l10n.p2pEncryptedRelay,
+                _ => l10n.cloudDownload,
               },
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 fontSize: isMobile ? 12 : 10,
                 color: MacPalette.textTertiary,
               ),
             ),
+            ),
+            const SizedBox(width: 8),
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -355,7 +360,7 @@ Widget _transferSection(
                   minimumSize: const Size(0, 24),
                   onPressed: c.isCancelling(item.id) ? null : () => c.cancelTransfer(item.id),
                   child: Text(
-                    c.isCancelling(item.id) ? '正在取消' : (progress.channel == 'upload' ? '取消上传' : '取消下载'),
+                    c.isCancelling(item.id) ? l10n.canceling : (progress.channel == 'upload' ? l10n.cancelUpload : l10n.cancelDownload),
                     style: TextStyle(fontSize: isMobile ? 12 : 10, color: MacPalette.red),
                   ),
                 ),
@@ -369,7 +374,7 @@ Widget _transferSection(
           children: [
             Expanded(
               child: Text(
-                '正在发送给 ${c.recipientName(entry.value.sendingTo!)} · ${(entry.value.fraction * 100).floor()}%',
+                l10n.sendingToProgress(c.recipientName(entry.value.sendingTo!), (entry.value.fraction * 100).floor()),
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(fontSize: isMobile ? 12 : 10, color: MacPalette.textSecondary),
               ),
@@ -378,7 +383,7 @@ Widget _transferSection(
               minimumSize: const Size(0, 24),
               padding: const EdgeInsets.symmetric(horizontal: 4),
               onPressed: c.isCancellingSend(entry.key) ? null : () => c.cancelOutgoingTransfer(entry.key),
-              child: Text(c.isCancellingSend(entry.key) ? '正在取消' : '取消发送', style: TextStyle(fontSize: isMobile ? 12 : 10, color: MacPalette.red)),
+              child: Text(c.isCancellingSend(entry.key) ? l10n.canceling : l10n.cancelSending, style: TextStyle(fontSize: isMobile ? 12 : 10, color: MacPalette.red)),
             ),
           ],
         ),
@@ -388,7 +393,7 @@ Widget _transferSection(
           children: [
             Expanded(
               child: Text(
-                '传输失败：${progress.error}',
+                l10n.transferFailedError(progress.error ?? ''),
                 style: TextStyle(
                   fontSize: isMobile ? 12 : 10,
                   color: MacPalette.red,
@@ -401,7 +406,7 @@ Widget _transferSection(
             GestureDetector(
               onTap: () => c.retryTransfer(item),
               child: Text(
-                '重试',
+                l10n.retry,
                 style: TextStyle(
                   fontSize: 10.5,
                   fontWeight: FontWeight.w500,
@@ -708,28 +713,28 @@ class _PhoneItemRow extends StatelessWidget {
             ? (
                 CupertinoIcons.doc_on_doc,
                 Icons.content_copy,
-                '复制文本',
+                l10n.copyText,
                 () {
                   Clipboard.setData(
                     ClipboardData(text: item.textContent ?? item.name),
                   );
-                  c.setBanner('已复制到剪贴板');
+                  c.setBanner(l10n.copiedToClipboard);
                 },
               )
             : path != null
                 ? (
                     CupertinoIcons.share,
                     Icons.share_outlined,
-                    '系统分享 / 其他应用打开',
+                    l10n.shareOpenInAnotherApp,
                     () async {
                       final ok = await c.windowService.shareFilesNative([path]);
-                      if (!ok) c.setBanner('打开系统分享失败');
+                      if (!ok) c.setBanner(l10n.couldnTOpenTheShareSheet);
                     },
                   )
                 : (
                     CupertinoIcons.arrow_down_circle,
                     Icons.download_outlined,
-                    c.canDownloadP2p(item) ? 'P2P 优先下载' : '从云端下载',
+                    c.canDownloadP2p(item) ? l10n.downloadP2pFirst : l10n.downloadFromCloud,
                     () => c.downloadItem(item),
                   );
     return PhoneBarButton(
@@ -751,10 +756,10 @@ class _PhoneItemRow extends StatelessWidget {
     final meta = <String>[
       formatBytes(item.size),
       relativeTimeLabel(item.createdAt),
-      if (device != null && device.isNotEmpty) '来自 $device',
+      if (device != null && device.isNotEmpty) l10n.fromDeviceName(device),
       // Text lives on the server, so it never depends on the source device.
       if (item.kind == 'file' && !c.canDownloadP2p(item) && !item.cloudReady)
-        '来源离线',
+        l10n.sourceOffline,
     ];
     final textPreview =
         item.kind == 'text' ? (item.textContent ?? '').trim() : '';

@@ -3,7 +3,7 @@ import Foundation
 
 public struct TransferCancelledError: LocalizedError, Sendable {
     public init() {}
-    public var errorDescription: String? { "传输已取消" }
+    public var errorDescription: String? { String(localized: "传输已取消", bundle: Bundle.module) }
 }
 
 /// Thread-safe cancellation token supporting multiple attached listeners
@@ -60,14 +60,14 @@ public enum APIError: LocalizedError, Sendable {
     public var errorDescription: String? {
         switch self {
         case .invalidURL(let url):
-            return "无效的服务器地址：\(url)"
+            return String(localized: "无效的服务器地址：\(url)", bundle: Bundle.module)
         case .httpStatus(let code, let body):
             if let data = body.data(using: .utf8),
                let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let err = obj["error"] as? String, !err.isEmpty {
                 return err
             }
-            return body.isEmpty ? "请求失败 (\(code))" : "请求失败 (\(code))：\(body)"
+            return body.isEmpty ? String(localized: "请求失败 (\(code))", bundle: Bundle.module) : String(localized: "请求失败 (\(code))：\(body)", bundle: Bundle.module)
         case .message(let msg):
             return msg
         }
@@ -201,7 +201,7 @@ public final class BackgroundUploadCoordinator: NSObject, URLSessionDataDelegate
             return
         }
         guard let http = task.response as? HTTPURLResponse else {
-            cont.resume(throwing: APIError.message("上传未收到有效响应"))
+            cont.resume(throwing: APIError.message(String(localized: "上传未收到有效响应", bundle: Bundle.module)))
             return
         }
         guard (200..<300).contains(http.statusCode) else {
@@ -284,7 +284,7 @@ private final class DownloadStreamDelegate: NSObject, URLSessionDataDelegate, @u
             return
         }
         guard let http = response as? HTTPURLResponse else {
-            lock.withLock { failure = APIError.message("下载未收到有效响应") }
+            lock.withLock { failure = APIError.message(String(localized: "下载未收到有效响应", bundle: Bundle.module)) }
             completionHandler(.cancel)
             return
         }
@@ -412,6 +412,7 @@ public final class APIClient: @unchecked Sendable {
     ) throws -> URLRequest {
         var req = URLRequest(url: try makeURL(path))
         req.httpMethod = method
+        req.setValue(AppLanguage.acceptLanguage, forHTTPHeaderField: "Accept-Language")
         if authenticated, let tok = token, !tok.isEmpty {
             req.setValue("Bearer \(tok)", forHTTPHeaderField: "Authorization")
         }
@@ -425,7 +426,7 @@ public final class APIClient: @unchecked Sendable {
     private func perform(_ request: URLRequest) async throws -> Data {
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else {
-            throw APIError.message("无效的服务器响应")
+            throw APIError.message(String(localized: "无效的服务器响应", bundle: Bundle.module))
         }
         guard (200..<300).contains(http.statusCode) else {
             let body = String(data: data, encoding: .utf8) ?? ""
@@ -522,7 +523,7 @@ public final class APIClient: @unchecked Sendable {
         let host = server.host?.lowercased() ?? ""
         let isLoopback = ["localhost", "127.0.0.1", "::1"].contains(host)
         if scheme != "https" && !(scheme == "http" && isLoopback) {
-            throw APIError.message("Google 登录需要 HTTPS 服务器地址。")
+            throw APIError.message(String(localized: "Google 登录需要 HTTPS 服务器地址。", bundle: Bundle.module))
         }
         let trimmedInvite = inviteCode?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         var req = try makeRequest(
@@ -534,10 +535,10 @@ public final class APIClient: @unchecked Sendable {
         req.timeoutInterval = 10
         let (data, response) = try await session.data(for: req)
         guard let http = response as? HTTPURLResponse else {
-            throw APIError.message("无效的服务器响应")
+            throw APIError.message(String(localized: "无效的服务器响应", bundle: Bundle.module))
         }
         if http.statusCode == 404 || http.statusCode == 503 {
-            throw APIError.message("此服务器尚未启用 Google 登录。")
+            throw APIError.message(String(localized: "此服务器尚未启用 Google 登录。", bundle: Bundle.module))
         }
         guard (200..<300).contains(http.statusCode) else {
             throw APIError.httpStatus(http.statusCode, String(data: data, encoding: .utf8) ?? "")
@@ -554,7 +555,7 @@ public final class APIClient: @unchecked Sendable {
               authURL.host?.lowercased() == "accounts.google.com",
               authURL.user == nil
         else {
-            throw APIError.message("服务器返回了无效的 Google 授权地址。")
+            throw APIError.message(String(localized: "服务器返回了无效的 Google 授权地址。", bundle: Bundle.module))
         }
         return GoogleSignInStart(
             url: authURL,
@@ -744,21 +745,21 @@ public final class APIClient: @unchecked Sendable {
         guard let plan = try JSONSerialization.jsonObject(with: planData) as? [String: Any],
               let strategy = plan["strategy"] as? String
         else {
-            throw APIError.message("上传计划响应格式无效")
+            throw APIError.message(String(localized: "上传计划响应格式无效", bundle: Bundle.module))
         }
 
         if strategy == "already_cached" {
             guard let itemObj = plan["item"],
                   JSONSerialization.isValidJSONObject(itemObj)
             else {
-                throw APIError.message("秒传响应缺少条目信息")
+                throw APIError.message(String(localized: "秒传响应缺少条目信息", bundle: Bundle.module))
             }
             let itemData = try JSONSerialization.data(withJSONObject: itemObj)
             return try JSONDecoder().decode(DrawerItem.self, from: itemData)
         }
 
         guard let urlStr = plan["url"] as? String else {
-            throw APIError.message("上传计划响应格式无效")
+            throw APIError.message(String(localized: "上传计划响应格式无效", bundle: Bundle.module))
         }
 
         let reportSent: @Sendable (Int64, Int64) -> Void = { sent, _ in
@@ -1055,6 +1056,7 @@ public final class APIClient: @unchecked Sendable {
             throw APIError.invalidURL("\(wsBase)/ws")
         }
         var req = URLRequest(url: url)
+        req.setValue(AppLanguage.acceptLanguage, forHTTPHeaderField: "Accept-Language")
         if let tok = token, !tok.isEmpty {
             req.setValue("Bearer \(tok)", forHTTPHeaderField: "Authorization")
         }

@@ -8,6 +8,7 @@ import '../models/models.dart';
 import '../state/drawer_controller.dart';
 import 'phone_page.dart';
 import 'theme.dart';
+import '../l10n/l10n.dart';
 
 class ShareView extends StatefulWidget {
   final DropDrawerController controller;
@@ -75,7 +76,7 @@ class _ShareViewState extends State<ShareView> {
   String _formatCopyText(ShareLinkInfo link, {String? plainPasscode}) {
     final url = widget.controller.buildFullShareUrl(link.sharePath);
     if (plainPasscode != null && plainPasscode.isNotEmpty) {
-      return '链接：$url\n提取码：$plainPasscode';
+      return l10n.shareClipboardText(url, plainPasscode);
     }
     return url;
   }
@@ -91,7 +92,7 @@ class _ShareViewState extends State<ShareView> {
       final customTitle = _titleCtrl.text.trim();
       if (pass.isEmpty &&
           (widget.controller.clientConfig?.features.shareRequiresPasscode ?? false)) {
-        throw StateError('服务器要求外链必须设置提取码');
+        throw StateError(l10n.thisServerRequiresAPasscodeFor);
       }
       final created = await widget.controller.createShareLinkForItems(
         widget.targetItems,
@@ -108,7 +109,7 @@ class _ShareViewState extends State<ShareView> {
           _justCreatedPasscode = pass.isEmpty ? null : pass;
         });
       }
-      widget.controller.setBanner('外链已生成并自动复制到剪贴板');
+      widget.controller.setBanner(l10n.shareLinkCreatedAndCopiedTo);
     } catch (e) {
       if (mounted) {
         setState(() => _error = e.toString().replaceFirst('Bad state: ', ''));
@@ -126,16 +127,16 @@ class _ShareViewState extends State<ShareView> {
     final isBundle = widget.targetItems.length > 1;
 
     final title = !hasTargets
-        ? '外链分享管理'
+        ? l10n.manageShareLinks
         : (isBundle
-            ? '打包创建外链 (${widget.targetItems.length} 项)'
-            : '创建外链分享');
+            ? l10n.createBundleLinkItems(widget.targetItems.length)
+            : l10n.createShareLink);
     final phoneTitle = hasTargets
-        ? (isBundle ? '打包外链 (${widget.targetItems.length})' : '创建外链')
-        : '外链管理';
+        ? (isBundle ? l10n.bundleLinkCount(widget.targetItems.length) : l10n.createShareLink2)
+        : l10n.shareLinksTitle;
     final refresh = PageAction(
       icon: CupertinoIcons.refresh,
-      tooltip: '刷新外链列表',
+      tooltip: l10n.refreshShareLinks,
       onPressed: _loadingList ? null : _refreshList,
     );
     if (UiDensity.isTouch(context)) {
@@ -159,7 +160,7 @@ class _ShareViewState extends State<ShareView> {
               children: [
                 MacIconButton(
                   icon: CupertinoIcons.chevron_left,
-                  tooltip: '返回抽屉',
+                  tooltip: l10n.backToDrawer,
                   size: 15,
                   onPressed: widget.onBack,
                 ),
@@ -174,7 +175,7 @@ class _ShareViewState extends State<ShareView> {
                 const Spacer(),
                 MacIconButton(
                   icon: CupertinoIcons.refresh,
-                  tooltip: '刷新外链列表',
+                  tooltip: l10n.refreshShareLinks,
                   size: 13.5,
                   onPressed: _loadingList ? null : _refreshList,
                 ),
@@ -190,7 +191,7 @@ class _ShareViewState extends State<ShareView> {
                 const SizedBox(height: 16),
               ] else if (hasTargets) ...[
                 Text(
-                  '服务器已关闭外链分享，暂时无法创建新的外链。',
+                  l10n.shareLinksAreTurnedOffOn2,
                   style: TextStyle(fontSize: 12.5, color: MacPalette.amber),
                 ),
                 const SizedBox(height: 16),
@@ -198,7 +199,7 @@ class _ShareViewState extends State<ShareView> {
               Row(
                 children: [
                   Text(
-                    '已创建的外链 (${c.shareLinks.length})',
+                    l10n.createdLinksCount(c.shareLinks.length),
                     style: TextStyle(
                       fontSize: 11.5,
                       color: MacPalette.textSecondary,
@@ -230,7 +231,7 @@ class _ShareViewState extends State<ShareView> {
                     border: Border.all(color: MacPalette.hairline, width: 0.7),
                   ),
                   child: Text(
-                    '暂无外链分享\n点击单条链接图标，或进入「多选」打包创建合集外链',
+                    l10n.noShareLinksYetNclickAn,
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontSize: 11,
@@ -249,20 +250,20 @@ class _ShareViewState extends State<ShareView> {
     );
   }
 
-  static const _baseExpiryOptions = [
-    (1, '1 小时'),
-    (24, '24 小时'),
-    (168, '7 天'),
-    (0, '永久'),
+  static List<(int, String)> get _baseExpiryOptions => [
+    (1, l10n.n1Hour),
+    (24, l10n.n24Hours),
+    (168, l10n.n7Days),
+    (0, l10n.forever),
   ];
-  static const _baseDownloadOptions = [
-    (0, '不限'),
-    (1, '1 次（阅后即焚）'),
-    (5, '5 次'),
-    (20, '20 次'),
+  static List<(int, String)> get _baseDownloadOptions => [
+    (0, l10n.unlimited),
+    (1, l10n.n1TimeBurnAfterReading),
+    (5, l10n.n5Times),
+    (20, l10n.n20Times),
   ];
 
-  static String _hoursLabel(int h) => h % 24 == 0 ? '${h ~/ 24} 天' : '$h 小时';
+  static String _hoursLabel(int h) => h % 24 == 0 ? l10n.daysCount(h ~/ 24) : l10n.hoursCountH(h);
 
   /// Applies an administrator cap: drops "unlimited" (0) and larger choices,
   /// and offers the cap itself when it is not one of the presets.
@@ -280,12 +281,12 @@ class _ShareViewState extends State<ShareView> {
   List<(int, String)> get _expiryOptions => _capped(
         _baseExpiryOptions,
         widget.controller.maxShareExpiresHours,
-        (h) => '${_hoursLabel(h)}（上限）',
+        (h) => l10n.valueAtCap(_hoursLabel(h)),
       );
   List<(int, String)> get _downloadOptions => _capped(
         _baseDownloadOptions,
         widget.controller.maxShareDownloads,
-        (n) => '$n 次（上限）',
+        (n) => l10n.timesAtCap(n),
       );
 
   /// Keeps the selected values inside the administrator's caps.
@@ -323,7 +324,7 @@ class _ShareViewState extends State<ShareView> {
         title: title,
         options: options,
         selected: selected,
-        previousTitle: '外链',
+        previousTitle: l10n.link,
       );
       if (value != null && mounted) setState(() => onChanged(value));
     }
@@ -338,10 +339,10 @@ class _ShareViewState extends State<ShareView> {
       children: [
         if (items.isNotEmpty) ...[
           PhoneSection(
-            header: isBundle ? '打包 ${items.length} 项 · ${formatBytes(totalBytes)}' : '分享内容',
+            header: isBundle ? l10n.bundleItemsSize(items.length, formatBytes(totalBytes)) : l10n.sharedContent,
             footer: pendingUploadCount > 0
-                ? '生成前会先把 $pendingUploadCount 个文件上传到「${c.defaultStorageBackendName}」，拿到链接的人用浏览器即可下载，无需登录。'
-                : '拿到链接的人用浏览器即可下载，无需登录。',
+                ? l10n.uploadBeforeShareNote(pendingUploadCount, c.defaultStorageBackendName)
+                : l10n.anyoneWithTheLinkCanDownload,
             children: [
               for (final item in items.take(8))
                 PhoneRow(
@@ -350,46 +351,46 @@ class _ShareViewState extends State<ShareView> {
                   value: formatBytes(item.size),
                 ),
               if (items.length > 8)
-                PhoneRow(title: '以及另外 ${items.length - 8} 项', dimmed: true),
+                PhoneRow(title: l10n.andMoreItems(items.length - 8), dimmed: true),
             ],
           ),
           if (isBundle)
             PhoneSection(
-              header: '合集标题',
+              header: l10n.bundleTitle,
               children: [
                 PhoneFieldRow(
                   controller: _titleCtrl,
-                  placeholder: '${items.first.name} 等 ${items.length} 项',
+                  placeholder: l10n.firstNameAndMore(items.first.name, items.length),
                 ),
               ],
             ),
           PhoneSection(
-            header: '访问设置',
+            header: l10n.access,
             footer: widget.controller.shareRequiresPasscode
-                ? '服务器要求外链必须设置提取码。'
-                : '提取码留空时，任何拿到链接的人都能下载。',
+                ? l10n.thisServerRequiresAPasscodeFor2
+                : l10n.ifYouLeaveThePasscodeEmpty,
             children: [
               PhoneRow(
-                title: '有效期',
+                title: l10n.expiresAfter,
                 value: _optionLabel(_expiryOptions, _expiresHours),
-                onTap: () => choose('有效期', _expiryOptions, _expiresHours,
+                onTap: () => choose(l10n.expiresAfter, _expiryOptions, _expiresHours,
                     (v) => _expiresHours = v),
               ),
               PhoneRow(
-                title: '下载次数',
+                title: l10n.downloads2,
                 value: _optionLabel(_downloadOptions, _maxDownloads),
-                onTap: () => choose('下载次数', _downloadOptions, _maxDownloads,
+                onTap: () => choose(l10n.downloads2, _downloadOptions, _maxDownloads,
                     (v) => _maxDownloads = v),
               ),
               PhoneFieldRow(
                 controller: _passcodeCtrl,
-                label: widget.controller.shareRequiresPasscode ? '提取码（必填）' : '提取码',
-                placeholder: '留空为公开',
+                label: widget.controller.shareRequiresPasscode ? l10n.passcodeRequired : l10n.passcode,
+                placeholder: l10n.leaveEmptyForPublic,
                 trailing: PhoneBarButton(
                   glass: false,
                   action: PageAction(
                     icon: material ? Icons.casino_outlined : CupertinoIcons.sparkles,
-                    tooltip: '随机生成 4 位提取码',
+                    tooltip: l10n.generateA4CharacterPasscode,
                     onPressed: _generateRandomPasscode,
                   ),
                 ),
@@ -406,34 +407,34 @@ class _ShareViewState extends State<ShareView> {
             ),
           PhoneButton(
             label: _creating
-                ? '正在生成…'
+                ? l10n.creating
                 : (pendingUploadCount > 0
-                    ? '上传并生成外链'
-                    : (isBundle ? '生成合集外链并复制' : '生成外链并复制')),
+                    ? l10n.uploadAndCreateLink
+                    : (isBundle ? l10n.createBundleLinkAndCopy : l10n.createLinkAndCopy)),
             onPressed: _creating ? null : _createShare,
           ),
           const SizedBox(height: 24),
           if (created != null)
             PhoneSection(
-              header: '已生成并复制到剪贴板',
+              header: l10n.createdAndCopiedToTheClipboard,
               children: [
                 PhoneRow(
-                  title: '链接',
+                  title: l10n.linkLabel,
                   subtitle: _formatCopyText(created, plainPasscode: _justCreatedPasscode),
                   selectable: true,
                 ),
                 PhoneRow(
-                  title: '再次复制',
+                  title: l10n.copyAgain,
                   action: true,
                   onTap: () {
                     Clipboard.setData(ClipboardData(
                       text: _formatCopyText(created, plainPasscode: _justCreatedPasscode),
                     ));
-                    c.setBanner('已复制外链信息');
+                    c.setBanner(l10n.copiedLinkDetails);
                   },
                 ),
                 PhoneRow(
-                  title: '在浏览器中打开',
+                  title: l10n.openInBrowser,
                   action: true,
                   onTap: () {
                     final base = c.buildFullShareUrl(created.sharePath);
@@ -447,14 +448,14 @@ class _ShareViewState extends State<ShareView> {
             ),
         ],
         PhoneSection(
-          header: '已创建的外链（${c.shareLinks.length}）',
+          header: l10n.createdLinksCountFull(c.shareLinks.length),
           footer: c.shareLinks.isEmpty
-              ? '在首页长按或打开任意一项即可创建外链；多选后可打包成合集。'
-              : '点按一条外链可以复制、打开或撤销。',
+              ? l10n.longPressOrOpenAnyItem
+              : l10n.tapALinkToCopyOpen,
           children: [
             if (c.shareLinks.isEmpty)
               PhoneRow(
-                title: _loadingList ? '正在加载…' : '还没有外链',
+                title: _loadingList ? l10n.loadingEllipsis : l10n.noShareLinksYet,
                 dimmed: true,
               )
             else
@@ -470,19 +471,19 @@ class _ShareViewState extends State<ShareView> {
     final fullUrl = c.buildFullShareUrl(link.sharePath);
     final inactive = link.isExpired || link.isExhausted;
     final meta = <String>[
-      if (link.itemCount > 1) '${link.itemCount} 项合集',
-      if (link.hasPasscode) '需提取码',
+      if (link.itemCount > 1) l10n.bundleOfItems(link.itemCount),
+      if (link.hasPasscode) l10n.passcodeRequired2,
       link.maxDownloads != null
-          ? '已下 ${link.downloadCount}/${link.maxDownloads} 次'
-          : '已下 ${link.downloadCount} 次',
+          ? l10n.downloadedOfMax(link.downloadCount, link.maxDownloads!)
+          : l10n.downloadedCount(link.downloadCount),
       if (link.isExpired)
-        '已过期'
+        l10n.expired
       else if (link.isExhausted)
-        '次数用尽'
+        l10n.downloadLimitReached
       else if (link.expiresAt != null)
         _formatRemaining(link.expiresAt!)
       else
-        '永久有效',
+        l10n.neverExpires2,
     ];
     return PhoneRow(
       leading: Icon(
@@ -503,22 +504,22 @@ class _ShareViewState extends State<ShareView> {
         message: fullUrl,
         entries: [
           PhoneMenuEntry(
-            label: '复制链接',
+            label: l10n.copyLink,
             icon: CupertinoIcons.doc_on_doc,
             materialIcon: Icons.content_copy,
             onSelected: () {
               Clipboard.setData(ClipboardData(text: fullUrl));
-              c.setBanner('已复制外链');
+              c.setBanner(l10n.linkCopied);
             },
           ),
           PhoneMenuEntry(
-            label: '在浏览器中打开',
+            label: l10n.openInBrowser,
             icon: CupertinoIcons.globe,
             materialIcon: Icons.open_in_browser,
             onSelected: () => c.windowService.openExternalUrl(fullUrl),
           ),
           PhoneMenuEntry(
-            label: '撤销外链',
+            label: l10n.revokeLink,
             icon: CupertinoIcons.trash,
             materialIcon: Icons.link_off,
             destructive: true,
@@ -575,7 +576,7 @@ class _ShareViewState extends State<ShareView> {
                   children: [
                     Text(
                       isBundle
-                          ? '${primary.name} 等 ${items.length} 项'
+                          ? l10n.primaryNameAndMore(primary.name, items.length)
                           : primary.name,
                       style: TextStyle(
                         fontSize: 12.5,
@@ -588,8 +589,8 @@ class _ShareViewState extends State<ShareView> {
                     const SizedBox(height: 1),
                     Text(
                       pendingUploadCount > 0
-                          ? '${formatBytes(totalBytes)} · 生成前自动上云 $pendingUploadCount 个文件至「${c.defaultStorageBackendName}」'
-                          : '${formatBytes(totalBytes)} · 已就绪，外部浏览器免登录提取',
+                          ? l10n.sizeUploadBeforeShare(formatBytes(totalBytes), pendingUploadCount, c.defaultStorageBackendName)
+                          : l10n.sizeReadyNoSignIn(formatBytes(totalBytes)),
                       style: TextStyle(
                         fontSize: 10.5,
                         color: MacPalette.textTertiary,
@@ -661,14 +662,14 @@ class _ShareViewState extends State<ShareView> {
               ),
               child: MacFormField(
                 controller: _titleCtrl,
-                label: '合集标题',
-                placeholder: '可选，默认「${primary.name} 等 ${items.length} 项」',
+                label: l10n.bundleTitle,
+                placeholder: l10n.optionalDefaultTitle(primary.name, items.length),
               ),
             ),
           ],
           const SizedBox(height: 12),
           Text(
-            '有效期',
+            l10n.expiresAfter,
             style: TextStyle(fontSize: 11, color: MacPalette.textSecondary),
           ),
           const SizedBox(height: 5),
@@ -679,14 +680,14 @@ class _ShareViewState extends State<ShareView> {
           ),
           const SizedBox(height: 10),
           Text(
-            '下载次数限制',
+            l10n.downloadLimit,
             style: TextStyle(fontSize: 11, color: MacPalette.textSecondary),
           ),
           const SizedBox(height: 5),
           MacSegmentedControl<int>(
             selected: _maxDownloads,
             items: _downloadOptions
-                .map((o) => o.$1 == 1 ? (1, '1次(阅后即焚)') : o)
+                .map((o) => o.$1 == 1 ? (1, l10n.oneTimeBurn) : o)
                 .toList(),
             onChanged: (v) => setState(() => _maxDownloads = v),
           ),
@@ -702,15 +703,15 @@ class _ShareViewState extends State<ShareView> {
                 Expanded(
                   child: MacFormField(
                     controller: _passcodeCtrl,
-                    label: widget.controller.shareRequiresPasscode ? '提取码（必填）' : '提取码',
-                    placeholder: '留空为公开免密',
+                    label: widget.controller.shareRequiresPasscode ? l10n.passcodeRequired : l10n.passcode,
+                    placeholder: l10n.leaveEmptyForPublicAccess,
                   ),
                 ),
                 Padding(
                   padding: const EdgeInsets.only(right: 6),
                   child: MacIconButton(
                     icon: CupertinoIcons.sparkles,
-                    tooltip: '随机生成 4 位提取码',
+                    tooltip: l10n.generateA4CharacterPasscode,
                     size: 14,
                     onPressed: _generateRandomPasscode,
                   ),
@@ -748,8 +749,8 @@ class _ShareViewState extends State<ShareView> {
                       )
                     : Text(
                         pendingUploadCount > 0
-                            ? '自动上云并生成外链'
-                            : (isBundle ? '生成合集外链并复制' : '生成外链并复制'),
+                            ? l10n.uploadToCloudAndCreateLink
+                            : (isBundle ? l10n.createBundleLinkAndCopy : l10n.createLinkAndCopy),
                         style: const TextStyle(
                           fontSize: 12.5,
                           fontWeight: FontWeight.w600,
@@ -781,7 +782,7 @@ class _ShareViewState extends State<ShareView> {
                       ),
                       const SizedBox(width: 5),
                       Text(
-                        '已生成并复制到剪贴板',
+                        l10n.createdAndCopiedToTheClipboard,
                         style: TextStyle(
                           fontSize: 11.5,
                           fontWeight: FontWeight.w500,
@@ -791,7 +792,7 @@ class _ShareViewState extends State<ShareView> {
                       const Spacer(),
                       MacIconButton(
                         icon: CupertinoIcons.doc_on_doc,
-                        tooltip: '再次复制链接',
+                        tooltip: l10n.copyLinkAgain,
                         size: 13.5,
                         onPressed: () {
                           Clipboard.setData(ClipboardData(
@@ -800,12 +801,12 @@ class _ShareViewState extends State<ShareView> {
                               plainPasscode: _justCreatedPasscode,
                             ),
                           ));
-                          c.setBanner('已复制外链信息');
+                          c.setBanner(l10n.copiedLinkDetails);
                         },
                       ),
                       MacIconButton(
                         icon: CupertinoIcons.globe,
-                        tooltip: '在浏览器中打开预览',
+                        tooltip: l10n.previewInBrowser,
                         size: 13.5,
                         onPressed: () {
                           final base = c.buildFullShareUrl(
@@ -845,19 +846,19 @@ class _ShareViewState extends State<ShareView> {
     final inactive = link.isExpired || link.isExhausted;
 
     final meta = <String>[
-      if (link.itemCount > 1) '${link.itemCount} 项合集',
-      if (link.hasPasscode) '需提取码',
+      if (link.itemCount > 1) l10n.bundleOfItems(link.itemCount),
+      if (link.hasPasscode) l10n.passcodeRequired2,
       link.maxDownloads != null
-          ? '已下 ${link.downloadCount}/${link.maxDownloads} 次'
-          : '已下 ${link.downloadCount} 次',
+          ? l10n.downloadedOfMax(link.downloadCount, link.maxDownloads!)
+          : l10n.downloadedCount(link.downloadCount),
       if (link.isExpired)
-        '已过期'
+        l10n.expired
       else if (link.isExhausted)
-        '次数用尽'
+        l10n.downloadLimitReached
       else if (link.expiresAt != null)
         _formatRemaining(link.expiresAt!)
       else
-        '永久有效',
+        l10n.neverExpires2,
     ];
 
     return Container(
@@ -921,22 +922,22 @@ class _ShareViewState extends State<ShareView> {
           ),
           MacIconButton(
             icon: CupertinoIcons.doc_on_doc,
-            tooltip: '复制外链 ($fullUrl)',
+            tooltip: l10n.copyLinkUrl(fullUrl),
             size: 13.5,
             onPressed: () {
               Clipboard.setData(ClipboardData(text: fullUrl));
-              c.setBanner('已复制外链：$fullUrl');
+              c.setBanner(l10n.linkCopiedUrl(fullUrl));
             },
           ),
           MacIconButton(
             icon: CupertinoIcons.globe,
-            tooltip: '浏览器打开',
+            tooltip: l10n.openInBrowserShort,
             size: 13.5,
             onPressed: () => c.windowService.openExternalUrl(fullUrl),
           ),
           MacIconButton(
             icon: CupertinoIcons.trash,
-            tooltip: '撤销外链',
+            tooltip: l10n.revokeLink,
             size: 13.5,
             color: MacPalette.red,
             onPressed: () => c.revokeShareLink(link.code),
@@ -948,9 +949,9 @@ class _ShareViewState extends State<ShareView> {
 
   String _formatRemaining(DateTime expiresAt) {
     final diff = expiresAt.difference(DateTime.now());
-    if (diff.isNegative) return '已过期';
-    if (diff.inDays >= 1) return '剩余 ${diff.inDays} 天';
-    if (diff.inHours >= 1) return '剩余 ${diff.inHours} 小时';
-    return '剩余 ${diff.inMinutes.clamp(1, 59)} 分钟';
+    if (diff.isNegative) return l10n.expired;
+    if (diff.inDays >= 1) return l10n.daysLeft(diff.inDays);
+    if (diff.inHours >= 1) return l10n.hoursLeft(diff.inHours);
+    return l10n.minutesLeft(diff.inMinutes.clamp(1, 59));
   }
 }

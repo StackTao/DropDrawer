@@ -59,6 +59,15 @@
     - Android 用 `MacPalette.use(..., material: true)`：浅色/深色都取自 `materialScheme()`（蓝色种子生成的 Material 3 色调角色），`buildAppTheme` 的 `colorScheme` 也用它；Android 上不要写死 iOS 系统色，图标底板用 `MacPalette.tonal` / `onTonal`。
     - 手机文件预览走原生 `openFile`（iOS QuickLook / Android `ACTION_VIEW`），打不开时退回系统分享；改动需同步 `drawer_window_service.dart`、`AppDelegate.swift`、`MainActivity.kt`。
 
+### 多语言（中文 / English）
+22. **界面文字一律走翻译表，中文是源语言**：新增或修改用户可见文字时，五处都要同时给出中文和英文。
+    - **Flutter**：文案写在 `app/lib/l10n/app_zh.arb`（模板）和 `app_en.arb`，改完运行 `flutter gen-l10n`（生成的 `app_localizations*.dart` 已提交）。代码里用 `l10n.xxx`，它和 `MacPalette` 一样是运行时 getter，不能放进 `const` 或参数默认值。日期用 `AppLocale.shortDate` / `dateTime` / `time`，不要手写「M月d日」。语言选择存在 `app_language`，切换后由 `main.dart` 全量重建；macOS / Windows 原生菜单、托盘和对话框的文字由 `AppLocale.nativeStrings()` 经 `setNativeStrings` 下发（`NativeStrings` / `DrawerWindow::Text`），新增原生文字要同步这三处。Android 原生文字放 `res/values`（英文）和 `res/values-zh`。
+    - **服务端**：返回给用户的消息用 `t!("中文", "English")`，带格式用 `tf!`。语言来自请求的 `Accept-Language`（`crate::i18n` 中间件）；没有该请求头时返回中文，兼容旧客户端。浏览器页面要设置 `<html lang>`。
+    - **管理端**：`admin.js` 里的中文文案包在 `t("…")` 里，英文写进 `admin-i18n.js` 的 `EN` 字典；`index.html` 的静态文字按同一字典自动翻译。
+    - **官网**（`website/index.html`）：同样以中文为键，英文写进页面里第一个 `<script>` 的 `EN` 字典；静态文字自动翻译，脚本里的文字用 `t("…")`。同一个中文词在不同位置英文不同时，给元素加 `data-en="…"`。`?lang=en` / `?lang=zh` 可直接指定语言。
+    - **iOS**：Swift 里的中文一律写成 `String(localized: "…")`（`DropDrawerCore` 里加 `bundle: Bundle.module`），英文写进对应的 `Localizable.xcstrings`。键里的占位符由插值类型决定：`Int` 是 `%lld`，`String` 是 `%@`，写错会退回中文。
+    - **测试**：Flutter 测试默认用中文运行（`test/flutter_test_config.dart`），英文布局在 `drawer_ui_polish_test.dart` 的 `English layout` 组里验证。`DROPDRAWER_TEST_LANGUAGE=en flutter test` 可以用英文跑全部测试，专门找溢出（文字断言失败属于预期）。
+
 ---
 
 ## 3. 验证与测试要求

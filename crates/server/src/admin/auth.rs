@@ -35,7 +35,7 @@ impl AdminSession {
         } else {
             Err((
                 StatusCode::FORBIDDEN,
-                "仅超级管理员可执行此操作".to_string(),
+                t!("仅超级管理员可执行此操作", "Only super administrators can do this").to_string(),
             ))
         }
     }
@@ -99,7 +99,7 @@ impl FromRequestParts<Arc<AppState>> for AdminSession {
             && parts.method != Method::GET
             && !viewer_may_write(parts.uri.path())
         {
-            return Err((StatusCode::FORBIDDEN, "只读管理员不能修改数据".to_string()));
+            return Err((StatusCode::FORBIDDEN, t!("只读管理员不能修改数据", "Read-only administrators can't change data").to_string()));
         }
         let ClientIp(ip) = match ClientIp::from_request_parts(parts, state).await {
             Ok(ip) => ip,
@@ -186,7 +186,7 @@ pub(super) fn check_login_limit(state: &AppState, ip: &str) -> ApiResult<()> {
     {
         return Err((
             StatusCode::TOO_MANY_REQUESTS,
-            "尝试次数过多，请 15 分钟后再试".to_string(),
+            t!("尝试次数过多，请 15 分钟后再试", "Too many attempts. Try again in 15 minutes").to_string(),
         ));
     }
     Ok(())
@@ -226,7 +226,7 @@ pub(super) fn verify_totp(
             state,
             ip,
             Some(&account.username),
-            "两步验证码错误或已使用",
+            t!("两步验证码错误或已使用", "The two-step verification code is wrong or already used"),
         ));
     }
     Ok(())
@@ -264,7 +264,7 @@ pub(super) async fn login(
     let username = req.username.unwrap_or_default();
     let password = req.password.unwrap_or_default();
     if username.trim().is_empty() || password.is_empty() {
-        return Err((StatusCode::BAD_REQUEST, "请输入用户名和密码".to_string()));
+        return Err((StatusCode::BAD_REQUEST, t!("请输入用户名和密码", "Enter a username and password").to_string()));
     }
     super::turnstile::verify(&state, &ip, req.turnstile_token.as_deref()).await?;
     let account = state
@@ -282,7 +282,7 @@ pub(super) async fn login(
             &state,
             &ip,
             Some(username.trim()),
-            "用户名或密码错误",
+            t!("用户名或密码错误", "Incorrect username or password"),
         ));
     };
     if account.totp_enabled {

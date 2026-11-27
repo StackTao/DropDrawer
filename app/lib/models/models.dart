@@ -1,3 +1,4 @@
+import '../l10n/l10n.dart';
 class UserProfile {
   final String id;
   final String username;
@@ -453,7 +454,7 @@ class TransferProgress {
       awaitingUploadConfirmation || fraction == 0 ? null : fraction;
 
   String get uploadLabel =>
-      awaitingUploadConfirmation ? '等待存储确认…' : '正在发送文件';
+      awaitingUploadConfirmation ? l10n.waitingForStorageConfirmation : l10n.sendingFile;
 
   String? get progressText {
     if (awaitingUploadConfirmation) return null;

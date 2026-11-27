@@ -19,25 +19,25 @@ struct MainTabView: View {
 
     private var tabContent: some View {
         TabView(selection: $selectedTab) {
-            Tab("文件", systemImage: "tray.full", value: MainTab.files) {
+            Tab(String(localized: "文件"), systemImage: "tray.full", value: MainTab.files) {
                 HomeView(store: store)
             }
 
-            Tab("外链", systemImage: "link", value: MainTab.shares) {
+            Tab(String(localized: "外链"), systemImage: "link", value: MainTab.shares) {
                 NavigationStack {
                     ShareLinksView(store: store, targetItems: [])
-                        .navigationTitle("外链")
+                        .navigationTitle(String(localized: "外链"))
                         .navigationBarTitleDisplayMode(.inline)
                 }
             }
 
-            Tab("设置", systemImage: "gearshape", value: MainTab.settings) {
+            Tab(String(localized: "设置"), systemImage: "gearshape", value: MainTab.settings) {
                 NavigationStack {
                     PreferencesView(store: store)
                 }
             }
 
-            Tab("搜索", systemImage: "magnifyingglass", value: MainTab.search, role: .search) {
+            Tab(String(localized: "搜索"), systemImage: "magnifyingglass", value: MainTab.search, role: .search) {
                 SearchTabView(store: store)
             }
         }

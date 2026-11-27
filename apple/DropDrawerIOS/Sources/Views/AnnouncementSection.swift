@@ -49,7 +49,7 @@ struct AnnouncementSection: View {
                         .foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.borderless)
-                .accessibilityLabel("关闭公告")
+                .accessibilityLabel(String(localized: "关闭公告"))
             }
             .padding(.vertical, 4)
             .accessibilityElement(children: .combine)

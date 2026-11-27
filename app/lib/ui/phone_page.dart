@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'theme.dart';
+import '../l10n/l10n.dart';
 
 /// Whether phone chrome follows Material 3 (Android) rather than iOS.
 bool usesMaterialChrome(BuildContext context) =>
@@ -355,13 +356,15 @@ class PhonePage extends StatelessWidget {
     required this.title,
     required this.body,
     this.actions = const [],
-    this.previousTitle = '返回',
+    this._previousTitle,
   });
 
   final String title;
   final Widget body;
   final List<PageAction> actions;
-  final String previousTitle;
+  final String? _previousTitle;
+
+  String get previousTitle => _previousTitle ?? l10n.back;
 
   @override
   Widget build(BuildContext context) {
@@ -582,7 +585,7 @@ class _PullDownMenuRoute extends PopupRoute<PhoneMenuEntry> {
   bool get barrierDismissible => true;
 
   @override
-  String? get barrierLabel => '关闭菜单';
+  String? get barrierLabel => l10n.closeMenu;
 
   @override
   Duration get transitionDuration => const Duration(milliseconds: 240);
@@ -793,13 +796,15 @@ class PhoneSwipeToDelete extends StatefulWidget {
     super.key,
     required this.child,
     required this.onDelete,
-    this.label = '移出',
+    this._label,
     this.borderRadius = BorderRadius.zero,
   });
 
   final Widget child;
   final VoidCallback onDelete;
-  final String label;
+  final String? _label;
+
+  String get label => _label ?? l10n.remove;
   final BorderRadius borderRadius;
 
   @override
@@ -1256,7 +1261,7 @@ Future<T?> showPhoneChoice<T>(
   required List<(T, String)> options,
   required T selected,
   String? footer,
-  String previousTitle = '设置',
+  String? previousTitle,
 }) {
   if (usesMaterialChrome(context)) {
     return showDialog<T>(
@@ -1293,7 +1298,7 @@ Future<T?> showPhoneChoice<T>(
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('取消'),
+            child: Text(l10n.cancel),
           ),
         ],
       ),
@@ -1307,7 +1312,7 @@ Future<T?> showPhoneChoice<T>(
           backgroundColor: MacPalette.background,
           body: PhonePage(
             title: title,
-            previousTitle: previousTitle,
+            previousTitle: previousTitle ?? l10n.settings,
             body: ListView(
               padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
               children: [
@@ -1464,7 +1469,7 @@ Future<void> showPhoneActions(
         cancelButton: CupertinoActionSheetAction(
           isDefaultAction: true,
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(l10n.cancel),
         ),
       ),
     );

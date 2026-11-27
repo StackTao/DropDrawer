@@ -25,12 +25,12 @@ fn internal(err: impl std::fmt::Display) -> PolicyError {
 
 pub fn backend_kind_label(kind: StorageBackendKind) -> &'static str {
     match kind {
-        StorageBackendKind::Local => "服务器本地存储",
+        StorageBackendKind::Local => t!("服务器本地存储", "server local storage"),
         StorageBackendKind::GoogleDrive => "Google Drive",
-        StorageBackendKind::Quark => "夸克网盘",
-        StorageBackendKind::BaiduNetdisk => "百度网盘",
+        StorageBackendKind::Quark => t!("夸克网盘", "Quark Drive"),
+        StorageBackendKind::BaiduNetdisk => t!("百度网盘", "Baidu Netdisk"),
         StorageBackendKind::WebDav => "WebDAV",
-        StorageBackendKind::S3 => "S3 兼容存储",
+        StorageBackendKind::S3 => t!("S3 兼容存储", "S3-compatible storage"),
     }
 }
 
@@ -43,11 +43,11 @@ pub fn validate_username(username: &str) -> Result<(), PolicyError> {
     if len < 2 {
         return Err((
             StatusCode::BAD_REQUEST,
-            "username must be >= 2 chars and password >= 6 chars".to_string(),
+            t!("用户名至少 2 个字符，密码至少 6 位", "Usernames need at least 2 characters and passwords at least 6").to_string(),
         ));
     }
     if len > 64 {
-        return Err((StatusCode::BAD_REQUEST, "用户名最长 64 个字符".to_string()));
+        return Err((StatusCode::BAD_REQUEST, t!("用户名最长 64 个字符", "Usernames can be at most 64 characters").to_string()));
     }
     if username
         .chars()
@@ -55,7 +55,7 @@ pub fn validate_username(username: &str) -> Result<(), PolicyError> {
     {
         return Err((
             StatusCode::BAD_REQUEST,
-            "用户名不能包含 < > \" ' ` & \\ / 或控制字符".to_string(),
+            t!("用户名不能包含 < > \" ' ` & \\ / 或控制字符", "Usernames can't contain < > \" ' ` & \\ / or control characters").to_string(),
         ));
     }
     Ok(())
@@ -72,9 +72,8 @@ pub fn ensure_client_version(state: &AppState, app_version: Option<&str>) -> Res
     if crate::settings::version_below(app_version, min) {
         return Err((
             StatusCode::UPGRADE_REQUIRED,
-            format!(
-                "客户端版本过低（当前 {}，服务器要求 {min} 或更新），请更新 DropDrawer 后再登录",
-                app_version.unwrap_or("未知")
+            tf!("客户端版本过低（当前 {}，服务器要求 {min} 或更新），请更新 DropDrawer 后再登录", "This client version is too old (current {}, the server requires {min} or later). Update DropDrawer and sign in again",
+                app_version.unwrap_or(t!("未知", "unknown"))
             ),
         ));
     }
@@ -117,8 +116,7 @@ pub fn ensure_device_slot(
         .device_would_be_new(requested_id, user_id, platform, iroh_node_id)
         .map_err(internal)?;
     if is_new && state.db.count_devices(user_id).map_err(internal)? >= limit {
-        return Err(forbidden(format!(
-            "已达到每个账号最多 {limit} 台设备的上限，请先在其他设备上退出或联系管理员移除旧设备"
+        return Err(forbidden(tf!("已达到每个账号最多 {limit} 台设备的上限，请先在其他设备上退出或联系管理员移除旧设备", "This account has reached the limit of {limit} devices. Sign out on another device or ask an administrator to remove an old one"
         )));
     }
     Ok(())
@@ -129,8 +127,7 @@ pub fn ensure_item_slot(state: &AppState, user_id: &str) -> Result<(), PolicyErr
         return Ok(());
     };
     if state.db.count_drawer_items(user_id).map_err(internal)? >= limit {
-        return Err(forbidden(format!(
-            "抽屉已达到 {limit} 项的上限，请先清理旧条目"
+        return Err(forbidden(tf!("抽屉已达到 {limit} 项的上限，请先清理旧条目", "The drawer has reached its limit of {limit} items. Remove some old items first"
         )));
     }
     Ok(())
@@ -150,8 +147,7 @@ pub fn ensure_backend_kind_allowed(
     if policy.kind_allowed(kind) {
         Ok(())
     } else {
-        Err(forbidden(format!(
-            "管理员已停用「{}」类型的存储",
+        Err(forbidden(tf!("管理员已停用「{}」类型的存储", "The administrator has disabled “{}” storage",
             backend_kind_label(kind)
         )))
     }
@@ -166,11 +162,11 @@ pub fn ensure_upload_allowed(
     let settings = state.runtime_settings();
     if !settings.features.cloud_upload_enabled {
         return Err(forbidden(
-            "管理员已关闭云端中转上传，请使用设备间 P2P 直传",
+            t!("管理员已关闭云端中转上传，请使用设备间 P2P 直传", "The administrator has turned off cloud relay uploads. Send files device-to-device over P2P"),
         ));
     }
     if state.db.user_policy(user_id).map_err(internal)?.upload_blocked {
-        return Err(forbidden("你的账号已被管理员限制上传到云端"));
+        return Err(forbidden(t!("你的账号已被管理员限制上传到云端", "An administrator has blocked cloud uploads for your account")));
     }
     ensure_backend_kind_allowed(&settings.storage_policy, backend.config.kind())
 }
@@ -226,10 +222,10 @@ pub async fn ensure_endpoints_allowed(
         if raw.is_empty() {
             continue;
         }
-        let url = url::Url::parse(raw).map_err(|_| anyhow::anyhow!("存储地址无效：{raw}"))?;
+        let url = url::Url::parse(raw).map_err(|_| anyhow::anyhow!("{}", tf!("存储地址无效：{raw}", "Invalid storage URL: {raw}")))?;
         let host = url
             .host()
-            .ok_or_else(|| anyhow::anyhow!("存储地址缺少主机名：{raw}"))?;
+            .ok_or_else(|| anyhow::anyhow!("{}", tf!("存储地址缺少主机名：{raw}", "The storage URL has no host name: {raw}")))?;
         let port = url.port_or_known_default().unwrap_or(443);
         let addrs: Vec<IpAddr> = match host {
             url::Host::Ipv4(ip) => vec![IpAddr::V4(ip)],
@@ -247,9 +243,9 @@ pub async fn ensure_endpoints_allowed(
         };
         if let Some(ip) = addrs.into_iter().find(|ip| is_restricted_ip(*ip)) {
             anyhow::bail!(
-                "存储地址 {} 指向内网或本机地址（{ip}），已被管理员的安全策略禁止",
+                "{}", tf!("存储地址 {} 指向内网或本机地址（{ip}），已被管理员的安全策略禁止", "The storage URL {} points to a private or local address ({ip}), which the administrator's security policy blocks",
                 url.host_str().unwrap_or(raw)
-            );
+            ));
         }
     }
     Ok(())
@@ -301,16 +297,16 @@ pub fn share_terms(
 ) -> Result<ShareTerms, PolicyError> {
     let settings = state.runtime_settings();
     if !settings.features.share_create_enabled {
-        return Err(forbidden("管理员已关闭公网外链分享"));
+        return Err(forbidden(t!("管理员已关闭公网外链分享", "The administrator has turned off public share links")));
     }
     if state.db.user_policy(user_id).map_err(internal)?.share_blocked {
-        return Err(forbidden("你的账号已被管理员限制创建外链"));
+        return Err(forbidden(t!("你的账号已被管理员限制创建外链", "An administrator has blocked share links for your account")));
     }
     let policy = &settings.share_policy;
     if policy.require_passcode && passcode.map(str::trim).is_none_or(str::is_empty) {
         return Err((
             StatusCode::BAD_REQUEST,
-            "服务器要求外链必须设置提取码".to_string(),
+            t!("服务器要求外链必须设置提取码", "This server requires a passcode for share links").to_string(),
         ));
     }
     let clamp = |requested: Option<u64>, cap: Option<u64>| match (requested.filter(|&v| v > 0), cap) {
@@ -327,11 +323,11 @@ pub fn share_terms(
 /// Public access to a share owned by `owner_id`.
 pub fn ensure_share_access(state: &AppState, owner_id: &str) -> Result<(), PolicyError> {
     if !state.runtime_settings().features.share_access_enabled {
-        return Err(forbidden("该服务器已暂停公网外链访问"));
+        return Err(forbidden(t!("该服务器已暂停公网外链访问", "Public share links are paused on this server")));
     }
     match state.db.user_auth_state(owner_id).map_err(internal)? {
         Some(owner) if !owner.disabled => Ok(()),
-        _ => Err(forbidden("分享者的账号已停用，外链不可用")),
+        _ => Err(forbidden(t!("分享者的账号已停用，外链不可用", "The owner's account is disabled, so this link is unavailable"))),
     }
 }
 

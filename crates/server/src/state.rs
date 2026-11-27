@@ -242,7 +242,7 @@ impl AppState {
     pub async fn send_email(&self, email: &OutgoingEmail) -> anyhow::Result<()> {
         let smtp = self.runtime_settings().smtp;
         if !smtp.is_usable() && !self.has_custom_email_sender() {
-            anyhow::bail!("服务器未启用 SMTP 邮件服务");
+            anyhow::bail!("{}", tf!("服务器未启用 SMTP 邮件服务", "Email (SMTP) is not enabled on this server"));
         }
         self.send_email_with_config(&smtp, email).await
     }

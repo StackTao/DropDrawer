@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../state/drawer_controller.dart';
 import 'theme.dart';
+import '../l10n/l10n.dart';
 
 /// Server-wide announcement published from the admin console. Sits next to the
 /// update banner; closing it hides this revision until the admin edits it.
@@ -35,7 +36,7 @@ class AnnouncementBanner extends StatelessWidget {
     final hasBody = announcement.message.trim().isNotEmpty;
     return Semantics(
       container: true,
-      label: '服务器公告',
+      label: l10n.serverAnnouncement,
       child: Container(
         margin: mobile
             ? const EdgeInsets.fromLTRB(14, 0, 14, 8)
@@ -83,7 +84,7 @@ class AnnouncementBanner extends StatelessWidget {
               ),
             ),
             IconButton(
-              tooltip: '关闭公告',
+              tooltip: l10n.dismissAnnouncement,
               onPressed: controller.dismissAnnouncement,
               icon: Icon(CupertinoIcons.xmark, size: mobile ? 16 : 12),
               color: MacPalette.textSecondary,

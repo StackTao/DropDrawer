@@ -96,15 +96,15 @@ pub(super) async fn google_oauth_callback(
             .map(|(_, pending)| pending)
     });
     if query.error.is_some() {
-        return callback_page(StatusCode::BAD_REQUEST, "授权已取消或失败");
+        return callback_page(StatusCode::BAD_REQUEST, t!("授权已取消或失败", "Authorization was canceled or failed"));
     }
     let Some(code) = query.code else {
-        return callback_page(StatusCode::BAD_REQUEST, "缺少授权参数");
+        return callback_page(StatusCode::BAD_REQUEST, t!("缺少授权参数", "Missing authorization parameters"));
     };
     let Some(pending) = pending.filter(|pending| pending.expires_at > Instant::now()) else {
         return callback_page(
             StatusCode::BAD_REQUEST,
-            "授权会话已过期，请回到 DropDrawer 重新发起",
+            t!("授权会话已过期，请回到 DropDrawer 重新发起", "The authorization session has expired. Return to DropDrawer and start again"),
         );
     };
 
@@ -121,19 +121,19 @@ pub(super) async fn google_oauth_callback(
         .send()
         .await;
     let Ok(response) = response else {
-        return callback_page(StatusCode::BAD_GATEWAY, "无法连接 Google OAuth 服务器");
+        return callback_page(StatusCode::BAD_GATEWAY, t!("无法连接 Google OAuth 服务器", "Can't reach the Google OAuth server"));
     };
     if !response.status().is_success() {
-        return callback_page(StatusCode::BAD_GATEWAY, "换取 Google 授权令牌失败");
+        return callback_page(StatusCode::BAD_GATEWAY, t!("换取 Google 授权令牌失败", "Couldn't exchange the Google authorization code"));
     }
 
     let Ok(tokens) = response.json::<GoogleTokenResponse>().await else {
-        return callback_page(StatusCode::BAD_GATEWAY, "Google 授权响应格式无效");
+        return callback_page(StatusCode::BAD_GATEWAY, t!("Google 授权响应格式无效", "Invalid Google authorization response"));
     };
     let Some(refresh_token) = tokens.refresh_token.filter(|token| !token.is_empty()) else {
         return callback_page(
             StatusCode::BAD_GATEWAY,
-            "Google 未返回刷新令牌，请重新授权并确认已同意权限",
+            t!("Google 未返回刷新令牌，请重新授权并确认已同意权限", "Google didn't return a refresh token. Authorize again and make sure you accept the permissions"),
         );
     };
     let config = protocol::StorageBackendConfig::GoogleDrive {
@@ -156,12 +156,12 @@ pub(super) async fn google_oauth_callback(
         .is_err()
     {
         tracing::warn!("failed to save Google Drive authorization");
-        return callback_page(StatusCode::INTERNAL_SERVER_ERROR, "保存存储配置失败");
+        return callback_page(StatusCode::INTERNAL_SERVER_ERROR, t!("保存存储配置失败", "Couldn't save the storage settings"));
     }
 
     callback_page(
         StatusCode::OK,
-        "Google Drive 已成功绑定。可以关闭此页面，回到 DropDrawer 点击刷新。",
+        t!("Google Drive 已成功绑定。可以关闭此页面，回到 DropDrawer 点击刷新。", "Google Drive is connected. You can close this page and click Refresh in DropDrawer."),
     )
 }
 
@@ -170,14 +170,14 @@ pub(super) async fn google_oauth_callback(
 fn callback_page(status: StatusCode, message: &'static str) -> Response {
     let ok = status.is_success();
     let title = if ok {
-        "Google Drive 绑定成功"
+        t!("Google Drive 绑定成功", "Google Drive connected")
     } else {
-        "Google Drive 绑定未完成"
+        t!("Google Drive 绑定未完成", "Google Drive wasn't connected")
     };
     let hint = if ok {
-        "此标签页可安全关闭，回到 DropDrawer 点击刷新即可使用"
+        t!("此标签页可安全关闭，回到 DropDrawer 点击刷新即可使用", "You can close this tab. Click Refresh in DropDrawer to start using it")
     } else {
-        "你可以关闭此页面，回到 DropDrawer 重新发起授权"
+        t!("你可以关闭此页面，回到 DropDrawer 重新发起授权", "You can close this page and return to DropDrawer to authorize again")
     };
     crate::google_login::render_oauth_result_page(status, ok, title, message, hint)
 }

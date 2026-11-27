@@ -134,6 +134,8 @@ pub fn build_router_with_cors(state: Arc<AppState>, allowed_origins: Option<&[St
         // The admin console is same-origin only, so it is merged after the CORS layer.
         .merge(crate::admin::router())
         .with_state(state)
+        // Outermost, so every handler and error path sees the request language.
+        .layer(axum::middleware::from_fn(crate::i18n::scope_language))
 }
 
 async fn health() -> impl IntoResponse {
@@ -174,11 +176,11 @@ async fn send_email_code(
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let email = req.email.trim().to_ascii_lowercase();
     if !is_valid_email(&email) {
-        return Err((StatusCode::BAD_REQUEST, "邮箱地址格式无效".to_string()));
+        return Err((StatusCode::BAD_REQUEST, t!("邮箱地址格式无效", "Invalid email address").to_string()));
     }
     let purpose = req.purpose.trim();
     if purpose != "register" && purpose != "reset_password" {
-        return Err((StatusCode::BAD_REQUEST, "无效的验证码用途".to_string()));
+        return Err((StatusCode::BAD_REQUEST, t!("无效的验证码用途", "Invalid code purpose").to_string()));
     }
 
     let settings = state.runtime_settings();
@@ -186,7 +188,7 @@ async fn send_email_code(
     if !email_ready {
         return Err((
             StatusCode::SERVICE_UNAVAILABLE,
-            "当前服务器未启用邮件服务".to_string(),
+            t!("当前服务器未启用邮件服务", "Email is not enabled on this server").to_string(),
         ));
     }
 
@@ -194,7 +196,7 @@ async fn send_email_code(
     if state.email_send_limiter.is_blocked(&rate_key) {
         return Err((
             StatusCode::TOO_MANY_REQUESTS,
-            "发送验证码过于频繁，请稍后再试".to_string(),
+            t!("发送验证码过于频繁，请稍后再试", "Too many code requests. Try again later").to_string(),
         ));
     }
     if let Some(last) = state
@@ -206,7 +208,7 @@ async fn send_email_code(
         if elapsed < 60 {
             return Err((
                 StatusCode::TOO_MANY_REQUESTS,
-                format!("请等待 {} 秒后再重新发送验证码", (60 - elapsed).max(1)),
+                tf!("请等待 {} 秒后再重新发送验证码", "Wait {} seconds before requesting another code", (60 - elapsed).max(1)),
             ));
         }
     }
@@ -215,7 +217,7 @@ async fn send_email_code(
         if settings.registration_mode == RegistrationMode::Closed {
             return Err((
                 StatusCode::FORBIDDEN,
-                "当前服务器已关闭新用户注册".to_string(),
+                t!("当前服务器已关闭新用户注册", "This server doesn't accept new sign-ups").to_string(),
             ));
         }
         if let Err(msg) = settings.check_email_domain(&email) {
@@ -227,13 +229,13 @@ async fn send_email_code(
             .map_err(internal_err)?
             .is_some()
         {
-            return Err((StatusCode::CONFLICT, "该邮箱已被注册".to_string()));
+            return Err((StatusCode::CONFLICT, t!("该邮箱已被注册", "This email is already registered").to_string()));
         }
     } else {
         if !settings.features.password_reset_enabled {
             return Err((
                 StatusCode::FORBIDDEN,
-                "管理员已关闭邮箱找回密码".to_string(),
+                t!("管理员已关闭邮箱找回密码", "The administrator has turned off password reset by email").to_string(),
             ));
         }
         // Avoid user-enumeration: if email is unknown or disabled, still return ok without sending.
@@ -257,7 +259,7 @@ async fn send_email_code(
     state
         .send_email(&message)
         .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("邮件发送失败: {e}")))?;
+        .map_err(|e| (StatusCode::BAD_GATEWAY, tf!("邮件发送失败: {e}", "Couldn't send the email: {e}")))?;
 
     Ok(Json(serde_json::json!({ "ok": true })))
 }
@@ -269,22 +271,22 @@ async fn reset_password(
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let email = req.email.trim().to_ascii_lowercase();
     if !is_valid_email(&email) {
-        return Err((StatusCode::BAD_REQUEST, "邮箱地址格式无效".to_string()));
+        return Err((StatusCode::BAD_REQUEST, t!("邮箱地址格式无效", "Invalid email address").to_string()));
     }
     if req.new_password.len() < 6 {
-        return Err((StatusCode::BAD_REQUEST, "新密码长度至少 6 位".to_string()));
+        return Err((StatusCode::BAD_REQUEST, t!("新密码长度至少 6 位", "The new password must be at least 6 characters").to_string()));
     }
     let settings = state.runtime_settings();
     if !settings.features.password_reset_enabled {
         return Err((
             StatusCode::FORBIDDEN,
-            "管理员已关闭邮箱找回密码".to_string(),
+            t!("管理员已关闭邮箱找回密码", "The administrator has turned off password reset by email").to_string(),
         ));
     }
     if !settings.smtp.is_usable() && !state.has_custom_email_sender() {
         return Err((
             StatusCode::SERVICE_UNAVAILABLE,
-            "当前服务器未启用邮件服务".to_string(),
+            t!("当前服务器未启用邮件服务", "Email is not enabled on this server").to_string(),
         ));
     }
 
@@ -296,15 +298,15 @@ async fn reset_password(
     if !valid {
         return Err((
             StatusCode::BAD_REQUEST,
-            "验证码无效或已过期，请重新获取".to_string(),
+            t!("验证码无效或已过期，请重新获取", "The code is invalid or expired. Request a new one").to_string(),
         ));
     }
 
     let Some(user) = state.db.find_user_by_email(&email).map_err(internal_err)? else {
-        return Err((StatusCode::BAD_REQUEST, "验证码无效或已过期".to_string()));
+        return Err((StatusCode::BAD_REQUEST, t!("验证码无效或已过期", "The code is invalid or expired").to_string()));
     };
     if !user.email_verified || user.disabled {
-        return Err((StatusCode::FORBIDDEN, "该账号当前不可重置密码".to_string()));
+        return Err((StatusCode::FORBIDDEN, t!("该账号当前不可重置密码", "This account's password can't be reset right now").to_string()));
     }
 
     let hash = hash_password(&req.new_password).map_err(internal_err)?;
@@ -336,10 +338,10 @@ async fn register(
         RegistrationMode::InviteOnly => {
             let code = req.invite_code.as_deref().map(str::trim).unwrap_or("");
             if code.is_empty() {
-                return Err((StatusCode::FORBIDDEN, "当前服务器仅支持邀请码注册".to_string()));
+                return Err((StatusCode::FORBIDDEN, t!("当前服务器仅支持邀请码注册", "This server only accepts sign-ups with an invitation code").to_string()));
             }
             if !state.db.is_invite_code_valid(code).map_err(internal_err)? {
-                return Err((StatusCode::FORBIDDEN, "邀请码无效、已用完或已过期".to_string()));
+                return Err((StatusCode::FORBIDDEN, t!("邀请码无效、已用完或已过期", "The invitation code is invalid, used up or expired").to_string()));
             }
         }
         RegistrationMode::Open => {}
@@ -349,7 +351,7 @@ async fn register(
     if username.len() < 2 || req.password.len() < 6 {
         return Err((
             StatusCode::BAD_REQUEST,
-            "username must be >= 2 chars and password >= 6 chars".to_string(),
+            t!("用户名至少 2 个字符，密码至少 6 位", "Usernames need at least 2 characters and passwords at least 6").to_string(),
         ));
     }
     policy::validate_username(username)?;
@@ -360,7 +362,7 @@ async fn register(
         .map_err(internal_err)?
         .is_some()
     {
-        return Err((StatusCode::CONFLICT, "username already exists".to_string()));
+        return Err((StatusCode::CONFLICT, t!("该用户名已被注册", "This username is already taken").to_string()));
     }
 
     let email_ready = settings.smtp.is_usable() || state.has_custom_email_sender();
@@ -374,10 +376,10 @@ async fn register(
 
     let (verified_email, email_verified) = if require_email || supplied_email.is_some() {
         let Some(email) = supplied_email else {
-            return Err((StatusCode::BAD_REQUEST, "请填写注册邮箱并完成验证码校验".to_string()));
+            return Err((StatusCode::BAD_REQUEST, t!("请填写注册邮箱并完成验证码校验", "Enter your email and verify it with the code").to_string()));
         };
         if !is_valid_email(&email) {
-            return Err((StatusCode::BAD_REQUEST, "邮箱地址格式无效".to_string()));
+            return Err((StatusCode::BAD_REQUEST, t!("邮箱地址格式无效", "Invalid email address").to_string()));
         }
         if let Err(msg) = settings.check_email_domain(&email) {
             return Err((StatusCode::FORBIDDEN, msg));
@@ -388,12 +390,12 @@ async fn register(
             .map_err(internal_err)?
             .is_some()
         {
-            return Err((StatusCode::CONFLICT, "该邮箱已被注册".to_string()));
+            return Err((StatusCode::CONFLICT, t!("该邮箱已被注册", "This email is already registered").to_string()));
         }
         if require_email || req.email_code.as_deref().is_some_and(|c| !c.trim().is_empty()) {
             let code = req.email_code.as_deref().unwrap_or("").trim();
             if code.is_empty() {
-                return Err((StatusCode::BAD_REQUEST, "请输入邮箱验证码".to_string()));
+                return Err((StatusCode::BAD_REQUEST, t!("请输入邮箱验证码", "Enter the email verification code").to_string()));
             }
             let code_hash = hash_email_code(&email, "register", code, &state.jwt_secret);
             let ok = state
@@ -403,7 +405,7 @@ async fn register(
             if !ok {
                 return Err((
                     StatusCode::BAD_REQUEST,
-                    "邮箱验证码无效或已过期，请重新获取".to_string(),
+                    t!("邮箱验证码无效或已过期，请重新获取", "The email code is invalid or expired. Request a new one").to_string(),
                 ));
             }
             (Some(email), true)
@@ -418,7 +420,7 @@ async fn register(
         let code = req.invite_code.as_deref().unwrap_or("");
         let consumed = state.db.consume_invite_code(code).map_err(internal_err)?;
         if !consumed {
-            return Err((StatusCode::FORBIDDEN, "邀请码无效、已用完或已过期".to_string()));
+            return Err((StatusCode::FORBIDDEN, t!("邀请码无效、已用完或已过期", "The invitation code is invalid, used up or expired").to_string()));
         }
     }
 
@@ -452,7 +454,7 @@ async fn login(
     if !state.runtime_settings().password_login_enabled {
         return Err((
             StatusCode::FORBIDDEN,
-            "当前服务器已关闭账号密码登录，请使用其他已启用的登录方式".to_string(),
+            t!("当前服务器已关闭账号密码登录，请使用其他已启用的登录方式", "Password sign-in is turned off on this server. Use another enabled sign-in method").to_string(),
         ));
     }
     let limit_key = login_limit_key(&ip, &req.username);
@@ -464,7 +466,7 @@ async fn login(
     }
     let invalid = || {
         state.failed_logins.record_failure(&limit_key);
-        (StatusCode::UNAUTHORIZED, "invalid credentials".to_string())
+        (StatusCode::UNAUTHORIZED, t!("用户名或密码错误", "Incorrect username or password").to_string())
     };
     let user_rec = state
         .db
@@ -475,7 +477,7 @@ async fn login(
     if user_rec.disabled {
         return Err((
             StatusCode::FORBIDDEN,
-            "该账号已被管理员禁用".to_string(),
+            t!("该账号已被管理员禁用", "This account has been disabled by an administrator").to_string(),
         ));
     }
 
@@ -525,7 +527,7 @@ async fn register_device(
     {
         return Err((
             StatusCode::UNAUTHORIZED,
-            "该设备已被管理员移除，请重新登录".to_string(),
+            t!("该设备已被管理员移除，请重新登录", "An administrator removed this device. Sign in again").to_string(),
         ));
     }
     let _presence = state.presence_changes.lock().await;
@@ -570,7 +572,7 @@ async fn client_config(
     {
         return Err((
             StatusCode::UNAUTHORIZED,
-            "该设备已被管理员移除，请重新登录".to_string(),
+            t!("该设备已被管理员移除，请重新登录", "An administrator removed this device. Sign in again").to_string(),
         ));
     }
     policy::client_config(&state, &auth.user_id).map(Json)
@@ -679,7 +681,7 @@ async fn update_storage_backend(
         .ok_or_else(storage_backend_not_found)?;
     let name = req.name.trim();
     if name.is_empty() {
-        return Err((StatusCode::BAD_REQUEST, "存储名称不能为空".to_string()));
+        return Err((StatusCode::BAD_REQUEST, t!("存储名称不能为空", "Storage name can't be empty").to_string()));
     }
     // Stored files refer to this backend ID. Keep the destination and account
     // identifiers fixed while letting users rotate credentials for that target.
@@ -697,17 +699,17 @@ async fn update_storage_backend(
     for (key, value) in req.config {
         if key == "max_bytes" && matches!(&backend.config, StorageBackendConfig::Local { .. }) {
             if !value.is_null() && value.as_u64().is_none_or(|bytes| bytes == 0) {
-                return Err((StatusCode::BAD_REQUEST, "容量上限必须为正整数".to_string()));
+                return Err((StatusCode::BAD_REQUEST, t!("容量上限必须为正整数", "The capacity limit must be a positive whole number").to_string()));
             }
         } else if credential_fields.contains(&key.as_str()) {
             let credential = value
                 .as_str()
-                .ok_or_else(|| (StatusCode::BAD_REQUEST, "凭据必须为字符串".to_string()))?;
+                .ok_or_else(|| (StatusCode::BAD_REQUEST, t!("凭据必须为字符串", "Credentials must be strings").to_string()))?;
             if credential.trim().is_empty() {
                 continue;
             }
         } else {
-            return Err((StatusCode::BAD_REQUEST, "此存储字段无法编辑".to_string()));
+            return Err((StatusCode::BAD_REQUEST, t!("此存储字段无法编辑", "This storage field can't be edited").to_string()));
         }
         patch.insert(key, value);
     }
@@ -722,7 +724,7 @@ async fn update_storage_backend(
 }
 
 fn storage_backend_not_found() -> (StatusCode, String) {
-    (StatusCode::NOT_FOUND, "storage backend not found".to_string())
+    (StatusCode::NOT_FOUND, t!("存储策略不存在", "Storage not found").to_string())
 }
 
 async fn set_default_storage_backend(
@@ -835,7 +837,7 @@ async fn create_drawer_item(
     let hydrated = state
         .hydrate_single_item(&auth.user_id, &id)
         .map_err(internal_err)?
-        .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "item missing".to_string()))?;
+        .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, t!("条目不存在", "Item not found").to_string()))?;
 
     state.broadcast_user(&auth.user_id, WsEvent::ItemAdded(hydrated.clone()));
     Ok(Json(hydrated))
@@ -857,7 +859,7 @@ async fn delete_drawer_item(
             )
         })?;
     if !deleted {
-        return Err((StatusCode::NOT_FOUND, "item not found".to_string()));
+        return Err((StatusCode::NOT_FOUND, t!("条目不存在或已被移出", "The item doesn't exist or was removed").to_string()));
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -939,7 +941,7 @@ async fn request_upload_plan(
         .db
         .get_drawer_item(&id, &auth.user_id)
         .map_err(internal_err)?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, "item not found".to_string()))?;
+        .ok_or_else(|| (StatusCode::NOT_FOUND, t!("条目不存在或已被移出", "The item doesn't exist or was removed").to_string()))?;
 
     let backend_id = req
         .storage_backend_id
@@ -992,7 +994,7 @@ async fn request_upload_plan(
             let hydrated = state
                 .hydrate_single_item(&auth.user_id, &item.id)
                 .map_err(internal_err)?
-                .ok_or_else(|| (StatusCode::NOT_FOUND, "item vanished".to_string()))?;
+                .ok_or_else(|| (StatusCode::NOT_FOUND, t!("条目已被移出", "The item was removed").to_string()))?;
             state.broadcast_user(&auth.user_id, WsEvent::ItemUpdated(hydrated.clone()));
             return Ok(Json(UploadPlan::AlreadyCached {
                 item: Box::new(hydrated),
@@ -1039,7 +1041,7 @@ async fn stream_upload_item(
         .db
         .get_drawer_item(&id, &auth.user_id)
         .map_err(internal_err)?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, "item not found".to_string()))?;
+        .ok_or_else(|| (StatusCode::NOT_FOUND, t!("条目不存在或已被移出", "The item doesn't exist or was removed").to_string()))?;
 
     let backend = state
         .resolve_backend(
@@ -1104,7 +1106,7 @@ async fn stream_upload_item(
     let hydrated = state
         .hydrate_single_item(&auth.user_id, &item.id)
         .map_err(internal_err)?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, "item vanished".to_string()))?;
+        .ok_or_else(|| (StatusCode::NOT_FOUND, t!("条目已被移出", "The item was removed").to_string()))?;
 
     state.broadcast_user(&auth.user_id, WsEvent::ItemUpdated(hydrated.clone()));
     Ok(Json(hydrated))
@@ -1138,12 +1140,12 @@ async fn confirm_direct_upload(
         .db
         .get_drawer_item(&id, &auth.user_id)
         .map_err(internal_err)?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, "item not found".to_string()))?;
+        .ok_or_else(|| (StatusCode::NOT_FOUND, t!("条目不存在或已被移出", "The item doesn't exist or was removed").to_string()))?;
     let backend = state
         .db
         .get_storage_backend(&req.storage_backend_id, &auth.user_id)
         .map_err(internal_err)?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, "storage backend not found".to_string()))?;
+        .ok_or_else(|| (StatusCode::NOT_FOUND, t!("存储策略不存在", "Storage not found").to_string()))?;
     policy::ensure_upload_allowed(&state, &auth.user_id, &backend)?;
     // Only presigned direct uploads are confirmed by the client, and only for the
     // exact key the server handed out in the upload plan.
@@ -1169,12 +1171,12 @@ async fn confirm_direct_upload(
         )
         .map_err(internal_err)?;
     if !ok {
-        return Err((StatusCode::NOT_FOUND, "item not found".to_string()));
+        return Err((StatusCode::NOT_FOUND, t!("条目不存在或已被移出", "The item doesn't exist or was removed").to_string()));
     }
     let hydrated = state
         .hydrate_single_item(&auth.user_id, &id)
         .map_err(internal_err)?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, "item not found".to_string()))?;
+        .ok_or_else(|| (StatusCode::NOT_FOUND, t!("条目不存在或已被移出", "The item doesn't exist or was removed").to_string()))?;
     state.broadcast_user(&auth.user_id, WsEvent::ItemUpdated(hydrated.clone()));
     Ok(Json(hydrated))
 }
@@ -1238,7 +1240,7 @@ async fn get_download_plan(
         .db
         .get_drawer_item(&id, &auth.user_id)
         .map_err(internal_err)?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, "item not found".to_string()))?;
+        .ok_or_else(|| (StatusCode::NOT_FOUND, t!("条目不存在或已被移出", "The item doesn't exist or was removed").to_string()))?;
 
     let mut p2p = None;
     if item.transfer_mode != TransferMode::CloudCached {
@@ -1375,7 +1377,7 @@ async fn download_item_content(
         .db
         .get_drawer_item(&id, &auth.user_id)
         .map_err(internal_err)?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, "item not found".to_string()))?;
+        .ok_or_else(|| (StatusCode::NOT_FOUND, t!("条目不存在或已被移出", "The item doesn't exist or was removed").to_string()))?;
 
     let (Some(backend_id), Some(storage_path)) =
         (item.storage_backend_id.as_deref(), item.storage_path.as_deref())
@@ -1390,7 +1392,7 @@ async fn download_item_content(
         .db
         .get_storage_backend(backend_id, &auth.user_id)
         .map_err(internal_err)?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, "storage backend not found".to_string()))?;
+        .ok_or_else(|| (StatusCode::NOT_FOUND, t!("存储策略不存在", "Storage not found").to_string()))?;
     let provider = provider_for(&state, &backend).await?;
 
     match provider
@@ -1467,7 +1469,7 @@ fn format_share_display_name(custom_title: Option<&str>, items: &[DrawerItemRow]
     if items.len() == 1 {
         return items[0].name.clone();
     }
-    format!("{} 等 {} 项", items[0].name, items.len())
+    tf!("{} 等 {} 项", "{} and {} items", items[0].name, items.len())
 }
 
 fn create_share_for_items(
@@ -1488,7 +1490,7 @@ fn create_share_for_items(
     if unique_ids.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
-            "请至少选择一个文件或文本条目".to_string(),
+            t!("请至少选择一个文件或文本条目", "Select at least one file or text item").to_string(),
         ));
     }
 
@@ -1498,12 +1500,12 @@ fn create_share_for_items(
             .db
             .get_drawer_item(id, user_id)
             .map_err(internal_err)?
-            .ok_or_else(|| (StatusCode::NOT_FOUND, "drawer item not found".to_string()))?;
+            .ok_or_else(|| (StatusCode::NOT_FOUND, t!("抽屉条目不存在", "Drawer item not found").to_string()))?;
 
         if item.kind == DrawerItemKind::File && !item.cloud_ready {
             return Err((
                 StatusCode::BAD_REQUEST,
-                format!("文件「{}」尚未上传到云盘/服务器，请先转存云端后再创建外链", item.name),
+                tf!("文件「{}」尚未上传到云盘/服务器，请先转存云端后再创建外链", "“{}” hasn't been uploaded to the cloud or server yet. Save it to the cloud before creating a link", item.name),
             ));
         }
         items.push(item);
@@ -1632,7 +1634,7 @@ async fn delete_share_link(
         .delete_share_link(&code, &auth.user_id)
         .map_err(internal_err)?;
     if !ok {
-        return Err((StatusCode::NOT_FOUND, "share link not found".to_string()));
+        return Err((StatusCode::NOT_FOUND, t!("分享链接不存在", "Share link not found").to_string()));
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1669,7 +1671,7 @@ async fn share_unlocked(
     if state.failed_passcodes.is_blocked(&share.code) {
         return Err((
             StatusCode::TOO_MANY_REQUESTS,
-            "提取码尝试次数过多，请稍后再试".to_string(),
+            t!("提取码尝试次数过多，请稍后再试", "Too many passcode attempts. Try again later").to_string(),
         ));
     }
     if verify_password_blocking(provided, hash).await {
@@ -1688,15 +1690,15 @@ async fn validate_share_access(
     if let Some(exp) = share.expires_at
         && exp <= Utc::now()
     {
-        return Err((StatusCode::GONE, "该分享链接已过期".to_string()));
+        return Err((StatusCode::GONE, t!("该分享链接已过期", "This share link has expired").to_string()));
     }
     if let Some(max) = share.max_downloads
         && share.download_count >= max
     {
-        return Err((StatusCode::GONE, "该分享链接已达到下载次数上限".to_string()));
+        return Err((StatusCode::GONE, t!("该分享链接已达到下载次数上限", "This share link has reached its download limit").to_string()));
     }
     if !share_unlocked(state, share, passcode).await? {
-        return Err((StatusCode::FORBIDDEN, "需要正确的提取码".to_string()));
+        return Err((StatusCode::FORBIDDEN, t!("需要正确的提取码", "A correct passcode is required").to_string()));
     }
     Ok(())
 }
@@ -1713,12 +1715,12 @@ async fn public_share_meta(
     if let Some(exp) = share.expires_at
         && exp <= Utc::now()
     {
-        return Err((StatusCode::GONE, "该分享链接已过期".to_string()));
+        return Err((StatusCode::GONE, t!("该分享链接已过期", "This share link has expired").to_string()));
     }
     if let Some(max) = share.max_downloads
         && share.download_count >= max
     {
-        return Err((StatusCode::GONE, "该分享链接已达到下载次数上限".to_string()));
+        return Err((StatusCode::GONE, t!("该分享链接已达到下载次数上限", "This share link has reached its download limit").to_string()));
     }
 
     let items = state
@@ -1726,7 +1728,7 @@ async fn public_share_meta(
         .get_share_link_items(&share.code, &share.item_id)
         .map_err(internal_err)?;
     if items.is_empty() {
-        return Err((StatusCode::NOT_FOUND, "关联文件已被删除".to_string()));
+        return Err((StatusCode::NOT_FOUND, t!("关联文件已被删除", "The linked file has been deleted").to_string()));
     }
 
     let locked = !share_unlocked(&state, &share, query.passcode.as_deref()).await?;
@@ -1793,14 +1795,14 @@ async fn public_share_download(
         .get_share_link_items(&share.code, &share.item_id)
         .map_err(internal_err)?;
     if items.is_empty() {
-        return Err((StatusCode::NOT_FOUND, "关联文件已被删除".to_string()));
+        return Err((StatusCode::NOT_FOUND, t!("关联文件已被删除", "The linked file has been deleted").to_string()));
     }
 
     let item = if let Some(ref target_id) = query.item_id {
         items
             .into_iter()
             .find(|it| &it.id == target_id)
-            .ok_or_else(|| (StatusCode::NOT_FOUND, "所请求的文件不在该分享中".to_string()))?
+            .ok_or_else(|| (StatusCode::NOT_FOUND, t!("所请求的文件不在该分享中", "The requested file isn't part of this share").to_string()))?
     } else {
         items.into_iter().next().unwrap()
     };
@@ -1811,7 +1813,7 @@ async fn public_share_download(
             .increment_share_download(&code)
             .map_err(internal_err)?
         {
-            return Err((StatusCode::GONE, "该分享链接已达到下载次数上限".to_string()));
+            return Err((StatusCode::GONE, t!("该分享链接已达到下载次数上限", "This share link has reached its download limit").to_string()));
         }
         let text = item.text_content.unwrap_or_default();
         return Response::builder()
@@ -1824,14 +1826,14 @@ async fn public_share_download(
     let (Some(backend_id), Some(storage_path)) =
         (item.storage_backend_id.as_deref(), item.storage_path.as_deref())
     else {
-        return Err((StatusCode::BAD_REQUEST, "文件尚未缓存到云端".to_string()));
+        return Err((StatusCode::BAD_REQUEST, t!("文件尚未缓存到云端", "The file isn't cached in the cloud yet").to_string()));
     };
 
     let backend = state
         .db
         .get_storage_backend(backend_id, &item.user_id)
         .map_err(internal_err)?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, "存储策略不存在".to_string()))?;
+        .ok_or_else(|| (StatusCode::NOT_FOUND, t!("存储策略不存在", "Storage not found").to_string()))?;
 
     let provider = provider_for(&state, &backend).await?;
     let incremented = state
@@ -1839,7 +1841,7 @@ async fn public_share_download(
         .increment_share_download(&code)
         .map_err(internal_err)?;
     if !incremented {
-        return Err((StatusCode::GONE, "该分享链接已达到下载次数上限".to_string()));
+        return Err((StatusCode::GONE, t!("该分享链接已达到下载次数上限", "This share link has reached its download limit").to_string()));
     }
 
     match provider
@@ -1876,7 +1878,7 @@ fn lookup_public_share(
     code: &str,
 ) -> Result<crate::db::ShareLinkRow, (StatusCode, String)> {
     if state.failed_share_lookups.is_blocked(ip) {
-        return Err((StatusCode::TOO_MANY_REQUESTS, "分享链接查询过多，请稍后重试".to_string()));
+        return Err((StatusCode::TOO_MANY_REQUESTS, t!("分享链接查询过多，请稍后重试", "Too many share link lookups. Try again later").to_string()));
     }
     // Both legacy eight-character codes and new twelve-character codes are valid.
     if matches!(code.len(), 8 | 12)
@@ -1886,17 +1888,23 @@ fn lookup_public_share(
         return Ok(share);
     }
     state.failed_share_lookups.record_failure(ip);
-    Err((StatusCode::NOT_FOUND, "分享链接不存在或已被撤销".to_string()))
+    Err((StatusCode::NOT_FOUND, t!("分享链接不存在或已被撤销", "The share link doesn't exist or has been revoked").to_string()))
 }
 
-async fn public_share_page(Path(code): Path<String>) -> Html<String> {
+async fn public_share_page(Path(code): Path<String>) -> impl IntoResponse {
     // The landing page is static. The metadata and download routes look up
     // the code and enforce the shared miss limit.
     let safe_code: String = code
         .chars()
         .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
         .collect();
-    Html(PUBLIC_SHARE_HTML.replace("__SHARE_CODE__", &safe_code))
+    let html = PUBLIC_SHARE_HTML
+        .replace("__LANG__", crate::i18n::current().html_tag())
+        .replace("__TITLE__", t!("DropDrawer 外链提取", "DropDrawer shared files"))
+        .replace("__BRAND__", t!("DropDrawer 外链分享", "DropDrawer share"))
+        .replace("__LOADING__", t!("正在加载分享信息...", "Loading the share…"))
+        .replace("__SHARE_CODE__", &safe_code);
+    ([(header::VARY, "Accept-Language")], Html(html))
 }
 
 fn generate_short_code() -> String {
@@ -1944,7 +1952,7 @@ async fn ws_upgrade(
         .map_err(internal_err)?
         .is_none()
     {
-        return Err((StatusCode::NOT_FOUND, "device not registered".to_string()));
+        return Err((StatusCode::NOT_FOUND, t!("设备尚未注册，请重新登录", "This device isn't registered. Sign in again").to_string()));
     }
 
     Ok(ws.on_upgrade(move |socket| handle_ws(socket, state, claims.sub, query.device_id)))

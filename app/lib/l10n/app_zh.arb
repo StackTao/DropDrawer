@@ -1,0 +1,1446 @@
+{
+  "@@locale": "zh",
+  "serverAnnouncement": "服务器公告",
+  "dismissAnnouncement": "关闭公告",
+  "cancel": "取消",
+  "waitingForStorageConfirmation": "等待存储确认…",
+  "sendingFile": "正在发送文件",
+  "transferCanceled": "传输已取消",
+  "googleSignInRequiresAnHttps": "Google 登录需要 HTTPS 服务器地址。",
+  "googleSignInIsNotEnabled": "此服务器尚未启用 Google 登录。",
+  "theServerReturnedAnInvalidGoogle": "服务器返回了无效的 Google 授权地址。",
+  "back": "返回",
+  "closeMenu": "关闭菜单",
+  "remove": "移出",
+  "settings": "设置",
+  "downloadingUpdateProgress": "正在下载 {version} · {value}%",
+  "@downloadingUpdateProgress": {
+    "placeholders": {
+      "version": {
+        "type": "Object"
+      },
+      "value": {
+        "type": "Object"
+      }
+    }
+  },
+  "installingDropdrawerWillRestartAutomatically": "正在安装 {version}，DropDrawer 将自动重启",
+  "@installingDropdrawerWillRestartAutomatically": {
+    "placeholders": {
+      "version": {
+        "type": "Object"
+      }
+    }
+  },
+  "openingTheSystemInstaller": "正在打开系统安装界面",
+  "updateFailed": "更新失败",
+  "versionIsAvailable": "新版本 {version} 可用",
+  "@versionIsAvailable": {
+    "placeholders": {
+      "version": {
+        "type": "Object"
+      }
+    }
+  },
+  "openInstaller": "打开安装包",
+  "retry": "重试",
+  "update": "更新",
+  "later": "稍后",
+  "couldnTCheckForUpdatesTry": "检查更新失败，请稍后重试。",
+  "couldnTSaveTheInstallerCheck": "无法保存安装包，请检查磁盘空间后重试。",
+  "couldnTStartTheInstallerTry": "无法启动安装程序，请稍后重试。",
+  "confirmTheUpdateInTheSystem": "请在系统安装界面中确认更新。",
+  "theUpdateDidnTFinishYou": "更新没有完成，可以再试一次。",
+  "ifTheInstallationDidnTFinish": "如果没有完成安装，可以再点一次「更新」。",
+  "allowDropdrawerToInstallAppsThen": "请允许 DropDrawer 安装应用，返回后再点一次「更新」。",
+  "theNewVersionIsSignedDifferently": "新版本的签名与当前应用不同，无法自动替换。可以打开安装包手动安装。",
+  "theNewVersionUsesTheRelease": "新版本使用了正式签名，与当前安装的测试版不同。请先卸载 DropDrawer 再安装新版本；抽屉内容保存在服务端，不会丢失。",
+  "dropdrawerDoesnTHavePermissionTo": "没有权限替换当前的 DropDrawer，可以打开安装包手动安装。",
+  "thisInstallerSBuildNumberIsn": "这个安装包的构建号不比当前版本新，请从发布页选择对应的安装包。",
+  "couldnTOpenTheInstallerDownload": "无法打开安装包，请从发布页下载。",
+  "canTReachGithubCheckYour": "连不上 GitHub，请检查网络后重试。",
+  "githubIsTemporarilyLimitingUpdateChecks": "GitHub 暂时限制了检查次数，请稍后再试。",
+  "githubRateLimitedUntil": "GitHub 暂时限制了检查次数，请在 {value} 之后再试。",
+  "@githubRateLimitedUntil": {
+    "placeholders": {
+      "value": {
+        "type": "Object"
+      }
+    }
+  },
+  "githubCanTProvideVersionInformation": "GitHub 暂时无法提供版本信息，请稍后重试。",
+  "theDownloadedInstallerIsIncompleteOr": "下载的安装包不完整或已损坏，请重新下载。",
+  "checkAutomatically": "自动检查",
+  "checkForUpdates": "检查更新",
+  "releases": "发布页",
+  "releaseNotes": "更新说明",
+  "aboutUpdates": "关于与更新",
+  "checkForUpdatesAutomatically": "自动检查更新",
+  "updateToMbAndRestart": "更新到 {version}（{mb} MB）并重启",
+  "@updateToMbAndRestart": {
+    "placeholders": {
+      "version": {
+        "type": "Object"
+      },
+      "mb": {
+        "type": "Object"
+      }
+    }
+  },
+  "updateToMb": "更新到 {version}（{mb} MB）",
+  "@updateToMb": {
+    "placeholders": {
+      "version": {
+        "type": "Object"
+      },
+      "mb": {
+        "type": "Object"
+      }
+    }
+  },
+  "readingVersion": "正在读取版本…",
+  "getNewVersionsForThisPlatform": "这个平台的新版本请从发布页获取。",
+  "developmentBuildNoReleaseTagAt": "开发版本（构建时未指定发布标签），不检查更新。",
+  "checksForANewVersionOnce": "每天自动检查一次新版本。",
+  "automaticChecksAreOff": "已关闭自动检查。",
+  "checkingForUpdates": "正在检查更新…",
+  "aNewVersionWasReleasedBut": "已有新版本发布，但还没有这个平台的安装包。",
+  "youReUpToDate": "已是最新版本。",
+  "versionIsReadyToInstall": "新版本 {version} 可以更新。",
+  "@versionIsReadyToInstall": {
+    "placeholders": {
+      "version": {
+        "type": "Object"
+      }
+    }
+  },
+  "downloadingAndVerifyingProgress": "正在下载并校验 {value}%…",
+  "@downloadingAndVerifyingProgress": {
+    "placeholders": {
+      "value": {
+        "type": "Object"
+      }
+    }
+  },
+  "installingDropdrawerWillRestartAutomatically2": "正在安装，DropDrawer 将自动重启。",
+  "openingTheSystemInstaller2": "正在打开系统安装界面…",
+  "updateFailedTryAgain": "更新失败，请重试。",
+  "enterAValidEmailAddressFirst": "请先填写有效的邮箱地址",
+  "verificationCodeSentCheckYourEmail": "验证码已发送，请查收邮件（10 分钟内有效）",
+  "passwordResetSignInWithYour": "密码已重置，请使用新密码登录",
+  "thisServerRequiresAnInvitationCode": "当前服务器需要邀请码，请先填写邀请码再使用 Google 注册",
+  "enterAValidServerAddressFirst": "请先填写有效的服务器地址。",
+  "continueLabel": "继续",
+  "createAccountAndConnect": "创建账号并连接",
+  "resetPassword": "确认重置密码",
+  "resetYourPasswordWithAnEmail": "通过邮箱验证码重置密码",
+  "aDrawerForFilesAcrossYour": "跨端文件暂存抽屉",
+  "server": "服务器",
+  "account": "账号",
+  "usernameOrVerifiedEmail": "用户名或已验证邮箱",
+  "enterYourUsername": "输入用户名",
+  "email": "邮箱",
+  "verificationCode": "验证码",
+  "n6Digits": "6 位数字",
+  "sending": "发送中…",
+  "sendCode": "获取验证码",
+  "invitationCode": "邀请码",
+  "enterTheInvitationCodeFromYour": "输入管理员发放的邀请码",
+  "newPassword": "新密码",
+  "password": "密码",
+  "atLeast6Characters": "至少 6 位",
+  "finishGoogleAuthorizationInYourBrowser": "请在系统浏览器完成 Google 授权，然后返回 DropDrawer。",
+  "stopWaiting": "取消等待",
+  "signUpWithGoogle": "使用 Google 注册",
+  "signInWithGoogle": "使用 Google 登录",
+  "forgotPassword": "忘记密码？",
+  "privacy": "隐私说明",
+  "noAccountCreateOne": "还没有账号？创建一个",
+  "haveAnAccountSignIn": "已有账号，返回登录",
+  "fromDevice": "来自 {cleanDeviceName}",
+  "@fromDevice": {
+    "placeholders": {
+      "cleanDeviceName": {
+        "type": "Object"
+      }
+    }
+  },
+  "sourceOffline": "来源离线",
+  "p2pCloud": "P2P · 云端",
+  "p2pDirect": "P2P 直连",
+  "savedToCloud": "已存云盘",
+  "createShareLink": "创建外链分享",
+  "copyText": "复制文本",
+  "copiedToClipboard": "已复制到剪贴板",
+  "saveToCloudAvailableOffline": "转存到云盘 (离线可下)",
+  "copyFilePasteIntoFileExplorer": "复制文件 (可直接 Ctrl+V 粘贴到资源管理器)",
+  "copyFilePasteIntoFinderOr": "复制文件 (可直接 ⌘V 粘贴到微信/访达)",
+  "fileCopiedPasteItWith": "已复制文件，可直接 {pasteShortcutLabel} 粘贴",
+  "@fileCopiedPasteItWith": {
+    "placeholders": {
+      "pasteShortcutLabel": {
+        "type": "Object"
+      }
+    }
+  },
+  "couldnTCopyTheFile": "复制文件失败",
+  "showInFileExplorerOrDrag": "在资源管理器中显示 (也可直接按住卡片拖出)",
+  "showInFinderOrDragThe": "在访达中显示 (也可直接按住卡片拖出)",
+  "shareOpenInAnotherApp": "系统分享 / 其他应用打开",
+  "couldnTOpenTheShareSheet": "打开系统分享失败",
+  "downloadP2pFirst": "P2P 优先下载",
+  "downloadFromCloud": "从云端下载",
+  "removeFromDrawer": "移出抽屉",
+  "removeFailedError": "移出失败：{e}",
+  "@removeFailedError": {
+    "placeholders": {
+      "e": {
+        "type": "Object"
+      }
+    }
+  },
+  "preparingDownload": "正在准备下载",
+  "connectingOverP2p": "正在建立 P2P 连接",
+  "p2pLanCopy": "P2P 局域网副本",
+  "p2pDirectConnection": "P2P 端到端直连",
+  "p2pEncryptedRelay": "P2P 加密中继",
+  "cloudDownload": "云端高速下载",
+  "canceling": "正在取消",
+  "cancelUpload": "取消上传",
+  "cancelDownload": "取消下载",
+  "sendingToProgress": "正在发送给 {value} · {value2}%",
+  "@sendingToProgress": {
+    "placeholders": {
+      "value": {
+        "type": "Object"
+      },
+      "value2": {
+        "type": "Object"
+      }
+    }
+  },
+  "cancelSending": "取消发送",
+  "transferFailedError": "传输失败：{error}",
+  "@transferFailedError": {
+    "placeholders": {
+      "error": {
+        "type": "Object"
+      }
+    }
+  },
+  "fromDeviceName": "来自 {device}",
+  "@fromDeviceName": {
+    "placeholders": {
+      "device": {
+        "type": "Object"
+      }
+    }
+  },
+  "yourSessionHasExpiredAnAdministrator": "登录状态已失效（可能被管理员强制下线或账号已停用），请重新登录",
+  "defaultCloudStorage": "默认云盘",
+  "thisVersionIsTooOldUpdate": "当前版本过低，请更新 DropDrawer 后再使用",
+  "yourSessionHasExpiredSignIn": "登录状态已失效，请重新登录",
+  "canTReachTheServerRight": "暂时无法连接服务器，请下拉刷新重试",
+  "couldnTOpenTheBrowser": "无法打开系统浏览器。",
+  "googleSignInTimedOutTry": "Google 登录已超时，请重试。",
+  "sharedContentReceivedItWillSync": "已接收外部分享内容，登录后将自动同步到抽屉",
+  "sent": "发送已完成",
+  "sendingCanceled": "已取消发送",
+  "p2pSendFailed": "P2P 发送失败：{err}",
+  "@p2pSendFailed": {
+    "placeholders": {
+      "err": {
+        "type": "Object"
+      }
+    }
+  },
+  "downloadCanceled": "已取消下载",
+  "lanCopy": "局域网副本",
+  "packingFolder": "正在打包文件夹「{folderName}」...",
+  "@packingFolder": {
+    "placeholders": {
+      "folderName": {
+        "type": "Object"
+      }
+    }
+  },
+  "packingFolderFailed": "打包文件夹「{folderName}」失败: {e}",
+  "@packingFolderFailed": {
+    "placeholders": {
+      "folderName": {
+        "type": "Object"
+      },
+      "e": {
+        "type": "Object"
+      }
+    }
+  },
+  "cloudUploadsAreTurnedOffOn": "服务器已关闭云端上传，文件将只通过设备间 P2P 传输",
+  "p2pRegisterNotice": "P2P 注册提示: {e}",
+  "@p2pRegisterNotice": {
+    "placeholders": {
+      "e": {
+        "type": "Object"
+      }
+    }
+  },
+  "addedP2pOnly": "已加入「{name}」(纯 P2P 端到端直连)",
+  "@addedP2pOnly": {
+    "placeholders": {
+      "name": {
+        "type": "Object"
+      }
+    }
+  },
+  "addItemFailed": "添加「{name}」失败: {e}",
+  "@addItemFailed": {
+    "placeholders": {
+      "name": {
+        "type": "Object"
+      },
+      "e": {
+        "type": "Object"
+      }
+    }
+  },
+  "textSyncedToAllDevices": "文本已同步到所有设备",
+  "cancelingSend": "正在取消发送",
+  "cancelSendFailed": "取消发送失败：{e}",
+  "@cancelSendFailed": {
+    "placeholders": {
+      "e": {
+        "type": "Object"
+      }
+    }
+  },
+  "file": "文件",
+  "uploadingFilesToCloud": "正在上传 {count} 个文件到云盘",
+  "@uploadingFilesToCloud": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "uploadingToTheCloud": "正在上传到云盘",
+  "transferringFiles": "正在传输 {count} 个文件",
+  "@transferringFiles": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "transferringFile": "正在传输文件",
+  "itemAwaitingCloudConfirmation": "{itemName} · 等待云盘确认…",
+  "@itemAwaitingCloudConfirmation": {
+    "placeholders": {
+      "itemName": {
+        "type": "Object"
+      }
+    }
+  },
+  "cloudUploadsAreTurnedOffOn2": "服务器已关闭云端上传，请使用设备间 P2P 传输",
+  "savedToBackend": "已转存到「{defaultStorageBackendName}」",
+  "@savedToBackend": {
+    "placeholders": {
+      "defaultStorageBackendName": {
+        "type": "Object"
+      }
+    }
+  },
+  "uploadCanceled": "已取消上传",
+  "cloudUploadFailed": "上传云端失败: {e}",
+  "@cloudUploadFailed": {
+    "placeholders": {
+      "e": {
+        "type": "Object"
+      }
+    }
+  },
+  "cancelingDownload": "正在取消下载",
+  "cancelDownloadFailed": "取消下载失败：{e}",
+  "@cancelDownloadFailed": {
+    "placeholders": {
+      "e": {
+        "type": "Object"
+      }
+    }
+  },
+  "theSourceDeviceIsOfflineAnd": "来源设备离线，文件尚未存到云端",
+  "downloadFailedError": "下载失败：{e}",
+  "@downloadFailedError": {
+    "placeholders": {
+      "e": {
+        "type": "Object"
+      }
+    }
+  },
+  "downloadedFromBackend": "已从「{backendName}」下载完成",
+  "@downloadedFromBackend": {
+    "placeholders": {
+      "backendName": {
+        "type": "Object"
+      }
+    }
+  },
+  "cloudDownloadFailed": "云端下载失败: {e}",
+  "@cloudDownloadFailed": {
+    "placeholders": {
+      "e": {
+        "type": "Object"
+      }
+    }
+  },
+  "nothingToDownloadTextItemsAnd": "没有可下载的文件（纯文本或离线未上云文件已跳过）",
+  "downloadingFilesBatch": "正在批量下载 {filesLength} 个文件...",
+  "@downloadingFilesBatch": {
+    "placeholders": {
+      "filesLength": {
+        "type": "int"
+      }
+    }
+  },
+  "downloadsStartedTo": "已发起/完成 {okCount} 个文件下载 → {dir}",
+  "@downloadsStartedTo": {
+    "placeholders": {
+      "okCount": {
+        "type": "int"
+      },
+      "dir": {
+        "type": "Object"
+      }
+    }
+  },
+  "theSelectedItemsAreAlreadyIn": "所选条目均已存云盘或不在本机",
+  "uploadingFilesBatchTo": "正在批量上传 {eligibleLength} 个文件到「{defaultStorageBackendName}」...",
+  "@uploadingFilesBatchTo": {
+    "placeholders": {
+      "eligibleLength": {
+        "type": "int"
+      },
+      "defaultStorageBackendName": {
+        "type": "Object"
+      }
+    }
+  },
+  "savedFilesToCloud": "已完成 {eligibleLength} 个文件的云端转存",
+  "@savedFilesToCloud": {
+    "placeholders": {
+      "eligibleLength": {
+        "type": "int"
+      }
+    }
+  },
+  "clearedWithFailures": "已清理 {deleted} 项，{failed} 项资源删除失败，条目已保留，可重试。",
+  "@clearedWithFailures": {
+    "placeholders": {
+      "deleted": {
+        "type": "Object"
+      },
+      "failed": {
+        "type": "Object"
+      }
+    }
+  },
+  "drawerCleared": "已清空抽屉（共清理 {deleted} 项）",
+  "@drawerCleared": {
+    "placeholders": {
+      "deleted": {
+        "type": "int"
+      }
+    }
+  },
+  "removedItems": "已移出 {deleted} 个条目",
+  "@removedItems": {
+    "placeholders": {
+      "deleted": {
+        "type": "int"
+      }
+    }
+  },
+  "couldnTConfirmTheCleanupTry": "清理结果未确认，请稍后重试。",
+  "newFilesP2pOnlyNothingIs": "新文件策略：纯 P2P 直连（不上传服务器/云盘）",
+  "policyAlwaysUpload": "新文件策略：强制上传至「{defaultStorageBackendName}」",
+  "@policyAlwaysUpload": {
+    "placeholders": {
+      "defaultStorageBackendName": {
+        "type": "Object"
+      }
+    }
+  },
+  "policySmart": "新文件策略：智能分流（<{mb}MB 自动云存，大文件纯 P2P）",
+  "@policySmart": {
+    "placeholders": {
+      "mb": {
+        "type": "Object"
+      }
+    }
+  },
+  "downloadFolderResetToTheDefault": "已恢复默认下载目录",
+  "downloadFolderChanged": "下载目录已改为 {customDownloadDir}",
+  "@downloadFolderChanged": {
+    "placeholders": {
+      "customDownloadDir": {
+        "type": "Object"
+      }
+    }
+  },
+  "notConnectedToTheServer": "未连接到服务器",
+  "shareLinksAreTurnedOffOn": "服务器已关闭外链分享",
+  "selectAtLeastOneItem": "请至少选择一个条目",
+  "fileOnlyOnSourceDevice": "文件「{itemName}」仅存在于来源设备且尚未上云，请在原设备先点“存云盘”后再分享",
+  "@fileOnlyOnSourceDevice": {
+    "placeholders": {
+      "itemName": {
+        "type": "Object"
+      }
+    }
+  },
+  "savingBeforeSharing": "外链分享前正在自动转存「{itemName}」到云端...",
+  "@savingBeforeSharing": {
+    "placeholders": {
+      "itemName": {
+        "type": "Object"
+      }
+    }
+  },
+  "autoUploadFailed": "「{itemName}」自动上传失败：{error}",
+  "@autoUploadFailed": {
+    "placeholders": {
+      "itemName": {
+        "type": "Object"
+      },
+      "error": {
+        "type": "Object"
+      }
+    }
+  },
+  "shareLinkCreated": "已生成外链分享：{value}",
+  "@shareLinkCreated": {
+    "placeholders": {
+      "value": {
+        "type": "Object"
+      }
+    }
+  },
+  "shareLinkRevoked": "已撤销外链分享",
+  "notConnectedToServer": "未连接服务器",
+  "textPreview": "文本预览",
+  "imagePreview": "图片预览",
+  "fileDetails": "文件详情",
+  "backToDrawer": "返回抽屉",
+  "fileName": "文件名",
+  "size": "大小",
+  "sourceDevice": "来源设备",
+  "added": "添加时间",
+  "transferMethod": "传输方式",
+  "cloudCache": "云端缓存",
+  "p2pDirectOnly": "仅 P2P 直连",
+  "expires": "到期清理",
+  "neverExpires": "永不过期",
+  "localCopy": "本地缓存",
+  "savedOnThisDevice": "已保存到本机",
+  "locationOnThisDevice": "本机位置",
+  "info": "信息",
+  "transfer": "传输",
+  "cloudDownloadShort": "云端下载",
+  "sendingToDevice": "正在发送给 {value}",
+  "@sendingToDevice": {
+    "placeholders": {
+      "value": {
+        "type": "Object"
+      }
+    }
+  },
+  "downloadItToViewTheOriginal": "下载到本机后可查看原图",
+  "downloadItToViewTheFull": "下载到本地后可查看高清原图",
+  "transferStatus": "传输状态",
+  "p2pEndToEndOnly": "仅 P2P 端到端直连",
+  "localPath": "本机路径",
+  "copyAllText": "复制全部文本",
+  "copiedAllText": "已复制全部文本",
+  "quickLook": "快速查看",
+  "open": "打开",
+  "noAppCanOpenThisFile": "没有可以打开这个文件的应用",
+  "share": "分享…",
+  "saveToPhotos": "存到相册",
+  "savedToPhotos": "已保存到系统相册",
+  "couldnTSaveToPhotosCheck": "保存相册失败（请检查相册权限）",
+  "saveToCloudDownloadableWhileThe": "存到云盘（来源离线也能下载）",
+  "link": "外链",
+  "copyFile": "复制文件",
+  "showInFileExplorer": "在资源管理器中显示",
+  "showInFinder": "访达中显示",
+  "share2": "系统分享",
+  "saveToCloudShort": "存云盘",
+  "shareLink": "外链分享",
+  "pressACombinationThatIncludesCtrl": "请按下含 Ctrl、Alt 或 Win 的组合键，也可使用 F1–F24。按 Esc 取消。",
+  "pressAKeyCombinationItMust": "请直接按下组合键（需含 ⌘ / ⌥ / ⌃ 或 F1-F12，Esc 取消）",
+  "hotkeyActive": "已生效：{label}",
+  "@hotkeyActive": {
+    "placeholders": {
+      "label": {
+        "type": "Object"
+      }
+    }
+  },
+  "hotkeyTakenChooseAnother": "系统可能已占用 {label}，请换一个组合键",
+  "@hotkeyTakenChooseAnother": {
+    "placeholders": {
+      "label": {
+        "type": "Object"
+      }
+    }
+  },
+  "hotkeyUpdatedTo": "全局呼出快捷键已更新为 {label}",
+  "@hotkeyUpdatedTo": {
+    "placeholders": {
+      "label": {
+        "type": "Object"
+      }
+    }
+  },
+  "hotkeyTakenTryAnother": "系统可能已占用 {label}，请尝试其他组合",
+  "@hotkeyTakenTryAnother": {
+    "placeholders": {
+      "label": {
+        "type": "Object"
+      }
+    }
+  },
+  "hotkeySetTo": "全局呼出快捷键已设为 {label}",
+  "@hotkeySetTo": {
+    "placeholders": {
+      "label": {
+        "type": "Object"
+      }
+    }
+  },
+  "smart": "智能",
+  "p2pOnly": "纯 P2P",
+  "serverDefault": "跟随服务器",
+  "n24Hours": "24 小时",
+  "n7Days": "7 天",
+  "n30Days": "30 天",
+  "daysCount": "{value} 天",
+  "@daysCount": {
+    "placeholders": {
+      "value": {
+        "type": "int"
+      }
+    }
+  },
+  "hoursCount": "{cap} 小时",
+  "@hoursCount": {
+    "placeholders": {
+      "cap": {
+        "type": "int"
+      }
+    }
+  },
+  "preferences": "偏好设置",
+  "smartSendsSmallFilesToThe": "智能模式下小文件同步存云盘、大文件直连 P2P；纯 P2P 不经服务器；存云盘支持离线下载。",
+  "transferPolicyForNewFiles": "新文件传输策略",
+  "transferPolicy": "传输策略",
+  "smartModeCloudThreshold": "智能模式上云阈值",
+  "cloudThreshold": "上云阈值",
+  "inSmartModeFilesSmallerThan": "智能模式下，小于该体积的文件同时缓存到云盘，更大的只走 P2P 直连。",
+  "autoCleanup": "自动清理",
+  "expiredItemsAreRemovedFromThe": "到期后自动清理云端缓存与列表记录。",
+  "defaultExpiration": "默认过期时间",
+  "expiration": "过期时间",
+  "downloads": "下载",
+  "saveLocation": "保存位置",
+  "filesDropdrawer": "「文件」App › DropDrawer",
+  "loading": "加载中…",
+  "restoreDefaultLocation": "恢复默认位置",
+  "transfersAutoCleanup": "传输与自动清理",
+  "smartSmallFilesAlsoGoTo": "智能：小文件同时存云盘、大文件只走 P2P；纯 P2P：不经过服务器；强制存云盘：来源离线也能下载",
+  "defaultExpirationCleanup": "默认过期自动清理",
+  "newFilesAndTextAreRemoved": "新拖入的文件/文本到期后自动清理云端缓存与抽屉记录",
+  "smartModeAutoUploadThreshold": "智能模式自动上云阈值",
+  "filesSmallerThanThisAreCached": "小于该体积自动缓存至云盘，超过则纯 P2P 端到端直连",
+  "defaultDownloadFolder": "默认下载目录",
+  "restoreDefault": "恢复默认",
+  "loadingDots": "加载中...",
+  "changeFolder": "更改目录",
+  "windowWindowsIntegration": "窗口与 Windows 集成",
+  "windowMacosIntegration": "窗口与 macOS 集成",
+  "drawerEdge": "边缘抽屉停靠侧",
+  "youCanAlsoDragTheEdge": "也可直接按住边缘悬浮手柄上下或跨屏拖动调整",
+  "leftSideOfTheScreen": "屏幕左侧",
+  "rightSideOfTheScreen": "屏幕右侧",
+  "globalShortcutToOpenTheDrawer": "全局快捷键呼出抽屉",
+  "opensOrClosesTheDrawerFrom": "任意应用下快速展开或收起抽屉，可自定义避免冲突",
+  "currentShortcut": "当前快捷键",
+  "pressAKeyCombination": "按下组合键...",
+  "clickToChange": "点击修改",
+  "hotkeyReady": "全局监听已就绪 · 任意应用按 {hotkeyLabel} 即可呼出",
+  "@hotkeyReady": {
+    "placeholders": {
+      "hotkeyLabel": {
+        "type": "Object"
+      }
+    }
+  },
+  "theGlobalShortcutMayAlreadyBe": "全局快捷键可能已被占用，请换一个组合键",
+  "dropdrawerNeedsMacosAccessibilityPermissionTo": "需要开启 macOS「辅助功能」权限才能在其他应用下响应全局快捷键",
+  "openAccessibilitySettings": "前往开启辅助功能",
+  "permissionGrantedTheGlobalShortcutWorks": "已检测到权限，全局快捷键立即生效",
+  "permissionNotDetectedYetEnableDropdrawer": "尚未检测到权限，请在系统设置中勾选 dropdrawer_app",
+  "checkAgain": "重新检测",
+  "showTheDrawerInTheTaskbar": "在任务栏显示抽屉",
+  "showIconInTheDock": "在程序坞 (Dock) 显示图标",
+  "whenOffOpenTheDrawerFrom": "关闭时可通过系统托盘打开抽屉",
+  "whenOffDropdrawerStaysInThe": "关闭时仅常驻顶部菜单栏，开启后同时在 Dock 显示",
+  "translucentBackground": "毛玻璃背景",
+  "notSupportedOnThisSystemRequires": "当前系统不支持（需 Windows 11 22H2 及以上），已使用不透明背景",
+  "usesTheWindows11MicaAcrylic": "使用 Windows 11 的 Mica / 亚克力效果；如背景显示异常可关闭",
+  "launchAtLogin": "开机自动启动",
+  "staysInTheSystemTrayWhen": "登录 Windows 时自动驻留系统托盘",
+  "runsQuietlyInTheMenuBar": "登录 macOS 时自动静默驻留状态栏与屏幕边缘",
+  "launchAtLoginTurnedOn": "已开启开机自启动",
+  "launchAtLoginTurnedOff": "已关闭开机自启动",
+  "couldnTChangeLaunchAtLogin": "修改开机自启动失败",
+  "shareClipboardText": "链接：{url}\n提取码：{plainPasscode}",
+  "@shareClipboardText": {
+    "placeholders": {
+      "url": {
+        "type": "Object"
+      },
+      "plainPasscode": {
+        "type": "Object"
+      }
+    }
+  },
+  "thisServerRequiresAPasscodeFor": "服务器要求外链必须设置提取码",
+  "shareLinkCreatedAndCopiedTo": "外链已生成并自动复制到剪贴板",
+  "manageShareLinks": "外链分享管理",
+  "createBundleLinkItems": "打包创建外链 ({targetItemsLength} 项)",
+  "@createBundleLinkItems": {
+    "placeholders": {
+      "targetItemsLength": {
+        "type": "int"
+      }
+    }
+  },
+  "bundleLinkCount": "打包外链 ({targetItemsLength})",
+  "@bundleLinkCount": {
+    "placeholders": {
+      "targetItemsLength": {
+        "type": "Object"
+      }
+    }
+  },
+  "createShareLink2": "创建外链",
+  "shareLinksTitle": "外链管理",
+  "refreshShareLinks": "刷新外链列表",
+  "shareLinksAreTurnedOffOn2": "服务器已关闭外链分享，暂时无法创建新的外链。",
+  "createdLinksCount": "已创建的外链 ({shareLinksLength})",
+  "@createdLinksCount": {
+    "placeholders": {
+      "shareLinksLength": {
+        "type": "Object"
+      }
+    }
+  },
+  "noShareLinksYetNclickAn": "暂无外链分享\n点击单条链接图标，或进入「多选」打包创建合集外链",
+  "n1Hour": "1 小时",
+  "forever": "永久",
+  "unlimited": "不限",
+  "n1TimeBurnAfterReading": "1 次（阅后即焚）",
+  "n5Times": "5 次",
+  "n20Times": "20 次",
+  "hoursCountH": "{h} 小时",
+  "@hoursCountH": {
+    "placeholders": {
+      "h": {
+        "type": "int"
+      }
+    }
+  },
+  "valueAtCap": "{value}（上限）",
+  "@valueAtCap": {
+    "placeholders": {
+      "value": {
+        "type": "Object"
+      }
+    }
+  },
+  "timesAtCap": "{n} 次（上限）",
+  "@timesAtCap": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "bundleItemsSize": "打包 {itemsLength} 项 · {value}",
+  "@bundleItemsSize": {
+    "placeholders": {
+      "itemsLength": {
+        "type": "int"
+      },
+      "value": {
+        "type": "Object"
+      }
+    }
+  },
+  "sharedContent": "分享内容",
+  "uploadBeforeShareNote": "生成前会先把 {pendingUploadCount} 个文件上传到「{defaultStorageBackendName}」，拿到链接的人用浏览器即可下载，无需登录。",
+  "@uploadBeforeShareNote": {
+    "placeholders": {
+      "pendingUploadCount": {
+        "type": "int"
+      },
+      "defaultStorageBackendName": {
+        "type": "Object"
+      }
+    }
+  },
+  "anyoneWithTheLinkCanDownload": "拿到链接的人用浏览器即可下载，无需登录。",
+  "andMoreItems": "以及另外 {value} 项",
+  "@andMoreItems": {
+    "placeholders": {
+      "value": {
+        "type": "int"
+      }
+    }
+  },
+  "bundleTitle": "合集标题",
+  "firstNameAndMore": "{firstName} 等 {itemsLength} 项",
+  "@firstNameAndMore": {
+    "placeholders": {
+      "firstName": {
+        "type": "Object"
+      },
+      "itemsLength": {
+        "type": "int"
+      }
+    }
+  },
+  "access": "访问设置",
+  "thisServerRequiresAPasscodeFor2": "服务器要求外链必须设置提取码。",
+  "ifYouLeaveThePasscodeEmpty": "提取码留空时，任何拿到链接的人都能下载。",
+  "expiresAfter": "有效期",
+  "downloads2": "下载次数",
+  "passcodeRequired": "提取码（必填）",
+  "passcode": "提取码",
+  "leaveEmptyForPublic": "留空为公开",
+  "generateA4CharacterPasscode": "随机生成 4 位提取码",
+  "creating": "正在生成…",
+  "uploadAndCreateLink": "上传并生成外链",
+  "createBundleLinkAndCopy": "生成合集外链并复制",
+  "createLinkAndCopy": "生成外链并复制",
+  "createdAndCopiedToTheClipboard": "已生成并复制到剪贴板",
+  "linkLabel": "链接",
+  "copyAgain": "再次复制",
+  "copiedLinkDetails": "已复制外链信息",
+  "openInBrowser": "在浏览器中打开",
+  "createdLinksCountFull": "已创建的外链（{shareLinksLength}）",
+  "@createdLinksCountFull": {
+    "placeholders": {
+      "shareLinksLength": {
+        "type": "Object"
+      }
+    }
+  },
+  "longPressOrOpenAnyItem": "在首页长按或打开任意一项即可创建外链；多选后可打包成合集。",
+  "tapALinkToCopyOpen": "点按一条外链可以复制、打开或撤销。",
+  "loadingEllipsis": "正在加载…",
+  "noShareLinksYet": "还没有外链",
+  "bundleOfItems": "{itemCount} 项合集",
+  "@bundleOfItems": {
+    "placeholders": {
+      "itemCount": {
+        "type": "int"
+      }
+    }
+  },
+  "passcodeRequired2": "需提取码",
+  "downloadedOfMax": "已下 {downloadCount}/{maxDownloads} 次",
+  "@downloadedOfMax": {
+    "placeholders": {
+      "downloadCount": {
+        "type": "Object"
+      },
+      "maxDownloads": {
+        "type": "Object"
+      }
+    }
+  },
+  "downloadedCount": "已下 {downloadCount} 次",
+  "@downloadedCount": {
+    "placeholders": {
+      "downloadCount": {
+        "type": "int"
+      }
+    }
+  },
+  "expired": "已过期",
+  "downloadLimitReached": "次数用尽",
+  "neverExpires2": "永久有效",
+  "copyLink": "复制链接",
+  "linkCopied": "已复制外链",
+  "revokeLink": "撤销外链",
+  "primaryNameAndMore": "{primaryName} 等 {itemsLength} 项",
+  "@primaryNameAndMore": {
+    "placeholders": {
+      "primaryName": {
+        "type": "Object"
+      },
+      "itemsLength": {
+        "type": "int"
+      }
+    }
+  },
+  "sizeUploadBeforeShare": "{value} · 生成前自动上云 {pendingUploadCount} 个文件至「{defaultStorageBackendName}」",
+  "@sizeUploadBeforeShare": {
+    "placeholders": {
+      "value": {
+        "type": "Object"
+      },
+      "pendingUploadCount": {
+        "type": "int"
+      },
+      "defaultStorageBackendName": {
+        "type": "Object"
+      }
+    }
+  },
+  "sizeReadyNoSignIn": "{value} · 已就绪，外部浏览器免登录提取",
+  "@sizeReadyNoSignIn": {
+    "placeholders": {
+      "value": {
+        "type": "Object"
+      }
+    }
+  },
+  "optionalDefaultTitle": "可选，默认「{primaryName} 等 {itemsLength} 项」",
+  "@optionalDefaultTitle": {
+    "placeholders": {
+      "primaryName": {
+        "type": "Object"
+      },
+      "itemsLength": {
+        "type": "Object"
+      }
+    }
+  },
+  "downloadLimit": "下载次数限制",
+  "oneTimeBurn": "1次(阅后即焚)",
+  "leaveEmptyForPublicAccess": "留空为公开免密",
+  "uploadToCloudAndCreateLink": "自动上云并生成外链",
+  "copyLinkAgain": "再次复制链接",
+  "previewInBrowser": "在浏览器中打开预览",
+  "copyLinkUrl": "复制外链 ({fullUrl})",
+  "@copyLinkUrl": {
+    "placeholders": {
+      "fullUrl": {
+        "type": "Object"
+      }
+    }
+  },
+  "linkCopiedUrl": "已复制外链：{fullUrl}",
+  "@linkCopiedUrl": {
+    "placeholders": {
+      "fullUrl": {
+        "type": "Object"
+      }
+    }
+  },
+  "openInBrowserShort": "浏览器打开",
+  "daysLeft": "剩余 {diffInDays} 天",
+  "@daysLeft": {
+    "placeholders": {
+      "diffInDays": {
+        "type": "int"
+      }
+    }
+  },
+  "hoursLeft": "剩余 {diffInHours} 小时",
+  "@hoursLeft": {
+    "placeholders": {
+      "diffInHours": {
+        "type": "int"
+      }
+    }
+  },
+  "minutesLeft": "剩余 {value} 分钟",
+  "@minutesLeft": {
+    "placeholders": {
+      "value": {
+        "type": "int"
+      }
+    }
+  },
+  "quarkDrive": "夸克网盘",
+  "baiduNetdisk": "百度网盘",
+  "webdavStorage": "WebDAV 网盘",
+  "serverLocalStorage": "服务器本地盘",
+  "enterTheGoogleOauthClientId": "请先填写 Google OAuth Client ID 和 Client Secret",
+  "googleDriveAuthorizationOpenedInYour": "已打开浏览器授权 Google Drive，同意后点下方「刷新列表」即可",
+  "authorizationFailedToStart": "发起授权失败: {e}",
+  "@authorizationFailedToStart": {
+    "placeholders": {
+      "e": {
+        "type": "Object"
+      }
+    }
+  },
+  "enterARefreshTokenOrUse": "请填写 Refresh Token，或点击上方「浏览器一键授权 Google」",
+  "pasteTheCookieFromPanQuark": "请粘贴 pan.quark.cn 的 Cookie",
+  "storageSaved": "已保存原生云盘策略",
+  "saveFailedColon": "保存失败: {e}",
+  "@saveFailedColon": {
+    "placeholders": {
+      "e": {
+        "type": "Object"
+      }
+    }
+  },
+  "cloudStorage": "云盘与存储",
+  "refreshStorageList": "刷新存储列表",
+  "cloudStorage2": "原生云盘与存储",
+  "editStorage": "编辑存储",
+  "configured": "已配置云盘",
+  "addStorage": "添加原生云盘",
+  "theServerAdministratorHasDisabledEvery": "服务器管理员已停用所有可添加的存储类型，暂时无法添加新的云盘。",
+  "localDisk": "本地盘",
+  "name": "名称",
+  "optionalUseOneClickAuthorizationBelow": "可留空，点下方一键授权自动获取",
+  "folderId": "目录 ID",
+  "rootOrAFolderId": "root (或指定文件夹 ID)",
+  "fullCookieFromPanQuarkCn": "pan.quark.cn 完整 Cookie",
+  "folderFid": "目录 fid",
+  "n0IsTheRootFolder": "0 表示根目录",
+  "accessTokenOrFillInRefresh": "Access Token (或填下方 Refresh)",
+  "optionalUsedForAutomaticRefresh": "可选，用于自动刷新",
+  "optionalLongLivedRefreshToken10": "可选，10年长效刷新令牌",
+  "path": "路径",
+  "url": "地址",
+  "username": "用户名",
+  "filesAreSavedInThisAccount": "文件保存在服务器数据目录中属于当前账号的文件夹（由服务端 DROPDRAWER_LOCAL_STORAGE 决定）。",
+  "newCloudUploadsUseTheDefault": "新上传至云端的文件会使用默认存储。",
+  "connectionOk": "连通正常: {msg}",
+  "@connectionOk": {
+    "placeholders": {
+      "msg": {
+        "type": "Object"
+      }
+    }
+  },
+  "connectionFailed": "连通失败: {msg}",
+  "@connectionFailed": {
+    "placeholders": {
+      "msg": {
+        "type": "Object"
+      }
+    }
+  },
+  "defaultStorageUpdated": "已更新默认存储",
+  "switchDefaultStorageFailed": "切换默认存储失败：{e}",
+  "@switchDefaultStorageFailed": {
+    "placeholders": {
+      "e": {
+        "type": "Object"
+      }
+    }
+  },
+  "configuredShort": "已配置",
+  "addStorageShort": "添加云盘",
+  "noStorageYetSwitchToAdd": "还没有存储策略，切换到「添加云盘」直连配置。",
+  "tapToEditNote": "点按存储项可编辑。{defaultNote}",
+  "@tapToEditNote": {
+    "placeholders": {
+      "defaultNote": {
+        "type": "Object"
+      }
+    }
+  },
+  "noStorage": "暂无云盘",
+  "defaultLabel": "默认",
+  "setAsDefault": "设为默认",
+  "edit": "编辑",
+  "testConnection": "测试连通性",
+  "delete": "删除",
+  "typeLabel": "类型",
+  "storageType": "云盘类型",
+  "storageBack": "云盘",
+  "connection": "连接信息",
+  "callbackUrlHint": "回调地址请填：{serverUrl}/api/oauth/google/callback",
+  "@callbackUrlHint": {
+    "placeholders": {
+      "serverUrl": {
+        "type": "Object"
+      }
+    }
+  },
+  "useAsDefaultTransferStorage": "设为默认中转存储",
+  "authorizeGoogleDriveInBrowser": "在浏览器中授权 Google Drive",
+  "iAlreadyHaveARefreshToken": "已有 Refresh Token，直接保存",
+  "saving": "正在保存…",
+  "save": "保存",
+  "noStorageYetUseAddStorage": "暂无存储策略，点击上方「添加原生云盘」直连配置",
+  "cantReadStorage": "无法读取存储配置：{e}",
+  "@cantReadStorage": {
+    "placeholders": {
+      "e": {
+        "type": "Object"
+      }
+    }
+  },
+  "storageNameCanTBeEmpty": "存储名称不能为空",
+  "theCapacityLimitMustBeA": "容量上限必须为正整数",
+  "storageSettingsSaved": "已保存存储配置",
+  "saveFailedFull": "保存失败：{e}",
+  "@saveFailedFull": {
+    "placeholders": {
+      "e": {
+        "type": "Object"
+      }
+    }
+  },
+  "leaveTheCapacityLimitEmptyFor": "容量上限留空表示不限。",
+  "leaveFieldsEmptyToKeepThe": "留空保留现有凭据。更换存储位置可使用「添加云盘」。",
+  "limitBytes": "上限（字节）",
+  "saveChanges": "保存修改",
+  "storageLocation": "存储位置",
+  "authorizeGoogleDriveInBrowserOne": "浏览器一键授权 Google Drive",
+  "alreadyHaveARefreshTokenSave": "已有 Refresh Token？直接保存",
+  "saveStorage": "保存原生云盘配置",
+  "localDiskFull": "本地磁盘",
+  "p2pEndToEndOnThis": "仅本机 P2P 端到端直连 · 不占服务器与云盘",
+  "policyAlwaysUploadShort": "直接上传至「{defaultStorageBackendName}」· 离线可下",
+  "@policyAlwaysUploadShort": {
+    "placeholders": {
+      "defaultStorageBackendName": {
+        "type": "Object"
+      }
+    }
+  },
+  "policySmartShort": "小于 {value}MB 自动云存 · 大文件纯 P2P 直连",
+  "@policySmartShort": {
+    "placeholders": {
+      "value": {
+        "type": "Object"
+      }
+    }
+  },
+  "dockedToTheLeftSideOf": "已停靠到屏幕左侧",
+  "dockedToTheRightSideOf": "已停靠到屏幕右侧",
+  "transfersInProgress": "还有 {active} 项传输正在进行",
+  "@transfersInProgress": {
+    "placeholders": {
+      "active": {
+        "type": "int"
+      }
+    }
+  },
+  "quittingInterruptsTheCurrentTransfersUnfinished": "退出软件会中断当前传输（下次打开时未完成的云盘上传会自动续传）。是否仍要退出？",
+  "quitAnyway": "仍要退出",
+  "keepRunningInBackground": "后台继续",
+  "clearAll": "清空全部",
+  "clearAllMessage": "将清理列表中的 {itemsLength} 项内容及其在服务器或网盘的副本。本机原文件会保留。",
+  "@clearAllMessage": {
+    "placeholders": {
+      "itemsLength": {
+        "type": "int"
+      }
+    }
+  },
+  "clear": "清空",
+  "filePickerFailed": "打开文件选择器失败: {e}",
+  "@filePickerFailed": {
+    "placeholders": {
+      "e": {
+        "type": "Object"
+      }
+    }
+  },
+  "photoPickerFailed": "打开相册失败: {e}",
+  "@photoPickerFailed": {
+    "placeholders": {
+      "e": {
+        "type": "Object"
+      }
+    }
+  },
+  "screenshotPastedAndSyncedToThe": "已粘贴截图并同步到抽屉",
+  "pastedFiles": "已粘贴 {pathsLength} 个文件到抽屉",
+  "@pastedFiles": {
+    "placeholders": {
+      "pathsLength": {
+        "type": "int"
+      }
+    }
+  },
+  "foldersCanTBePastedDirectly": "暂不支持直接粘贴文件夹，请先压缩或选择具体文件",
+  "theClipboardIsEmptyYouCan": "剪贴板为空（支持粘贴文件、截图或文本）",
+  "clipboardReadFailed": "读取剪贴板失败: {e}",
+  "@clipboardReadFailed": {
+    "placeholders": {
+      "e": {
+        "type": "Object"
+      }
+    }
+  },
+  "add": "添加",
+  "releaseToDropIntoTheDrawer": "松手放入跨端抽屉",
+  "moveDrawer": "拖动抽屉",
+  "dragHereToDropIntoThe": "拖到这儿，放入跨端抽屉",
+  "chooseFiles": "选取文件",
+  "photoLibrary": "照片图库",
+  "paste": "粘贴",
+  "select": "选择",
+  "downloadAll": "全部下载",
+  "devicesP2p": "设备与 P2P",
+  "signOut": "退出登录",
+  "selectedCount": "已选 {selectedIdsLength} 项",
+  "@selectedCount": {
+    "placeholders": {
+      "selectedIdsLength": {
+        "type": "Object"
+      }
+    }
+  },
+  "more": "更多",
+  "deselectAll": "取消全选",
+  "selectAll": "全选",
+  "done": "完成",
+  "searchDropdrawer": "在 DropDrawer 中搜索",
+  "closeSearch": "关闭搜索",
+  "clearSearch": "清除",
+  "connecting": "正在连接…",
+  "devicesOnline": "{onlineDeviceCount} 台设备在线",
+  "@devicesOnline": {
+    "placeholders": {
+      "onlineDeviceCount": {
+        "type": "int"
+      }
+    }
+  },
+  "itemsCount": "{itemsLength} 项",
+  "@itemsCount": {
+    "placeholders": {
+      "itemsLength": {
+        "type": "int"
+      }
+    }
+  },
+  "all": "全部",
+  "text": "文本",
+  "search": "搜索",
+  "statusFiltered": "{status} · 筛选 {visibleItemsLength}/{itemsLength}",
+  "@statusFiltered": {
+    "placeholders": {
+      "status": {
+        "type": "Object"
+      },
+      "visibleItemsLength": {
+        "type": "Object"
+      },
+      "itemsLength": {
+        "type": "Object"
+      }
+    }
+  },
+  "statusItems": "{status} · {itemsLength} 项",
+  "@statusItems": {
+    "placeholders": {
+      "status": {
+        "type": "Object"
+      },
+      "itemsLength": {
+        "type": "int"
+      }
+    }
+  },
+  "saveToCloudAction": "存到云盘",
+  "devicesOnlineShort": "{onlineDeviceCount} 设备在线",
+  "@devicesOnlineShort": {
+    "placeholders": {
+      "onlineDeviceCount": {
+        "type": "Object"
+      }
+    }
+  },
+  "pinnedOpenClickToHideAutomatically": "已固定展开（点击开启离开自动隐藏）",
+  "hidesAutomaticallyWhenYouLeaveClick": "离开自动隐藏（点击固定展开）",
+  "collapseToEdgeEsc": "收起到边缘 (Esc)",
+  "switchToARegularWindow": "切换为常规窗口",
+  "switchToTheEdgeDrawer": "切换为边缘抽屉",
+  "cloudStorageTransferStorage": "多云盘与中转存储",
+  "deviceStatus": "设备状态",
+  "clearDrawer": "清空抽屉",
+  "dockRight": "停靠右侧",
+  "dockLeft": "停靠左侧",
+  "quit": "退出应用",
+  "releaseToDropIntoTheDrawer2": "松开即可放入抽屉",
+  "dropPickOrPaste": "拖入、选取或 {pasteShortcutLabel} 粘贴",
+  "@dropPickOrPaste": {
+    "placeholders": {
+      "pasteShortcutLabel": {
+        "type": "Object"
+      }
+    }
+  },
+  "smartPasteTooltip": "智能粘贴文件 / 截图 / 文本 ({pasteShortcutLabel})",
+  "@smartPasteTooltip": {
+    "placeholders": {
+      "pasteShortcutLabel": {
+        "type": "Object"
+      }
+    }
+  },
+  "smartPolicyShort": "智能(<{value}M上云)",
+  "@smartPolicyShort": {
+    "placeholders": {
+      "value": {
+        "type": "Object"
+      }
+    }
+  },
+  "policyP2pOnly": "纯 P2P 直连",
+  "alwaysSaveToCloud": "强制存云盘",
+  "selectAllCount": "全选 ({visibleItemsLength})",
+  "@selectAllCount": {
+    "placeholders": {
+      "visibleItemsLength": {
+        "type": "Object"
+      }
+    }
+  },
+  "filteredResults": "筛选结果 · {visibleItemsLength}/{itemsLength}",
+  "@filteredResults": {
+    "placeholders": {
+      "visibleItemsLength": {
+        "type": "Object"
+      },
+      "itemsLength": {
+        "type": "Object"
+      }
+    }
+  },
+  "drawerItemsCount": "抽屉内容 · {itemsLength} 项",
+  "@drawerItemsCount": {
+    "placeholders": {
+      "itemsLength": {
+        "type": "int"
+      }
+    }
+  },
+  "multiSelect": "多选",
+  "confirmClear": "确认清空",
+  "searchFileNamesOrText": "搜索文件名或文本...",
+  "removedItem": "已移出「{itemName}」",
+  "@removedItem": {
+    "placeholders": {
+      "itemName": {
+        "type": "Object"
+      }
+    }
+  },
+  "undo": "撤销",
+  "shareAction": "分享",
+  "copy": "复制",
+  "copiedFiles": "已复制 {localSelectedPathsLength} 个文件，可直接 {pasteShortcutLabel} 粘贴",
+  "@copiedFiles": {
+    "placeholders": {
+      "localSelectedPathsLength": {
+        "type": "int"
+      },
+      "pasteShortcutLabel": {
+        "type": "Object"
+      }
+    }
+  },
+  "deleteCount": "删除({selectedItemsLength})",
+  "@deleteCount": {
+    "placeholders": {
+      "selectedItemsLength": {
+        "type": "Object"
+      }
+    }
+  },
+  "nothingHereYet": "暂无内容",
+  "theDrawerIsEmpty": "抽屉是空的",
+  "tapAddAtTheBottomRight": "点右下角「添加」选取文件、照片或粘贴内容\n也可在其他 App 中「分享 → DropDrawer」发送",
+  "tapAtTheBottomRightTo": "点右下角「+」选取文件、照片或粘贴内容\n也可在其他 App 中「分享 → DropDrawer」发送",
+  "dragAFileOrTextNear": "拖起文件或文本靠近悬浮引导条\n点击边缘手柄展开 · 拖动可调整上下或左右停靠",
+  "noMatches": "没有匹配的内容",
+  "thisDeviceSuffix": "（本机）",
+  "online": "在线",
+  "offline": "离线",
+  "thisDeviceSP2pNode": "本机 P2P 节点",
+  "irohQuicNodeRunningDirectLan": "iroh QUIC 节点运行中：局域网与公网直连优先，必要时经加密中继。",
+  "theP2pEngineIsnTLoaded": "P2P 引擎未加载，传输只能经过服务器和云盘。",
+  "nodeStatus": "节点状态",
+  "running": "运行中",
+  "notLoaded": "未加载",
+  "nodeIdCopied": "已复制 Node ID",
+  "devicesOnThisAccount": "同账号设备",
+  "sameNameOffline": "同名离线设备（{sameNameOfflineLength}）",
+  "@sameNameOffline": {
+    "placeholders": {
+      "sameNameOfflineLength": {
+        "type": "Object"
+      }
+    }
+  },
+  "oldRecordsLeftWhenTheSame": "同一台设备重装或重新登录后留下的旧记录。",
+  "signedInDevicesP2pNodes": "已登录设备与 P2P 节点",
+  "irohQuicP2pNodeRunningOn": "本机 iroh QUIC P2P 节点运行中",
+  "p2pEngineNotLoaded": "P2P 引擎未加载",
+  "thisDeviceSuffixShort": " (本机)",
+  "irohP2pReadyDirectLanAnd": "iroh P2P 就绪 · 局域网与公网直连优先",
+  "runningInCloudRelayMode": "当前运行在云端中转模式",
+  "addingToTheDrawer": "正在加入抽屉…",
+  "justNow": "刚刚",
+  "minutesAgo": "{diffInMinutes} 分钟前",
+  "@minutesAgo": {
+    "placeholders": {
+      "diffInMinutes": {
+        "type": "int"
+      }
+    }
+  },
+  "hoursAgo": "{diffInHours} 小时前",
+  "@hoursAgo": {
+    "placeholders": {
+      "diffInHours": {
+        "type": "int"
+      }
+    }
+  },
+  "yesterday": "昨天",
+  "p2pDirectPlus": "P2P 直连 + {value}",
+  "@p2pDirectPlus": {
+    "placeholders": {
+      "value": {
+        "type": "Object"
+      }
+    }
+  },
+  "general": "通用",
+  "language": "语言",
+  "languageSystem": "跟随系统",
+  "languageFooter": "跟随系统时，系统语言为中文则显示中文，其他语言显示英文。",
+  "nativeTrayToggle": "展开 / 收起",
+  "nativeRegularWindow": "常规窗口",
+  "nativeEdgeDrawer": "边缘抽屉",
+  "nativeQuitActiveTitle": "还有 {count} 项传输正在进行",
+  "@nativeQuitActiveTitle": {
+    "placeholders": {
+      "count": {
+        "type": "Object"
+      }
+    }
+  },
+  "nativeQuitActiveMessage": "退出软件会中断当前传输，下次打开软件时未完成的云盘上传会自动续传。是否仍要退出？",
+  "nativePickFilesTitle": "选择要放入抽屉的文件或文件夹",
+  "nativePickFilesPrompt": "放入抽屉",
+  "nativePickFolderTitle": "选择默认下载保存目录",
+  "nativePickFolderPrompt": "选择此目录"
+}

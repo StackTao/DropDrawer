@@ -14,22 +14,22 @@ private enum StorageKindOption: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .googleDrive: "Google Drive"
-        case .quark: "夸克网盘"
-        case .baiduNetdisk: "百度网盘"
+        case .quark: String(localized: "夸克网盘")
+        case .baiduNetdisk: String(localized: "百度网盘")
         case .s3: "S3 / R2"
         case .webDav: "WebDAV"
-        case .local: "服务器本地盘"
+        case .local: String(localized: "服务器本地盘")
         }
     }
 
     var defaultName: String {
         switch self {
         case .googleDrive: "Google Drive"
-        case .quark: "夸克网盘"
-        case .baiduNetdisk: "百度网盘"
+        case .quark: String(localized: "夸克网盘")
+        case .baiduNetdisk: String(localized: "百度网盘")
         case .s3: "S3 / Cloudflare R2"
-        case .webDav: "WebDAV 网盘"
-        case .local: "服务器本地盘"
+        case .webDav: String(localized: "WebDAV 网盘")
+        case .local: String(localized: "服务器本地盘")
         }
     }
 }
@@ -63,9 +63,9 @@ struct StorageSettingsView: View {
     var body: some View {
         List {
             Section {
-                Picker("模式", selection: $tab) {
-                    Text("已配置").tag(0)
-                    Text("添加云盘").tag(1)
+                Picker(String(localized: "模式"), selection: $tab) {
+                    Text(String(localized: "已配置")).tag(0)
+                    Text(String(localized: "添加云盘")).tag(1)
                 }
                 .pickerStyle(.segmented)
                 .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
@@ -87,7 +87,7 @@ struct StorageSettingsView: View {
             }
         }
         .listStyle(.insetGrouped)
-        .navigationTitle("云盘与存储")
+        .navigationTitle(String(localized: "云盘与存储"))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -96,7 +96,7 @@ struct StorageSettingsView: View {
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
-                .accessibilityLabel("刷新存储列表")
+                .accessibilityLabel(String(localized: "刷新存储列表"))
             }
         }
         .refreshable {
@@ -109,7 +109,7 @@ struct StorageSettingsView: View {
             StorageEditSheet(store: store, backend: backend)
         }
         .confirmationDialog(
-            selectedBackend?.name ?? "存储策略",
+            selectedBackend?.name ?? String(localized: "存储策略"),
             isPresented: Binding(
                 get: { selectedBackend != nil },
                 set: { if !$0 { selectedBackend = nil } }
@@ -118,22 +118,22 @@ struct StorageSettingsView: View {
         ) {
             if let backend = selectedBackend {
                 if !backend.isDefault {
-                    Button("设为默认") {
+                    Button(String(localized: "设为默认")) {
                         Task { await setDefaultBackend(backend.id) }
                     }
                     .disabled(switchingDefault)
                 }
-                Button("编辑") {
+                Button(String(localized: "编辑")) {
                     editingBackend = backend
                 }
                 .disabled(switchingDefault)
-                Button("测试连通性") {
+                Button(String(localized: "测试连通性")) {
                     Task { await testBackend(backend) }
                 }
-                Button("删除", role: .destructive) {
+                Button(String(localized: "删除"), role: .destructive) {
                     Task { await store.removeStorageBackend(id: backend.id) }
                 }
-                Button("取消", role: .cancel) {}
+                Button(String(localized: "取消"), role: .cancel) {}
             }
         }
     }
@@ -141,7 +141,7 @@ struct StorageSettingsView: View {
     private var configuredSection: some View {
         Section {
             if store.storageBackends.isEmpty {
-                Text("暂无云盘")
+                Text(String(localized: "暂无云盘"))
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(store.storageBackends) { backend in
@@ -161,7 +161,7 @@ struct StorageSettingsView: View {
                             }
                             Spacer()
                             if backend.isDefault {
-                                Text("默认")
+                                Text(String(localized: "默认"))
                                     .font(.caption.weight(.medium))
                                     .foregroundStyle(.secondary)
                             }
@@ -175,8 +175,8 @@ struct StorageSettingsView: View {
             }
         } footer: {
             Text(store.storageBackends.isEmpty
-                 ? "还没有存储策略，切换到「添加云盘」直连配置。"
-                 : "轻点存储项可编辑或设为默认。新上传至云端的文件会使用默认存储。")
+                 ? String(localized: "还没有存储策略，切换到「添加云盘」直连配置。")
+                 : String(localized: "轻点存储项可编辑或设为默认。新上传至云端的文件会使用默认存储。"))
         }
     }
 
@@ -189,7 +189,7 @@ struct StorageSettingsView: View {
     private var addFormSections: some View {
         if allowedKinds.isEmpty {
             Section {
-                Text("服务器管理员已停用所有可添加的存储类型，暂时无法添加新的云盘。")
+                Text(String(localized: "服务器管理员已停用所有可添加的存储类型，暂时无法添加新的云盘。"))
                     .foregroundStyle(.secondary)
             }
         } else {
@@ -200,7 +200,7 @@ struct StorageSettingsView: View {
     @ViewBuilder
     private var kindAndFieldSections: some View {
         Section {
-            Picker("类型", selection: $kind) {
+            Picker(String(localized: "类型"), selection: $kind) {
                 ForEach(allowedKinds) { option in
                     Text(option.label).tag(option)
                 }
@@ -217,26 +217,26 @@ struct StorageSettingsView: View {
         }
 
         Section {
-            formRow("名称", text: $name)
+            formRow(String(localized: "名称"), text: $name)
             switch kind {
             case .googleDrive:
                 formRow("Client ID", text: $clientId, placeholder: "xxx.apps.googleusercontent.com")
                 secureRow("Secret", text: $clientSecret, placeholder: "GOCSPX-...")
-                formRow("Refresh", text: $refreshToken, placeholder: "可留空，用下方一键授权")
-                formRow("目录 ID", text: $pathOrFolder, placeholder: "root")
+                formRow("Refresh", text: $refreshToken, placeholder: String(localized: "可留空，用下方一键授权"))
+                formRow(String(localized: "目录 ID"), text: $pathOrFolder, placeholder: "root")
             case .quark:
-                formRow("Cookie", text: $cookie, placeholder: "pan.quark.cn 完整 Cookie")
-                formRow("目录 fid", text: $pathOrFolder, placeholder: "0 表示根目录")
+                formRow("Cookie", text: $cookie, placeholder: String(localized: "pan.quark.cn 完整 Cookie"))
+                formRow(String(localized: "目录 fid"), text: $pathOrFolder, placeholder: String(localized: "0 表示根目录"))
             case .baiduNetdisk:
                 formRow("Token", text: $accessToken, placeholder: "Access Token")
-                formRow("App Key", text: $clientId, placeholder: "可选")
+                formRow("App Key", text: $clientId, placeholder: String(localized: "可选"))
                 secureRow("Secret", text: $clientSecret)
-                formRow("Refresh", text: $refreshToken, placeholder: "可选")
-                formRow("路径", text: $pathOrFolder, placeholder: "/apps/dropdrawer")
+                formRow("Refresh", text: $refreshToken, placeholder: String(localized: "可选"))
+                formRow(String(localized: "路径"), text: $pathOrFolder, placeholder: "/apps/dropdrawer")
             case .webDav:
-                formRow("地址", text: $endpointUrl, placeholder: "https://dav.example.com/dropdrawer")
-                formRow("用户名", text: $username)
-                secureRow("密码", text: $password)
+                formRow(String(localized: "地址"), text: $endpointUrl, placeholder: "https://dav.example.com/dropdrawer")
+                formRow(String(localized: "用户名"), text: $username)
+                secureRow(String(localized: "密码"), text: $password)
             case .s3:
                 formRow("Endpoint", text: $endpointUrl, placeholder: "https://<account>.r2.cloudflarestorage.com")
                 formRow("Bucket", text: $bucket)
@@ -246,10 +246,10 @@ struct StorageSettingsView: View {
             case .local:
                 EmptyView()
             }
-            Toggle("设为默认存储", isOn: $isDefault)
+            Toggle(String(localized: "设为默认存储"), isOn: $isDefault)
         } footer: {
             if kind == .local {
-                Text("文件保存在服务器数据目录中属于当前账号的独立文件夹。")
+                Text(String(localized: "文件保存在服务器数据目录中属于当前账号的独立文件夹。"))
             }
         }
 
@@ -260,7 +260,7 @@ struct StorageSettingsView: View {
                 } label: {
                     HStack {
                         Spacer()
-                        Label("浏览器一键授权 Google Drive", systemImage: "safari")
+                        Label(String(localized: "浏览器一键授权 Google Drive"), systemImage: "safari")
                         Spacer()
                     }
                 }
@@ -275,7 +275,7 @@ struct StorageSettingsView: View {
                     if saving {
                         ProgressView()
                     } else {
-                        Text("保存配置")
+                        Text(String(localized: "保存配置"))
                             .fontWeight(.semibold)
                     }
                     Spacer()
@@ -321,9 +321,9 @@ struct StorageSettingsView: View {
     private func testBackend(_ backend: StorageBackendSummary) async {
         do {
             let (ok, msg) = try await store.testStorageBackend(id: backend.id)
-            feedback = (ok, ok ? "连通正常：\(msg)" : "连通失败：\(msg)")
+            feedback = (ok, ok ? String(localized: "连通正常：\(msg)") : String(localized: "连通失败：\(msg)"))
         } catch {
-            feedback = (false, "测试失败：\(error.localizedDescription)")
+            feedback = (false, String(localized: "测试失败：\(error.localizedDescription)"))
         }
     }
 
@@ -334,16 +334,16 @@ struct StorageSettingsView: View {
         defer { switchingDefault = false }
         do {
             try await store.setDefaultStorageBackend(id: id)
-            feedback = (true, "已更新默认存储")
+            feedback = (true, String(localized: "已更新默认存储"))
         } catch {
-            feedback = (false, "切换默认存储失败：\(error.localizedDescription)")
+            feedback = (false, String(localized: "切换默认存储失败：\(error.localizedDescription)"))
         }
     }
 
     private func launchGoogleOAuth() async {
         guard !clientId.trimmingCharacters(in: .whitespaces).isEmpty,
               !clientSecret.trimmingCharacters(in: .whitespaces).isEmpty else {
-            feedback = (false, "请先填写 Google OAuth Client ID 和 Client Secret")
+            feedback = (false, String(localized: "请先填写 Google OAuth Client ID 和 Client Secret"))
             return
         }
         saving = true
@@ -357,10 +357,10 @@ struct StorageSettingsView: View {
                 isDefault: isDefault
             )
             openURL(url)
-            feedback = (true, "已打开浏览器授权 Google Drive，同意后下拉刷新即可")
+            feedback = (true, String(localized: "已打开浏览器授权 Google Drive，同意后下拉刷新即可"))
             tab = 0
         } catch {
-            feedback = (false, "发起授权失败：\(error.localizedDescription)")
+            feedback = (false, String(localized: "发起授权失败：\(error.localizedDescription)"))
         }
     }
 
@@ -373,7 +373,7 @@ struct StorageSettingsView: View {
             switch kind {
             case .googleDrive:
                 guard !refreshToken.trimmingCharacters(in: .whitespaces).isEmpty else {
-                    feedback = (false, "请填写 Refresh Token，或点击上方「浏览器一键授权 Google Drive」")
+                    feedback = (false, String(localized: "请填写 Refresh Token，或点击上方「浏览器一键授权 Google Drive」"))
                     return
                 }
                 cfg = [
@@ -385,7 +385,7 @@ struct StorageSettingsView: View {
                 ]
             case .quark:
                 guard !cookie.trimmingCharacters(in: .whitespaces).isEmpty else {
-                    feedback = (false, "请粘贴 pan.quark.cn 的 Cookie")
+                    feedback = (false, String(localized: "请粘贴 pan.quark.cn 的 Cookie"))
                     return
                 }
                 cfg = [
@@ -428,10 +428,10 @@ struct StorageSettingsView: View {
                 config: cfg,
                 isDefault: isDefault
             )
-            feedback = (true, "已保存原生云盘策略")
+            feedback = (true, String(localized: "已保存原生云盘策略"))
             tab = 0
         } catch {
-            feedback = (false, "保存失败：\(error.localizedDescription)")
+            feedback = (false, String(localized: "保存失败：\(error.localizedDescription)"))
         }
     }
 }
@@ -461,7 +461,7 @@ private struct StorageEditSheet: View {
         case "baidu_netdisk":
             [("client_secret", "App Secret"), ("refresh_token", "Refresh Token"), ("access_token", "Access Token")]
         case "web_dav":
-            [("password", "密码")]
+            [("password", String(localized: "密码"))]
         case "s3":
             [("access_key_id", "Access Key"), ("secret_access_key", "Secret Key")]
         default:
@@ -473,10 +473,10 @@ private struct StorageEditSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    LabeledContent("存储位置", value: backend.displayTarget)
-                    TextField("名称", text: $name)
+                    LabeledContent(String(localized: "存储位置"), value: backend.displayTarget)
+                    TextField(String(localized: "名称"), text: $name)
                     if isLocal {
-                        TextField("容量上限（字节）", text: $capacity)
+                        TextField(String(localized: "容量上限（字节）"), text: $capacity)
                             .keyboardType(.numberPad)
                     }
                     ForEach(credentialFields, id: \.key) { field in
@@ -487,8 +487,8 @@ private struct StorageEditSheet: View {
                     }
                 } footer: {
                     Text(isLocal
-                         ? "容量上限留空表示不限。"
-                         : "留空保留现有凭据。更换存储位置可使用「添加云盘」。")
+                         ? String(localized: "容量上限留空表示不限。")
+                         : String(localized: "留空保留现有凭据。更换存储位置可使用「添加云盘」。"))
                 }
                 .disabled(loading || saving)
                 if let errorMessage {
@@ -497,15 +497,15 @@ private struct StorageEditSheet: View {
                         .foregroundStyle(.red)
                 }
             }
-            .navigationTitle("编辑存储")
+            .navigationTitle(String(localized: "编辑存储"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }
+                    Button(String(localized: "取消")) { dismiss() }
                         .disabled(saving)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("保存") { Task { await save() } }
+                    Button(String(localized: "保存")) { Task { await save() } }
                         .disabled(loading || saving)
                 }
             }
@@ -519,7 +519,7 @@ private struct StorageEditSheet: View {
                     }
                     loading = false
                 } catch {
-                    errorMessage = "无法读取存储配置：\(error.localizedDescription)"
+                    errorMessage = String(localized: "无法读取存储配置：\(error.localizedDescription)")
                 }
             }
         }
@@ -529,7 +529,7 @@ private struct StorageEditSheet: View {
         guard !saving else { return }
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else {
-            errorMessage = "存储名称不能为空"
+            errorMessage = String(localized: "存储名称不能为空")
             return
         }
         var config: [String: JSONValue] = [:]
@@ -543,7 +543,7 @@ private struct StorageEditSheet: View {
             let value = capacity.trimmingCharacters(in: .whitespacesAndNewlines)
             let bytes = Int(value)
             if !value.isEmpty && (bytes ?? 0) <= 0 {
-                errorMessage = "容量上限必须为正整数"
+                errorMessage = String(localized: "容量上限必须为正整数")
                 return
             }
             if bytes != initialCapacity {
@@ -557,7 +557,7 @@ private struct StorageEditSheet: View {
             try await store.updateStorageBackend(id: backend.id, name: trimmedName, config: config)
             dismiss()
         } catch {
-            errorMessage = "保存失败：\(error.localizedDescription)"
+            errorMessage = String(localized: "保存失败：\(error.localizedDescription)")
         }
     }
 }

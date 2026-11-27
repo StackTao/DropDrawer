@@ -229,10 +229,9 @@ impl StorageProvider for QuarkProvider {
         let resp = self.apply_headers(self.http.get(&url)).send().await?;
         let env: QuarkResp<serde_json::Value> = resp.json().await?;
         if env.code != 0 {
-            anyhow::bail!("夸克网盘 Cookie 无效或已过期 ({}): {}", env.code, env.message);
+            anyhow::bail!("{}", tf!("夸克网盘 Cookie 无效或已过期 ({}): {}", "Quark Drive cookie is invalid or expired ({}): {}", env.code, env.message));
         }
-        Ok(format!(
-            "夸克网盘已连接 (目录 fid: {})",
+        Ok(tf!("夸克网盘已连接 (目录 fid: {})", "Quark Drive connected (folder fid: {})",
             self.root_folder_id
         ))
     }

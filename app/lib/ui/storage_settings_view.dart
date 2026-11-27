@@ -5,6 +5,7 @@ import '../models/models.dart';
 import '../state/drawer_controller.dart';
 import 'phone_page.dart';
 import 'theme.dart';
+import '../l10n/l10n.dart';
 
 /// Full-width in-drawer subview for managing native cloud & server storage backends:
 /// Google Drive (built-in OAuth2), Quark Drive, Baidu Netdisk, S3/R2, WebDAV, and Local Disk.
@@ -49,7 +50,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
   int? _initialCapacity;
   final _credentials = <String, TextEditingController>{};
 
-  static const _credentialFields = {
+  static Map<String, Map<String, String>> get _credentialFields => {
     'google_drive': {
       'client_secret': 'Client Secret',
       'refresh_token': 'Refresh Token',
@@ -60,7 +61,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
       'refresh_token': 'Refresh Token',
       'access_token': 'Access Token',
     },
-    'web_dav': {'password': '密码'},
+    'web_dav': {'password': l10n.password},
     's3': {'access_key_id': 'Access Key', 'secret_access_key': 'Secret Key'},
   };
   bool _switchingDefault = false;
@@ -105,11 +106,11 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
           _pathCtrl.text = 'root';
           break;
         case 'quark':
-          _nameCtrl.text = '夸克网盘';
+          _nameCtrl.text = l10n.quarkDrive;
           _pathCtrl.text = '0';
           break;
         case 'baidu_netdisk':
-          _nameCtrl.text = '百度网盘';
+          _nameCtrl.text = l10n.baiduNetdisk;
           _pathCtrl.text = '/apps/dropdrawer';
           break;
         case 's3':
@@ -118,11 +119,11 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
           _pathCtrl.text = 'dropdrawer';
           break;
         case 'web_dav':
-          _nameCtrl.text = 'WebDAV 网盘';
+          _nameCtrl.text = l10n.webdavStorage;
           _urlCtrl.text = 'https://dav.example.com/dropdrawer';
           break;
         case 'local':
-          _nameCtrl.text = '服务器本地盘';
+          _nameCtrl.text = l10n.serverLocalStorage;
           break;
       }
     });
@@ -133,7 +134,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
         _clientSecretCtrl.text.trim().isEmpty) {
       setState(() {
         _feedbackOk = false;
-        _feedback = '请先填写 Google OAuth Client ID 和 Client Secret';
+        _feedback = l10n.enterTheGoogleOauthClientId;
       });
       return;
     }
@@ -152,13 +153,13 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
       await widget.controller.windowService.openExternalUrl(authUrl);
       setState(() {
         _feedbackOk = true;
-        _feedback = '已打开浏览器授权 Google Drive，同意后点下方「刷新列表」即可';
+        _feedback = l10n.googleDriveAuthorizationOpenedInYour;
         _tab = 0;
       });
     } catch (e) {
       setState(() {
         _feedbackOk = false;
-        _feedback = '发起授权失败: $e';
+        _feedback = l10n.authorizationFailedToStart(e);
       });
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -175,7 +176,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
       switch (_selectedKind) {
         case 'google_drive':
           if (_refreshTokenCtrl.text.trim().isEmpty) {
-            throw StateError('请填写 Refresh Token，或点击上方「浏览器一键授权 Google」');
+            throw StateError(l10n.enterARefreshTokenOrUse);
           }
           cfg = {
             'kind': 'google_drive',
@@ -188,7 +189,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
           break;
         case 'quark':
           if (_cookieCtrl.text.trim().isEmpty) {
-            throw StateError('请粘贴 pan.quark.cn 的 Cookie');
+            throw StateError(l10n.pasteTheCookieFromPanQuark);
           }
           cfg = {
             'kind': 'quark',
@@ -244,13 +245,13 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
         isDefault: _isDefault,
       );
       setState(() {
-        _feedback = '已保存原生云盘策略';
+        _feedback = l10n.storageSaved;
         _feedbackOk = true;
         _tab = 0;
       });
     } catch (e) {
       setState(() {
-        _feedback = '保存失败: $e';
+        _feedback = l10n.saveFailedColon(e);
         _feedbackOk = false;
       });
     } finally {
@@ -263,11 +264,11 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
     final c = widget.controller;
     if (UiDensity.isTouch(context)) {
       return PhonePage(
-        title: '云盘与存储',
+        title: l10n.cloudStorage,
         actions: [
           PageAction(
             icon: CupertinoIcons.refresh,
-            tooltip: '刷新存储列表',
+            tooltip: l10n.refreshStorageList,
             onPressed: () => c.refreshStorageBackends(),
           ),
         ],
@@ -275,11 +276,11 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
       );
     }
     return AdaptivePage(
-      title: '云盘与存储',
+      title: l10n.cloudStorage,
       actions: [
         PageAction(
           icon: CupertinoIcons.refresh,
-          tooltip: '刷新存储列表',
+          tooltip: l10n.refreshStorageList,
           onPressed: () => c.refreshStorageBackends(),
         ),
       ],
@@ -294,7 +295,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
             children: [
               MacIconButton(
                 icon: CupertinoIcons.chevron_left,
-                tooltip: '返回抽屉',
+                tooltip: l10n.backToDrawer,
                 size: 15,
                 onPressed: _editingBackend == null
                     ? widget.onBack
@@ -305,7 +306,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
               const SizedBox(width: 4),
               Expanded(
                 child: Text(
-                  _editingBackend == null ? '原生云盘与存储' : '编辑存储',
+                  _editingBackend == null ? l10n.cloudStorage2 : l10n.editStorage,
                   style: const TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
@@ -314,7 +315,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
               ),
               MacIconButton(
                 icon: CupertinoIcons.refresh,
-                tooltip: '刷新存储列表',
+                tooltip: l10n.refreshStorageList,
                 size: 14,
                 onPressed: () => c.refreshStorageBackends(),
               ),
@@ -330,7 +331,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
               padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
               child: MacSegmentedControl<int>(
                 selected: _tab,
-                items: const [(0, '已配置云盘'), (1, '添加原生云盘')],
+                items: [(0, l10n.configured), (1, l10n.addStorage)],
                 onChanged: (v) => setState(() => _tab = v),
               ),
             ),
@@ -377,15 +378,27 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
     });
   }
 
-  static const _disabledAllKindsNotice = '服务器管理员已停用所有可添加的存储类型，暂时无法添加新的云盘。';
+  static String get _disabledAllKindsNotice => l10n.theServerAdministratorHasDisabledEvery;
 
-  static const _kinds = [
+  /// Quark and Baidu only serve users in mainland China, so other languages
+  /// list the international providers first.
+  static List<(String, String)> get _kinds {
+    final kinds = _kindsInChineseOrder;
+    if (AppLocale.isChinese) return kinds;
+    const regional = {'quark', 'baidu_netdisk'};
+    return [
+      ...kinds.where((k) => !regional.contains(k.$1)),
+      ...kinds.where((k) => regional.contains(k.$1)),
+    ];
+  }
+
+  static List<(String, String)> get _kindsInChineseOrder => [
     ('google_drive', 'Google Drive'),
-    ('quark', '夸克网盘'),
-    ('baidu_netdisk', '百度网盘'),
+    ('quark', l10n.quarkDrive),
+    ('baidu_netdisk', l10n.baiduNetdisk),
     ('s3', 'S3 / R2'),
     ('web_dav', 'WebDAV'),
-    ('local', '本地盘'),
+    ('local', l10n.localDisk),
   ];
 
   /// The connection fields of the selected kind, name first.
@@ -399,29 +412,29 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
     }) =>
         (controller: controller, label: label, placeholder: placeholder, obscure: obscure);
     return [
-      f(_nameCtrl, '名称'),
+      f(_nameCtrl, l10n.name),
       ...switch (_selectedKind) {
         'google_drive' => [
             f(_clientIdCtrl, 'Client ID', placeholder: 'xxx.apps.googleusercontent.com'),
             f(_clientSecretCtrl, 'Secret', placeholder: 'GOCSPX-...', obscure: true),
-            f(_refreshTokenCtrl, 'Refresh', placeholder: '可留空，点下方一键授权自动获取'),
-            f(_pathCtrl, '目录 ID', placeholder: 'root (或指定文件夹 ID)'),
+            f(_refreshTokenCtrl, 'Refresh', placeholder: l10n.optionalUseOneClickAuthorizationBelow),
+            f(_pathCtrl, l10n.folderId, placeholder: l10n.rootOrAFolderId),
           ],
         'quark' => [
-            f(_cookieCtrl, 'Cookie', placeholder: 'pan.quark.cn 完整 Cookie'),
-            f(_pathCtrl, '目录 fid', placeholder: '0 表示根目录'),
+            f(_cookieCtrl, 'Cookie', placeholder: l10n.fullCookieFromPanQuarkCn),
+            f(_pathCtrl, l10n.folderFid, placeholder: l10n.n0IsTheRootFolder),
           ],
         'baidu_netdisk' => [
-            f(_accessTokenCtrl, 'Token', placeholder: 'Access Token (或填下方 Refresh)'),
-            f(_clientIdCtrl, 'App Key', placeholder: '可选，用于自动刷新'),
+            f(_accessTokenCtrl, 'Token', placeholder: l10n.accessTokenOrFillInRefresh),
+            f(_clientIdCtrl, 'App Key', placeholder: l10n.optionalUsedForAutomaticRefresh),
             f(_clientSecretCtrl, 'Secret', obscure: true),
-            f(_refreshTokenCtrl, 'Refresh', placeholder: '可选，10年长效刷新令牌'),
-            f(_pathCtrl, '路径', placeholder: '/apps/dropdrawer'),
+            f(_refreshTokenCtrl, 'Refresh', placeholder: l10n.optionalLongLivedRefreshToken10),
+            f(_pathCtrl, l10n.path, placeholder: '/apps/dropdrawer'),
           ],
         'web_dav' => [
-            f(_urlCtrl, '地址'),
-            f(_userCtrl, '用户名'),
-            f(_passCtrl, '密码', obscure: true),
+            f(_urlCtrl, l10n.url),
+            f(_userCtrl, l10n.username),
+            f(_passCtrl, l10n.password, obscure: true),
           ],
         's3' => [
             f(_urlCtrl, 'Endpoint'),
@@ -435,16 +448,16 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
     ];
   }
 
-  static const _localNote =
-      '文件保存在服务器数据目录中属于当前账号的文件夹（由服务端 DROPDRAWER_LOCAL_STORAGE 决定）。';
-  static const _defaultNote = '新上传至云端的文件会使用默认存储。';
+  static String get _localNote =>
+      l10n.filesAreSavedInThisAccount;
+  static String get _defaultNote => l10n.newCloudUploadsUseTheDefault;
 
   Future<void> _testBackend(String id) async {
     final (ok, msg) = await widget.controller.testStorageBackend(id);
     if (mounted) {
       setState(() {
         _feedbackOk = ok;
-        _feedback = ok ? '连通正常: $msg' : '连通失败: $msg';
+        _feedback = ok ? l10n.connectionOk(msg) : l10n.connectionFailed(msg);
       });
     }
   }
@@ -460,13 +473,13 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
       if (!mounted) return;
       setState(() {
         _feedbackOk = true;
-        _feedback = '已更新默认存储';
+        _feedback = l10n.defaultStorageUpdated;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _feedbackOk = false;
-        _feedback = '切换默认存储失败：$e';
+        _feedback = l10n.switchDefaultStorageFailed(e);
       });
     } finally {
       if (mounted) setState(() => _switchingDefault = false);
@@ -485,7 +498,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
       children: [
         if (_editingBackend == null)
           PhoneSegmented<int>(
-            options: const [(0, '已配置'), (1, '添加云盘')],
+            options: [(0, l10n.configuredShort), (1, l10n.addStorageShort)],
             selected: _tab,
             onChanged: (v) => setState(() => _tab = v),
           ),
@@ -506,11 +519,11 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
         else if (_tab == 0)
           PhoneSection(
             footer: list.isEmpty
-                ? '还没有存储策略，切换到「添加云盘」直连配置。'
-                : '点按存储项可编辑。$_defaultNote',
+                ? l10n.noStorageYetSwitchToAdd
+                : l10n.tapToEditNote(_defaultNote),
             children: [
               if (list.isEmpty)
-                const PhoneRow(title: '暂无云盘', dimmed: true)
+                PhoneRow(title: l10n.noStorage, dimmed: true)
               else
                 for (final backend in list)
                   PhoneRow(
@@ -522,33 +535,33 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
                     title: backend.name,
                     subtitle:
                         '${_kindLabel(backend.kind)} · ${backend.displayTarget}',
-                    value: backend.isDefault ? '默认' : null,
+                    value: backend.isDefault ? l10n.defaultLabel : null,
                     trailing: backend.isDefault
                         ? null
                         : TextButton(
                             onPressed: _switchingDefault
                                 ? null
                                 : () => _setDefaultBackend(backend.id),
-                            child: const Text('设为默认'),
+                            child: Text(l10n.setAsDefault),
                           ),
                     onTap: () => showPhoneActions(
                       context,
                       title: backend.name,
                       entries: [
                         PhoneMenuEntry(
-                          label: '编辑',
+                          label: l10n.edit,
                           icon: CupertinoIcons.pencil,
                           materialIcon: Icons.edit_outlined,
                           onSelected: () => _openEdit(backend),
                         ),
                         PhoneMenuEntry(
-                          label: '测试连通性',
+                          label: l10n.testConnection,
                           icon: CupertinoIcons.waveform_path,
                           materialIcon: Icons.network_check,
                           onSelected: () => _testBackend(backend.id),
                         ),
                         PhoneMenuEntry(
-                          label: '删除',
+                          label: l10n.delete,
                           icon: CupertinoIcons.trash,
                           materialIcon: Icons.delete_outline,
                           destructive: true,
@@ -571,17 +584,17 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
           PhoneSection(
             children: [
               PhoneRow(
-                title: '类型',
+                title: l10n.typeLabel,
                 value: (_allowedKinds.where((k) => k.$1 == _selectedKind).firstOrNull ??
                         _allowedKinds.first)
                     .$2,
                 onTap: () async {
                   final kind = await showPhoneChoice<String>(
                     context,
-                    title: '云盘类型',
+                    title: l10n.storageType,
                     options: _allowedKinds,
                     selected: _selectedKind,
-                    previousTitle: '云盘',
+                    previousTitle: l10n.storageBack,
                   );
                   if (kind != null && mounted) _selectKind(kind);
                 },
@@ -589,11 +602,11 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
             ],
           ),
           PhoneSection(
-            header: '连接信息',
+            header: l10n.connection,
             footer: switch (_selectedKind) {
               'local' => _localNote,
               'google_drive' =>
-                '回调地址请填：${c.serverUrl}/api/oauth/google/callback',
+                l10n.callbackUrlHint(c.serverUrl),
               _ => null,
             },
             children: [
@@ -609,7 +622,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
           PhoneSection(
             children: [
               PhoneRow(
-                title: '设为默认中转存储',
+                title: l10n.useAsDefaultTransferStorage,
                 trailing: AdaptiveSwitch(
                   value: _isDefault,
                   onChanged: (v) => setState(() => _isDefault = v),
@@ -620,18 +633,18 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
           if (_selectedKind == 'google_drive') ...[
             PhoneButton(
               icon: material ? Icons.open_in_browser : CupertinoIcons.globe,
-              label: '在浏览器中授权 Google Drive',
+              label: l10n.authorizeGoogleDriveInBrowser,
               onPressed: _saving ? null : _launchGoogleOAuth,
             ),
             const SizedBox(height: 10),
             PhoneButton(
               kind: PhoneButtonKind.secondary,
-              label: '已有 Refresh Token，直接保存',
+              label: l10n.iAlreadyHaveARefreshToken,
               onPressed: _saving ? null : _addBackend,
             ),
           ] else
             PhoneButton(
-              label: _saving ? '正在保存…' : '保存',
+              label: _saving ? l10n.saving : l10n.save,
               onPressed: _saving ? null : _addBackend,
             ),
         ],
@@ -645,7 +658,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
       return Padding(
         padding: EdgeInsets.symmetric(vertical: 36),
         child: Text(
-          '暂无存储策略，点击上方「添加原生云盘」直连配置',
+          l10n.noStorageYetUseAddStorage,
           textAlign: TextAlign.center,
           style: TextStyle(fontSize: 12, color: MacPalette.textTertiary),
         ),
@@ -692,7 +705,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
                                 if (list[i].isDefault) ...[
                                   const SizedBox(width: 6),
                                   Text(
-                                    '默认',
+                                    l10n.defaultLabel,
                                     style: TextStyle(
                                       fontSize: 10.5,
                                       color: MacPalette.green,
@@ -725,24 +738,24 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
                           onPressed: _switchingDefault
                               ? null
                               : () => _setDefaultBackend(list[i].id),
-                          child: const Text('设为默认'),
+                          child: Text(l10n.setAsDefault),
                         ),
                       MacIconButton(
                         icon: CupertinoIcons.pencil,
-                        tooltip: '编辑',
+                        tooltip: l10n.edit,
                         size: 14,
                         onPressed: () => _openEdit(list[i]),
                       ),
                       MacIconButton(
                         icon: CupertinoIcons.waveform_path,
-                        tooltip: '测试连通性',
+                        tooltip: l10n.testConnection,
                         size: 14,
                         onPressed: () => _testBackend(list[i].id),
                       ),
                       const SizedBox(width: 2),
                       MacIconButton(
                         icon: CupertinoIcons.trash,
-                        tooltip: '删除',
+                        tooltip: l10n.delete,
                         size: 13.5,
                         onPressed: () =>
                             widget.controller.removeStorageBackend(list[i].id),
@@ -792,7 +805,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
       if (!mounted) return;
       setState(() {
         _feedbackOk = false;
-        _feedback = '无法读取存储配置：$e';
+        _feedback = l10n.cantReadStorage(e);
       });
     } finally {
       _loadingEdit = false;
@@ -822,7 +835,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
             (capacity == null || capacity <= 0))) {
       setState(() {
         _feedbackOk = false;
-        _feedback = name.isEmpty ? '存储名称不能为空' : '容量上限必须为正整数';
+        _feedback = name.isEmpty ? l10n.storageNameCanTBeEmpty : l10n.theCapacityLimitMustBeA;
       });
       return;
     }
@@ -848,13 +861,13 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
       _closeEdit();
       setState(() {
         _feedbackOk = true;
-        _feedback = '已保存存储配置';
+        _feedback = l10n.storageSettingsSaved;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _feedbackOk = false;
-        _feedback = '保存失败：$e';
+        _feedback = l10n.saveFailedFull(e);
       });
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -865,7 +878,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
     final backend = _editingBackend!;
     final local = backend.kind == 'local';
     final target = '${_kindLabel(backend.kind)} · ${backend.displayTarget}';
-    final note = local ? '容量上限留空表示不限。' : '留空保留现有凭据。更换存储位置可使用「添加云盘」。';
+    final note = local ? l10n.leaveTheCapacityLimitEmptyFor : l10n.leaveFieldsEmptyToKeepThe;
 
     Widget field(
       String label,
@@ -889,12 +902,12 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
           );
 
     final fields = [
-      field('名称', _editNameCtrl),
+      field(l10n.name, _editNameCtrl),
       if (local)
         field(
-          '上限（字节）',
+          l10n.limitBytes,
           _capacityCtrl,
-          placeholder: '不限',
+          placeholder: l10n.unlimited,
           inputType: TextInputType.number,
         ),
       for (final entry
@@ -902,16 +915,16 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
               .entries)
         field(entry.value, _credentials[entry.key]!, obscure: true),
     ];
-    final saveLabel = _saving ? '正在保存…' : '保存修改';
+    final saveLabel = _saving ? l10n.saving : l10n.saveChanges;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (phone)
           PhoneSection(
-            header: '编辑存储',
+            header: l10n.editStorage,
             footer: note,
             children: [
-              PhoneRow(title: '存储位置', subtitle: target),
+              PhoneRow(title: l10n.storageLocation, subtitle: target),
               ...fields,
             ],
           )
@@ -949,7 +962,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
           const SizedBox(height: 8),
           PhoneButton(
             kind: PhoneButtonKind.secondary,
-            label: '取消',
+            label: l10n.cancel,
             onPressed: _saving ? null : _closeEdit,
           ),
         ] else
@@ -958,7 +971,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
             children: [
               TextButton(
                 onPressed: _saving ? null : _closeEdit,
-                child: const Text('取消'),
+                child: Text(l10n.cancel),
               ),
               FilledButton(
                 onPressed: _saving ? null : _saveEdit,
@@ -1059,7 +1072,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
           children: [
             Expanded(
               child: Text(
-                '设为默认中转存储',
+                l10n.useAsDefaultTransferStorage,
                 style: TextStyle(fontSize: 12, color: MacPalette.textSecondary),
               ),
             ),
@@ -1078,7 +1091,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
             child: ElevatedButton.icon(
               onPressed: _saving ? null : _launchGoogleOAuth,
               icon: const Icon(CupertinoIcons.globe, size: 15),
-              label: const Text('浏览器一键授权 Google Drive'),
+              label: Text(l10n.authorizeGoogleDriveInBrowserOne),
               style: ElevatedButton.styleFrom(
                 backgroundColor: MacPalette.textPrimary,
                 foregroundColor: MacPalette.onTextPrimary,
@@ -1095,7 +1108,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
           ),
           const SizedBox(height: 6),
           Text(
-            '回调地址请填：${widget.controller.serverUrl}/api/oauth/google/callback',
+            l10n.callbackUrlHint(widget.controller.serverUrl),
             style: TextStyle(
               fontSize: 10,
               color: MacPalette.textTertiary,
@@ -1114,7 +1127,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
                 ),
                 textStyle: const TextStyle(fontSize: 12),
               ),
-              child: const Text('已有 Refresh Token？直接保存'),
+              child: Text(l10n.alreadyHaveARefreshTokenSave),
             ),
           ),
         ] else ...[
@@ -1144,7 +1157,7 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
                         color: MacPalette.onTextPrimary,
                       ),
                     )
-                  : const Text('保存原生云盘配置'),
+                  : Text(l10n.saveStorage),
             ),
           ),
         ],
@@ -1157,15 +1170,15 @@ class _StorageSettingsViewState extends State<StorageSettingsView> {
       case 'google_drive':
         return 'Google Drive';
       case 'quark':
-        return '夸克网盘';
+        return l10n.quarkDrive;
       case 'baidu_netdisk':
-        return '百度网盘';
+        return l10n.baiduNetdisk;
       case 's3':
         return 'S3 / R2';
       case 'web_dav':
         return 'WebDAV';
       case 'local':
-        return '本地磁盘';
+        return l10n.localDiskFull;
       default:
         return kind;
     }

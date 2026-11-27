@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="transfer_notification_title">DropDrawer 正在传输</string>
+    <string name="transfer_channel_name">文件传输进度</string>
+    <string name="transfer_channel_description">后台上传或下载文件时保持连接并显示进度</string>
+    <string name="share_file_chooser">分享文件</string>
+    <string name="share_text_chooser">分享文本</string>
+</resources>
