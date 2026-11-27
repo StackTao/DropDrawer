@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="robots" content="noindex, nofollow" />
-<meta name="theme-color" content="#050507" />
+<meta name="theme-color" content="#07090e" />
 <title>DropDrawer Admin</title>
 <link rel="icon" href="/admin/assets/logo.svg" type="image/svg+xml" />
 <link rel="stylesheet" href="/admin/assets/admin.css" />
@@ -51,41 +51,105 @@
   <symbol id="i-badge" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M5 21c.9-3.8 3.7-6 7-6s6.1 2.2 7 6"/><path d="m17 3 1.2 1.2L21 1.5" transform="translate(0 1)"/></symbol>
   <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
   <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M3 3l18 18M10.6 10.6a3 3 0 0 0 4.2 4.2M9.9 5.2A10 10 0 0 1 12 5c6 0 9.5 7 9.5 7a16.8 16.8 0 0 1-3.1 4.1M6.3 6.3C3.9 8.1 2.5 12 2.5 12S6 19 12 19a9.5 9.5 0 0 0 4.5-1.1"/></symbol>
   <symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.2M12 19.3v2.2M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.9 19.1l1.6-1.6M17.5 6.5l1.6-1.6"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11z"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.8"/><path d="M4.5 20c1.1-3.6 3.9-5.8 7.5-5.8s6.4 2.2 7.5 5.8"/></symbol>
 </svg>
 
 <div id="loginView" class="auth-screen" hidden>
+  <div class="auth-topbar">
+    <button id="loginThemeBtn" class="theme-pill" type="button" aria-label="切换外观主题">
+      <svg class="icon"><use href="#i-monitor"/></svg>
+      <span>跟随系统</span>
+    </button>
+  </div>
   <div class="auth-card">
-    <img class="auth-logo" src="/admin/assets/logo.svg" alt="" />
-    <h1>DropDrawer Admin</h1>
-    <p class="lead">登录服务器管理控制台</p>
+    <div class="auth-header">
+      <div class="auth-logo-wrap">
+        <img class="auth-logo" src="/admin/assets/logo.svg" alt="DropDrawer" />
+      </div>
+      <h1>DropDrawer Admin</h1>
+      <p class="lead">登录服务器管理控制台</p>
+    </div>
     <form id="loginForm" autocomplete="on">
       <div id="accountFields" class="auth-fields">
-        <input id="loginUser" class="input" type="text" placeholder="用户名" autocomplete="username" aria-label="用户名" />
-        <input id="loginPassword" class="input" type="password" placeholder="密码" autocomplete="current-password" aria-label="密码" />
+        <label class="auth-field" for="loginUser">
+          <span class="auth-label">管理员账号</span>
+          <span class="auth-input-wrap">
+            <svg class="icon auth-input-icon" aria-hidden="true"><use href="#i-user"/></svg>
+            <input id="loginUser" class="input" type="text" placeholder="输入管理员用户名" autocomplete="username" aria-label="用户名" />
+          </span>
+        </label>
+        <label class="auth-field" for="loginPassword">
+          <span class="auth-label">密码</span>
+          <span class="auth-input-wrap has-toggle">
+            <svg class="icon auth-input-icon" aria-hidden="true"><use href="#i-lock"/></svg>
+            <input id="loginPassword" class="input" type="password" placeholder="输入登录密码" autocomplete="current-password" aria-label="密码" />
+            <button id="toggleLoginPassword" class="auth-eye-btn" type="button" aria-label="显示密码" title="显示或隐藏密码">
+              <svg class="icon"><use href="#i-eye"/></svg>
+            </button>
+          </span>
+        </label>
       </div>
       <div id="totpFields" class="auth-fields" hidden>
-        <p class="auth-hint">已开启两步验证，请输入身份验证器中的 6 位验证码</p>
+        <p class="auth-hint">已开启两步验证，请输入身份验证器中的 6 位动态验证码</p>
         <input id="loginTotp" class="input mono totp-input" type="text" inputmode="numeric" pattern="[0-9 ]*" maxlength="7" placeholder="000000" autocomplete="one-time-code" aria-label="两步验证码" />
       </div>
-      <div id="loginChallenge" hidden></div>
+      <div id="loginChallenge" class="auth-challenge" hidden></div>
       <div id="loginError" class="auth-error" role="alert"></div>
-      <button id="loginSubmit" class="btn primary block" type="submit">登录</button>
-      <button id="loginGoogle" class="btn block" type="button" hidden>使用 Google 登录</button>
-      <button id="loginBack" class="btn ghost block" type="button" hidden>返回登录</button>
+      <div class="auth-actions">
+        <button id="loginSubmit" class="btn primary block auth-submit" type="submit">登录</button>
+        <div id="loginDivider" class="auth-divider" hidden><span>或</span></div>
+        <button id="loginGoogle" class="btn block auth-google" type="button" hidden>
+          <svg class="google-mark" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="#4285F4" d="M23.49 12.27c0-.79-.07-1.54-.2-2.27H12v4.51h6.47a5.53 5.53 0 0 1-2.4 3.63v3.02h3.88c2.27-2.09 3.54-5.17 3.54-8.89z"/>
+            <path fill="#34A853" d="M12 24c3.24 0 5.95-1.07 7.94-2.91l-3.88-3.02c-1.07.72-2.45 1.15-4.06 1.15-3.12 0-5.77-2.11-6.72-4.95H1.28v3.12A12 12 0 0 0 12 24z"/>
+            <path fill="#FBBC05" d="M5.28 14.27a7.2 7.2 0 0 1 0-4.54V6.61H1.28a12 12 0 0 0 0 10.78l4-3.12z"/>
+            <path fill="#EA4335" d="M12 4.78c1.76 0 3.34.61 4.59 1.8l3.44-3.44C17.95 1.19 15.24 0 12 0A12 12 0 0 0 1.28 6.61l4 3.12C6.23 6.89 8.88 4.78 12 4.78z"/>
+          </svg>
+          <span>使用 Google 登录</span>
+        </button>
+        <button id="loginBack" class="btn ghost block" type="button" hidden>返回账号密码登录</button>
+      </div>
     </form>
+    <p class="auth-foot">DropDrawer 私有部署控制台 · 仅限授权管理员访问</p>
   </div>
 </div>
 
 <div id="appView" class="shell" hidden>
-  <aside class="sidebar">
+  <header class="mobile-bar">
+    <button id="mobileMenuBtn" class="btn ghost icon-only" type="button" aria-label="打开导航菜单" aria-expanded="false">
+      <svg class="icon"><use href="#i-menu"/></svg>
+    </button>
+    <div class="mobile-brand">
+      <img src="/admin/assets/logo.svg" alt="" />
+      <span>DropDrawer</span>
+      <span class="brand-tag">Admin</span>
+    </div>
+    <button id="mobileThemeBtn" class="btn ghost icon-only" type="button" aria-label="切换外观主题" title="切换外观主题">
+      <svg class="icon"><use href="#i-monitor"/></svg>
+    </button>
+  </header>
+  <div id="sidebarScrim" class="sidebar-scrim" hidden></div>
+  <aside id="sidebar" class="sidebar" aria-label="侧边栏">
     <div class="brand">
       <img src="/admin/assets/logo.svg" alt="" />
       <div class="brand-name">DropDrawer<span class="brand-tag">Admin</span></div>
+      <button id="sidebarCloseBtn" class="btn ghost icon-only sidebar-close" type="button" aria-label="关闭导航菜单">
+        <svg class="icon"><use href="#i-x"/></svg>
+      </button>
     </div>
     <nav class="nav" id="nav" aria-label="管理导航"></nav>
     <div class="sidebar-foot">
       <div class="server-chip" id="serverChip"><span class="dot ok"></span><span>服务运行中</span></div>
+      <div class="theme-switch" id="sidebarThemeSwitch" role="group" aria-label="外观主题">
+        <button type="button" data-theme-choice="auto" title="跟随系统"><svg class="icon"><use href="#i-monitor"/></svg><span>自动</span></button>
+        <button type="button" data-theme-choice="light" title="浅色模式"><svg class="icon"><use href="#i-sun"/></svg><span>浅色</span></button>
+        <button type="button" data-theme-choice="dark" title="深色模式"><svg class="icon"><use href="#i-moon"/></svg><span>深色</span></button>
+      </div>
       <a class="nav-item me-item" id="meLink" href="#/me"><span class="avatar xs" id="meAvatar">A</span><span class="me-text"><span id="meName">管理员</span><span class="me-role" id="meRole"></span></span></a>
       <button class="nav-item" id="logoutBtn" type="button"><svg class="icon"><use href="#i-logout"/></svg><span>退出登录</span></button>
     </div>

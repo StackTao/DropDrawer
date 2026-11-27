@@ -55,6 +55,121 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Theme (auto / light / dark) & mobile navigation drawer
+  // ---------------------------------------------------------------------------
+  const THEME_KEY = "dd_admin_theme";
+  const THEME_ORDER = ["auto", "light", "dark"];
+  const THEME_META = {
+    auto: { label: "跟随系统", icon: "monitor" },
+    light: { label: "浅色模式", icon: "sun" },
+    dark: { label: "深色模式", icon: "moon" },
+  };
+  const systemDarkQuery = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+
+  function storedTheme() {
+    try {
+      const v = localStorage.getItem(THEME_KEY);
+      return THEME_ORDER.includes(v) ? v : "auto";
+    } catch {
+      return "auto";
+    }
+  }
+
+  function resolvedTheme(pref = storedTheme()) {
+    if (pref === "light" || pref === "dark") return pref;
+    return systemDarkQuery && !systemDarkQuery.matches ? "light" : "dark";
+  }
+
+  function syncThemeControls(pref, resolved) {
+    const meta = THEME_META[pref] || THEME_META.auto;
+    const loginBtn = $("loginThemeBtn");
+    if (loginBtn) {
+      replace(loginBtn, icon(meta.icon), h("span", { text: meta.label }));
+      loginBtn.title = `当前：${meta.label}（点击切换）`;
+    }
+    const mobileBtn = $("mobileThemeBtn");
+    if (mobileBtn) {
+      replace(mobileBtn, icon(meta.icon));
+      mobileBtn.title = `当前：${meta.label}（点击切换）`;
+    }
+    const sw = $("sidebarThemeSwitch");
+    if (sw) {
+      for (const b of sw.querySelectorAll("button[data-theme-choice]")) {
+        const active = b.dataset.themeChoice === pref;
+        b.classList.toggle("active", active);
+        b.setAttribute("aria-pressed", active ? "true" : "false");
+      }
+    }
+    const metaTheme = document.querySelector('meta[name="theme-color"]');
+    if (metaTheme) metaTheme.setAttribute("content", resolved === "light" ? "#f4f6fa" : "#07090e");
+  }
+
+  function applyTheme(pref, { persist = true, syncTurnstile = true } = {}) {
+    if (!THEME_ORDER.includes(pref)) pref = "auto";
+    if (persist) {
+      try { localStorage.setItem(THEME_KEY, pref); } catch { /* ignore */ }
+    }
+    const resolved = resolvedTheme(pref);
+    document.documentElement.dataset.theme = resolved;
+    syncThemeControls(pref, resolved);
+    if (syncTurnstile && typeof rerenderTurnstileForTheme === "function") rerenderTurnstileForTheme();
+  }
+
+  function cycleTheme() {
+    const cur = storedTheme();
+    const next = THEME_ORDER[(THEME_ORDER.indexOf(cur) + 1) % THEME_ORDER.length];
+    applyTheme(next);
+  }
+
+  function setMobileNavOpen(open) {
+    const sidebar = $("sidebar");
+    const scrim = $("sidebarScrim");
+    const menuBtn = $("mobileMenuBtn");
+    if (!sidebar || !scrim) return;
+    sidebar.classList.toggle("open", open);
+    scrim.hidden = !open;
+    document.body.classList.toggle("nav-open", open);
+    if (menuBtn) menuBtn.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+
+  if (systemDarkQuery && systemDarkQuery.addEventListener) {
+    systemDarkQuery.addEventListener("change", () => {
+      if (storedTheme() === "auto") applyTheme("auto", { persist: false });
+    });
+  }
+
+  // Initialize theme immediately before first paint of views.
+  applyTheme(storedTheme(), { persist: false, syncTurnstile: false });
+
+  if ($("loginThemeBtn")) $("loginThemeBtn").addEventListener("click", cycleTheme);
+  if ($("mobileThemeBtn")) $("mobileThemeBtn").addEventListener("click", cycleTheme);
+  if ($("sidebarThemeSwitch")) {
+    $("sidebarThemeSwitch").addEventListener("click", (e) => {
+      const btnEl = e.target.closest("button[data-theme-choice]");
+      if (btnEl) applyTheme(btnEl.dataset.themeChoice);
+    });
+  }
+  if ($("mobileMenuBtn")) $("mobileMenuBtn").addEventListener("click", () => setMobileNavOpen(true));
+  if ($("sidebarCloseBtn")) $("sidebarCloseBtn").addEventListener("click", () => setMobileNavOpen(false));
+  if ($("sidebarScrim")) $("sidebarScrim").addEventListener("click", () => setMobileNavOpen(false));
+  if ($("nav")) {
+    $("nav").addEventListener("click", (e) => {
+      if (e.target.closest("a.nav-item")) setMobileNavOpen(false);
+    });
+  }
+  if ($("meLink")) $("meLink").addEventListener("click", () => setMobileNavOpen(false));
+  if ($("toggleLoginPassword")) {
+    $("toggleLoginPassword").addEventListener("click", () => {
+      const pwd = $("loginPassword");
+      const btnEl = $("toggleLoginPassword");
+      const show = pwd.type === "password";
+      pwd.type = show ? "text" : "password";
+      btnEl.setAttribute("aria-label", show ? "隐藏密码" : "显示密码");
+      replace(btnEl, icon(show ? "eye-off" : "eye"));
+    });
+  }
+
+  // ---------------------------------------------------------------------------
   // Formatting
   // ---------------------------------------------------------------------------
   const nf = new Intl.NumberFormat("zh-CN");
@@ -325,7 +440,10 @@
   }
 
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && overlayStack.length) closeOverlay(overlayStack[overlayStack.length - 1]);
+    if (e.key === "Escape") {
+      if (overlayStack.length) closeOverlay(overlayStack[overlayStack.length - 1]);
+      else setMobileNavOpen(false);
+    }
   });
 
   function dialog({ title, body, actions }) {
@@ -1696,8 +1814,34 @@
   let challengeToken = null;
 
   function syncLoginOptions() {
-    $("loginGoogle").hidden = loginMode !== "account" || !loginOptions?.google_enabled;
+    const showGoogle = loginMode === "account" && Boolean(loginOptions?.google_enabled);
+    $("loginGoogle").hidden = !showGoogle;
+    if ($("loginDivider")) $("loginDivider").hidden = !showGoogle;
     $("loginChallenge").hidden = loginMode === "google-totp" || !loginOptions?.turnstile_site_key;
+  }
+
+  function renderTurnstileWidget() {
+    if (!window.turnstile || !loginOptions?.turnstile_site_key) return;
+    if (turnstileId !== null) {
+      try { window.turnstile.remove(turnstileId); } catch { /* ignore */ }
+      turnstileId = null;
+    }
+    challengeToken = null;
+    turnstileId = window.turnstile.render($("loginChallenge"), {
+      sitekey: loginOptions.turnstile_site_key,
+      action: "admin_login",
+      theme: resolvedTheme(),
+      size: matchMedia("(max-width: 420px)").matches ? "compact" : "flexible",
+      callback: (token) => { challengeToken = token; },
+      "expired-callback": () => refreshChallenge(),
+      "error-callback": () => { challengeToken = null; },
+    });
+  }
+
+  function rerenderTurnstileForTheme() {
+    if (!$("loginView").hidden && turnstileId !== null && window.turnstile) {
+      try { renderTurnstileWidget(); } catch { /* ignore */ }
+    }
   }
 
   function setLoginStep(step) {
@@ -1732,14 +1876,7 @@
       window.dropDrawerTurnstileLoaded = () => {
         delete window.dropDrawerTurnstileLoaded;
         try {
-          turnstileId = window.turnstile.render($("loginChallenge"), {
-            sitekey: options.turnstile_site_key,
-            action: "admin_login",
-            size: matchMedia("(max-width: 420px)").matches ? "compact" : "flexible",
-            callback: (token) => { challengeToken = token; },
-            "expired-callback": () => refreshChallenge(),
-            "error-callback": () => { challengeToken = null; },
-          });
+          renderTurnstileWidget();
         } catch {
           failure();
         }
