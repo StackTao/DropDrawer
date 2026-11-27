@@ -376,12 +376,11 @@ impl Database {
                 if used_count >= max_uses {
                     return Ok(Err(GoogleResolveError::InviteInvalid));
                 }
-                if let Some(exp_str) = expires_raw {
-                    if let Ok(exp) = DateTime::parse_from_rfc3339(&exp_str) {
-                        if exp.with_timezone(&Utc) <= Utc::now() {
-                            return Ok(Err(GoogleResolveError::InviteInvalid));
-                        }
-                    }
+                if let Some(exp_str) = expires_raw
+                    && let Ok(exp) = DateTime::parse_from_rfc3339(&exp_str)
+                    && exp.with_timezone(&Utc) <= Utc::now()
+                {
+                    return Ok(Err(GoogleResolveError::InviteInvalid));
                 }
                 tx.execute(
                     "UPDATE invite_codes SET used_count = used_count + 1 WHERE code = ?1",

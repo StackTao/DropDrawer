@@ -150,12 +150,11 @@ impl Database {
         if used_count >= max_uses {
             return Ok(false);
         }
-        if let Some(exp_str) = expires_raw {
-            if let Ok(exp) = DateTime::parse_from_rfc3339(&exp_str) {
-                if exp.with_timezone(&Utc) <= Utc::now() {
-                    return Ok(false);
-                }
-            }
+        if let Some(exp_str) = expires_raw
+            && let Ok(exp) = DateTime::parse_from_rfc3339(&exp_str)
+            && exp.with_timezone(&Utc) <= Utc::now()
+        {
+            return Ok(false);
         }
         Ok(true)
     }

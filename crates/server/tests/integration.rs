@@ -1611,6 +1611,45 @@ async fn public_share_misses_are_limited_across_endpoints() {
 }
 
 #[tokio::test]
+async fn forged_forwarded_entries_do_not_reset_the_login_limit() {
+    let (app, _state, _tmp) = spawn_test_server().await;
+    send_raw(
+        &app,
+        "POST",
+        "/api/auth/register",
+        None,
+        Some(json!({"username": "alice", "password": "password123"})),
+    )
+    .await;
+    // Behind nginx with `$proxy_add_x_forwarded_for`: the client may put anything
+    // in front, the proxy appends the address it really saw.
+    let proxy = "127.0.0.1:40000".parse::<std::net::SocketAddr>().unwrap();
+    let behind_proxy = app.layer(Extension(ConnectInfo(proxy))).layer(Extension(TrustProxy(true)));
+    let login = |forwarded: String, password: &str| {
+        Request::post("/api/auth/login")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("x-forwarded-for", forwarded)
+            .header("x-real-ip", "198.51.100.250")
+            .body(Body::from(json!({"username": "alice", "password": password}).to_string()))
+            .unwrap()
+    };
+    for attempt in 0..10 {
+        let forged = format!("198.51.100.{attempt}, 203.0.113.20");
+        let response = behind_proxy.clone().oneshot(login(forged, "wrong-password")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+    let response = behind_proxy
+        .clone()
+        .oneshot(login("198.51.100.99, 203.0.113.20".into(), "password123"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    // A different real client behind the same proxy is unaffected.
+    let response = behind_proxy.oneshot(login("203.0.113.21".into(), "password123")).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
 async fn test_login_and_passcode_guessing_is_throttled() {
     let (app, _state, _tmp) = spawn_test_server().await;
     let (_, alice): (_, AuthResponse) = send_json(

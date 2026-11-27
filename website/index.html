@@ -306,7 +306,9 @@ html[lang="en"] .hero-sub { max-width: 600px; }
 .hero-cta-main { height: 46px; padding: 0 24px; border-radius: 11px; font-size: 14.5px; }
 .hero-footnote { display: grid; gap: 6px; font: 400 12px/1.4 var(--font-mono); color: rgba(255, 255, 255, 0.5); }
 .hero-footnote-links { display: inline-flex; align-items: center; justify-content: center; gap: 12px; color: rgba(255, 255, 255, 0.65); }
-.hero-footnote-links a { transition: color 0.16s; }
+.hero-footnote-links a { transition: color 0.16s; white-space: nowrap; }
+/* Narrow screens: let whole links wrap instead of breaking inside them. */
+@media (max-width: 440px) { .hero-footnote-links { flex-wrap: wrap; gap: 4px 16px; } .hero-footnote-links i { display: none; } }
 .hero-footnote-links a:hover { color: #ffffff; }
 .hero-footnote-links i { font-style: normal; opacity: 0.3; }
 

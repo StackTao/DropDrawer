@@ -384,9 +384,9 @@ async fn complete(
         .await
         .map_err(|_| FAILED)?;
     let settings = state.runtime_settings();
-    let signup_policy = if !settings.features.google_signup_enabled {
-        GoogleSignupPolicy::Closed
-    } else if settings.check_email_domain(&identity.email).is_err() {
+    let signup_policy = if !settings.features.google_signup_enabled
+        || settings.check_email_domain(&identity.email).is_err()
+    {
         GoogleSignupPolicy::Closed
     } else {
         match settings.registration_mode {

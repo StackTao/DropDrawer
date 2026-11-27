@@ -616,13 +616,13 @@ async fn send_bind_email_code(
     if let Err(msg) = settings.check_email_domain(&email) {
         return Err((StatusCode::FORBIDDEN, msg));
     }
-    if let Some(owner) = state.db.find_user_by_email(&email).map_err(internal_err)? {
-        if owner.id != auth.user_id {
-            return Err((
-                StatusCode::CONFLICT,
-                t!("该邮箱已被其他账号使用", "That email address is already in use").to_string(),
-            ));
-        }
+    if let Some(owner) = state.db.find_user_by_email(&email).map_err(internal_err)?
+        && owner.id != auth.user_id
+    {
+        return Err((
+            StatusCode::CONFLICT,
+            t!("该邮箱已被其他账号使用", "That email address is already in use").to_string(),
+        ));
     }
 
     let purpose = "bind_email";
@@ -691,13 +691,13 @@ async fn confirm_bind_email(
     if let Err(msg) = settings.check_email_domain(&email) {
         return Err((StatusCode::FORBIDDEN, msg));
     }
-    if let Some(owner) = state.db.find_user_by_email(&email).map_err(internal_err)? {
-        if owner.id != auth.user_id {
-            return Err((
-                StatusCode::CONFLICT,
-                t!("该邮箱已被其他账号使用", "That email address is already in use").to_string(),
-            ));
-        }
+    if let Some(owner) = state.db.find_user_by_email(&email).map_err(internal_err)?
+        && owner.id != auth.user_id
+    {
+        return Err((
+            StatusCode::CONFLICT,
+            t!("该邮箱已被其他账号使用", "That email address is already in use").to_string(),
+        ));
     }
 
     let code_hash = hash_email_code(&email, "bind_email", &req.code, &state.jwt_secret);

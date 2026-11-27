@@ -14,7 +14,7 @@
 | `DROPDRAWER_LOCAL_USER_QUOTA_BYTES` | 空 | 默认每用户本地盘配额，单位为字节。空表示未配置默认配额。可在控制台设置用户上限。 |
 | `DROPDRAWER_TTL_CLEANUP_SECS` | `300` | 过期条目、云端缓存和临时 Drive 授权会话的清理间隔，单位为秒，最小为 10。 |
 | `DROPDRAWER_CORS_ORIGINS` | 空 | 允许的 API 来源，以逗号分隔。空或 `*` 允许任意来源。管理端 API 仅供同源页面使用。 |
-| `DROPDRAWER_TRUST_PROXY` | `false` | 设为 `true` 后，服务端才使用来自私有网络对端的 `X-Forwarded-For` 或 `X-Real-IP` 识别请求来源。只在后端端口仅对可信反向代理开放、且代理覆盖客户端传入的转发头时开启。 |
+| `DROPDRAWER_TRUST_PROXY` | `false` | 设为 `true` 后，服务端才使用来自私有网络对端的 `X-Forwarded-For` 或 `X-Real-IP` 识别请求来源。只在后端端口仅对可信反向代理开放时开启。`X-Forwarded-For` 只取最后一项（即代理自己追加的地址），前面的项可由客户端伪造，一律忽略；没有该请求头时才读 `X-Real-IP`。代理前面还有 CDN 时，要在代理上把 CDN 传来的真实 IP 还原出来（例如 nginx `real_ip_header`），否则限流会按 CDN 节点的 IP 计算。 |
 | `RUST_LOG` | `info` | 日志级别和过滤条件。 |
 
 客户端选择「跟随服务器」时，服务端采用控制台配置的默认保留期，并遵守最长保留期。未配置默认值时采用 7 天。

@@ -137,20 +137,42 @@ impl<S: Send + Sync> FromRequestParts<S> for ClientIp {
         };
         if parts.extensions.get::<TrustProxy>().is_some_and(|trust| trust.0)
             && crate::policy::is_restricted_ip(peer)
+            && let Some(ip) = forwarded_client_ip(&parts.headers)
         {
-            let forwarded = parts
-                .headers
-                .get("x-forwarded-for")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.split(',').next())
-                .or_else(|| parts.headers.get("x-real-ip").and_then(|v| v.to_str().ok()))
-                .map(str::trim)
-                .and_then(|v| v.parse::<IpAddr>().ok());
-            if let Some(ip) = forwarded {
-                return Ok(Self(ip.to_canonical().to_string()));
-            }
+            return Ok(Self(ip.to_canonical().to_string()));
         }
         Ok(Self(peer.to_string()))
+    }
+}
+
+/// The client address reported by the trusted proxy in front of the server.
+///
+/// Proxies append the address they saw to `X-Forwarded-For` (nginx
+/// `$proxy_add_x_forwarded_for`, Caddy, Traefik), so only the last entry comes
+/// from the proxy; everything before it is whatever the client sent and can be
+/// forged. `X-Real-IP` is used only when no `X-Forwarded-For` is present,
+/// because proxies that don't set it (Caddy) pass the client's value through.
+fn forwarded_client_ip(headers: &axum::http::HeaderMap) -> Option<IpAddr> {
+    let parse = |value: &str| {
+        let value = value.trim();
+        value
+            .parse::<IpAddr>()
+            .ok()
+            .or_else(|| value.parse::<SocketAddr>().ok().map(|addr| addr.ip()))
+    };
+    let last_forwarded = headers
+        .get_all("x-forwarded-for")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .map(str::trim)
+        .rfind(|v| !v.is_empty());
+    match last_forwarded {
+        Some(value) => parse(value),
+        None => headers
+            .get("x-real-ip")
+            .and_then(|v| v.to_str().ok())
+            .and_then(parse),
     }
 }
 
@@ -167,5 +189,54 @@ pub(crate) fn audit(
         .record_audit(&session.actor, action, target, detail, Some(&session.ip))
     {
         tracing::warn!("failed to write admin audit entry: {err}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::forwarded_client_ip;
+    use axum::http::{HeaderMap, HeaderValue};
+
+    fn headers(pairs: &[(&'static str, &'static str)]) -> HeaderMap {
+        let mut map = HeaderMap::new();
+        for (name, value) in pairs {
+            map.append(*name, HeaderValue::from_static(value));
+        }
+        map
+    }
+
+    fn ip(pairs: &[(&'static str, &'static str)]) -> Option<String> {
+        forwarded_client_ip(&headers(pairs)).map(|ip| ip.to_string())
+    }
+
+    #[test]
+    fn uses_the_entry_the_proxy_appended() {
+        // nginx `$proxy_add_x_forwarded_for` keeps whatever the client sent in front.
+        assert_eq!(ip(&[("x-forwarded-for", "1.1.1.1, 203.0.113.7")]).as_deref(), Some("203.0.113.7"));
+        assert_eq!(ip(&[("x-forwarded-for", "203.0.113.7")]).as_deref(), Some("203.0.113.7"));
+        // Repeated headers count as one list.
+        assert_eq!(
+            ip(&[("x-forwarded-for", "1.1.1.1"), ("x-forwarded-for", "203.0.113.7")]).as_deref(),
+            Some("203.0.113.7")
+        );
+    }
+
+    #[test]
+    fn a_forged_real_ip_does_not_override_the_forwarded_chain() {
+        assert_eq!(
+            ip(&[("x-real-ip", "1.1.1.1"), ("x-forwarded-for", "203.0.113.7")]).as_deref(),
+            Some("203.0.113.7")
+        );
+        assert_eq!(ip(&[("x-real-ip", "203.0.113.7")]).as_deref(), Some("203.0.113.7"));
+    }
+
+    #[test]
+    fn accepts_ports_and_rejects_garbage() {
+        assert_eq!(ip(&[("x-forwarded-for", "203.0.113.7:4431")]).as_deref(), Some("203.0.113.7"));
+        assert_eq!(ip(&[("x-forwarded-for", "[2001:db8::1]:443")]).as_deref(), Some("2001:db8::1"));
+        // A forged trailing entry can't be told apart from the proxy's, so an
+        // unparsable last entry falls back to the socket peer instead of an earlier one.
+        assert_eq!(ip(&[("x-forwarded-for", "203.0.113.7, not-an-ip")]), None);
+        assert_eq!(ip(&[]), None);
     }
 }
