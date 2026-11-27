@@ -515,7 +515,7 @@ public final class APIClient: @unchecked Sendable {
         return result
     }
 
-    public func startGoogleSignIn() async throws -> GoogleSignInStart {
+    public func startGoogleSignIn(inviteCode: String? = nil) async throws -> GoogleSignInStart {
         guard let server = URL(string: cleanBase), let scheme = server.scheme?.lowercased() else {
             throw APIError.invalidURL(cleanBase)
         }
@@ -524,7 +524,13 @@ public final class APIClient: @unchecked Sendable {
         if scheme != "https" && !(scheme == "http" && isLoopback) {
             throw APIError.message("Google 登录需要 HTTPS 服务器地址。")
         }
-        var req = try makeRequest("/api/auth/google/start", method: "POST", authenticated: false)
+        let trimmedInvite = inviteCode?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        var req = try makeRequest(
+            "/api/auth/google/start",
+            method: "POST",
+            jsonBody: trimmedInvite.isEmpty ? nil : ["invite_code": trimmedInvite],
+            authenticated: false
+        )
         req.timeoutInterval = 10
         let (data, response) = try await session.data(for: req)
         guard let http = response as? HTTPURLResponse else {

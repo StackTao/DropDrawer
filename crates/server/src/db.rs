@@ -82,6 +82,20 @@ pub struct ShareLinkRow {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GoogleResolveError {
+    RegistrationClosed,
+    InviteRequired,
+    InviteInvalid,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GoogleSignupPolicy<'a> {
+    Closed,
+    Open,
+    InviteOnly(Option<&'a str>),
+}
+
 impl Database {
     pub fn open(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         if let Some(parent) = path.as_ref().parent()
@@ -302,6 +316,23 @@ impl Database {
         email: &str,
         registration_open: bool,
     ) -> anyhow::Result<Option<UserProfile>> {
+        let policy = if registration_open {
+            GoogleSignupPolicy::Open
+        } else {
+            GoogleSignupPolicy::Closed
+        };
+        match self.resolve_google_user_with_policy(subject, email, policy)? {
+            Ok(profile) => Ok(Some(profile)),
+            Err(_) => Ok(None),
+        }
+    }
+
+    pub fn resolve_google_user_with_policy(
+        &self,
+        subject: &str,
+        email: &str,
+        signup_policy: GoogleSignupPolicy<'_>,
+    ) -> anyhow::Result<Result<UserProfile, GoogleResolveError>> {
         let mut conn = self.lock_conn();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let existing = tx.query_row(
@@ -320,8 +351,43 @@ impl Database {
                 })
             },
         ).optional()?;
-        if existing.is_some() || !registration_open {
-            return Ok(existing);
+        if let Some(profile) = existing {
+            return Ok(Ok(profile));
+        }
+
+        match signup_policy {
+            GoogleSignupPolicy::Closed => return Ok(Err(GoogleResolveError::RegistrationClosed)),
+            GoogleSignupPolicy::Open => {}
+            GoogleSignupPolicy::InviteOnly(raw_code) => {
+                let code = raw_code.map(str::trim).unwrap_or("");
+                if code.is_empty() {
+                    return Ok(Err(GoogleResolveError::InviteRequired));
+                }
+                let rec: Option<(String, i64, i64, Option<String>)> = tx
+                    .query_row(
+                        "SELECT code, max_uses, used_count, expires_at FROM invite_codes WHERE UPPER(code) = UPPER(?1)",
+                        params![code],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                    )
+                    .optional()?;
+                let Some((exact_code, max_uses, used_count, expires_raw)) = rec else {
+                    return Ok(Err(GoogleResolveError::InviteInvalid));
+                };
+                if used_count >= max_uses {
+                    return Ok(Err(GoogleResolveError::InviteInvalid));
+                }
+                if let Some(exp_str) = expires_raw {
+                    if let Ok(exp) = DateTime::parse_from_rfc3339(&exp_str) {
+                        if exp.with_timezone(&Utc) <= Utc::now() {
+                            return Ok(Err(GoogleResolveError::InviteInvalid));
+                        }
+                    }
+                }
+                tx.execute(
+                    "UPDATE invite_codes SET used_count = used_count + 1 WHERE code = ?1",
+                    params![exact_code],
+                )?;
+            }
         }
 
         let id = uuid::Uuid::new_v4().to_string();
@@ -355,7 +421,7 @@ impl Database {
             params![subject, id],
         )?;
         tx.commit()?;
-        Ok(Some(UserProfile {
+        Ok(Ok(UserProfile {
             id,
             username,
             email: stored_email,

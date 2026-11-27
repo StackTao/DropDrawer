@@ -46,6 +46,22 @@ const REGISTRATION_CLOSED: LoginError = (
     StatusCode::FORBIDDEN,
     "New account registration is disabled on this server",
 );
+const INVITE_REQUIRED: LoginError = (
+    StatusCode::FORBIDDEN,
+    "当前服务器仅支持邀请码注册，请切换到注册页填写邀请码后再使用 Google 注册",
+);
+const INVITE_INVALID: LoginError = (
+    StatusCode::FORBIDDEN,
+    "邀请码无效、已用完或已过期，请核对后重试",
+);
+const GOOGLE_SIGNUP_DISABLED: LoginError = (
+    StatusCode::FORBIDDEN,
+    "当前服务器已关闭 Google 新用户注册，仅允许已有账号登录",
+);
+const EMAIL_DOMAIN_REJECTED: LoginError = (
+    StatusCode::FORBIDDEN,
+    "该 Google 邮箱域名不在当前服务器允许注册范围内",
+);
 const INTERNAL: LoginError = (
     StatusCode::INTERNAL_SERVER_ERROR,
     "Could not create a DropDrawer session",
@@ -127,6 +143,7 @@ struct Attempt {
     poll_key: String,
     started: Instant,
     proof: Option<Proof>,
+    invite_code: Option<String>,
     result: Option<Result<AuthResponse, LoginError>>,
 }
 
@@ -194,10 +211,31 @@ pub(crate) async fn privacy_notice() -> &'static str {
     include_str!("google_privacy.txt")
 }
 
-pub(crate) async fn start(State(state): State<Arc<AppState>>) -> Result<Response, LoginError> {
+#[derive(Deserialize, Default)]
+pub(crate) struct StartRequest {
+    #[serde(default)]
+    invite_code: Option<String>,
+}
+
+pub(crate) async fn start(
+    State(state): State<Arc<AppState>>,
+    body: axum::body::Bytes,
+) -> Result<Response, LoginError> {
     if !state.runtime_settings().google.enabled {
         return Err(UNAVAILABLE);
     }
+    let req = if body.is_empty() {
+        StartRequest::default()
+    } else {
+        serde_json::from_slice::<StartRequest>(&body).unwrap_or_default()
+    };
+    let invite_code = req
+        .invite_code
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned);
+
     let google = state.google_login().ok_or(UNAVAILABLE)?;
     let proof = Proof::new();
     let flow_id = Uuid::new_v4();
@@ -217,6 +255,7 @@ pub(crate) async fn start(State(state): State<Arc<AppState>>) -> Result<Response
             poll_key: poll_key.clone(),
             started: Instant::now(),
             proof: Some(proof),
+            invite_code,
             result: None,
         },
     );
@@ -276,18 +315,23 @@ pub(crate) async fn callback(
     if !state.runtime_settings().google.enabled {
         return browser_page(Err(UNAVAILABLE));
     }
-    let proof = google
+    let taken = google
         .attempts
         .lock()
         .await
         .get_mut(&flow_id)
         .filter(|attempt| attempt.started.elapsed() < LIFETIME)
-        .and_then(|attempt| attempt.proof.take());
-    let Some(proof) = proof else {
+        .and_then(|attempt| {
+            let proof = attempt.proof.take()?;
+            Some((proof, attempt.invite_code.clone()))
+        });
+    let Some((proof, invite_code)) = taken else {
         return browser_page(Err(EXPIRED));
     };
     let result = match query.code.as_deref() {
-        Some(code) if query.error.is_none() => complete(&state, &google.config, code, &proof).await,
+        Some(code) if query.error.is_none() => {
+            complete(&state, &google.config, code, &proof, invite_code.as_deref()).await
+        }
         _ => Err(DENIED),
     };
     let mut attempts = google.attempts.lock().await;
@@ -322,16 +366,44 @@ async fn complete(
     config: &GoogleLoginConfig,
     code: &str,
     proof: &Proof,
+    invite_code: Option<&str>,
 ) -> Result<AuthResponse, LoginError> {
+    use crate::db::{GoogleResolveError, GoogleSignupPolicy};
+    use crate::settings::RegistrationMode;
+
     let identity = verify_google_identity(&state.http, config, code, proof)
         .await
         .map_err(|_| FAILED)?;
-    let allow_signup = state.runtime_settings().google_signup_allowed(&identity.email);
-    let user = state
+    let settings = state.runtime_settings();
+    let signup_policy = if !settings.features.google_signup_enabled {
+        GoogleSignupPolicy::Closed
+    } else if settings.check_email_domain(&identity.email).is_err() {
+        GoogleSignupPolicy::Closed
+    } else {
+        match settings.registration_mode {
+            RegistrationMode::Open => GoogleSignupPolicy::Open,
+            RegistrationMode::InviteOnly => GoogleSignupPolicy::InviteOnly(invite_code),
+            RegistrationMode::Closed => GoogleSignupPolicy::Closed,
+        }
+    };
+    let user = match state
         .db
-        .resolve_google_user(&identity.sub, &identity.email, allow_signup)
+        .resolve_google_user_with_policy(&identity.sub, &identity.email, signup_policy)
         .map_err(|_| INTERNAL)?
-        .ok_or(REGISTRATION_CLOSED)?;
+    {
+        Ok(user) => user,
+        Err(GoogleResolveError::InviteRequired) => return Err(INVITE_REQUIRED),
+        Err(GoogleResolveError::InviteInvalid) => return Err(INVITE_INVALID),
+        Err(GoogleResolveError::RegistrationClosed) => {
+            if settings.registration_mode == RegistrationMode::Closed {
+                return Err(REGISTRATION_CLOSED);
+            } else if !settings.features.google_signup_enabled {
+                return Err(GOOGLE_SIGNUP_DISABLED);
+            } else {
+                return Err(EMAIL_DOMAIN_REJECTED);
+            }
+        }
+    };
     if state
         .db
         .is_user_disabled_or_missing(&user.id)
@@ -409,28 +481,104 @@ pub(crate) fn random_secret() -> String {
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
-fn browser_page(result: Result<(), LoginError>) -> Response {
-    let (status, title, detail) = match result {
-        Ok(()) => (
-            StatusCode::OK,
-            "Google authorization complete",
-            "You can close this tab and return to DropDrawer.",
-        ),
-        Err((status, message)) => (status, "Google sign-in could not finish", message),
+fn localized_browser_detail(message: &'static str) -> &'static str {
+    match message {
+        "Google sign-in is disabled on this server" => "当前服务器尚未启用 Google 登录。",
+        "Google sign-in session is invalid or expired" => "登录会话无效或已过期，请返回 DropDrawer 重新发起登录。",
+        "Google authorization could not be verified. Try signing in again." => "无法验证 Google 授权信息，请返回 DropDrawer 重试。",
+        "Google authorization was cancelled or denied" => "你已取消或拒绝了 Google 授权。",
+        "New account registration is disabled on this server" => "当前服务器已关闭新用户注册，仅允许已有账号登录。",
+        "Your DropDrawer account has been disabled by an administrator" => "该账号已被管理员禁用，请联系服务器管理员。",
+        "Could not create a DropDrawer session" => "创建登录会话失败，请稍后重试。",
+        _ => message,
+    }
+}
+
+/// Renders a self-contained, CSP-safe OAuth result page shared by Google Sign-In
+/// and Google Drive callbacks. All interpolated strings are server-authored literals.
+pub(crate) fn render_oauth_result_page(
+    status: StatusCode,
+    ok: bool,
+    title: &'static str,
+    detail: &'static str,
+    hint: &'static str,
+) -> Response {
+    let tone = if ok { "ok" } else { "err" };
+    let badge_svg = if ok {
+        r#"<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5 9.8 17.3 19 7.8"/></svg>"#
+    } else {
+        r#"<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v5.2M12 16.6h.01"/></svg>"#
     };
+    let html = format!(
+        r#"<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>{title} · DropDrawer</title>
+<style>
+:root{{color-scheme:light dark;--bg:#f4f6fa;--card:#ffffff;--line:rgba(15,23,42,.09);--text:#0f172a;--muted:#475569;--faint:#64748b;--accent:#0284c7;--glow:rgba(14,165,233,.12);--ok:#059669;--ok-bg:rgba(5,150,105,.1);--ok-line:rgba(5,150,105,.26);--err:#dc2626;--err-bg:rgba(220,38,38,.09);--err-line:rgba(220,38,38,.24);--shadow:0 22px 54px rgba(15,23,42,.1),0 2px 8px rgba(15,23,42,.04)}}
+@media(prefers-color-scheme:dark){{:root{{--bg:#07090e;--card:#10141e;--line:rgba(255,255,255,.11);--text:#f4f6fa;--muted:#a2a9b8;--faint:#6e7588;--accent:#38bdf8;--glow:rgba(56,189,248,.13);--ok:#34d399;--ok-bg:rgba(52,211,153,.14);--ok-line:rgba(52,211,153,.32);--err:#f87171;--err-bg:rgba(248,113,113,.13);--err-line:rgba(248,113,113,.32);--shadow:0 26px 64px rgba(0,0,0,.55)}}}}
+*{{box-sizing:border-box}}
+body{{margin:0;min-height:100dvh;display:grid;place-items:center;padding:24px 16px;background:radial-gradient(880px 460px at 50% -10%,var(--glow),transparent 65%),var(--bg);color:var(--text);font:400 14px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","SF Pro Text","Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}}
+.card{{position:relative;width:100%;max-width:416px;padding:34px 30px 26px;border-radius:22px;background:var(--card);border:1px solid var(--line);box-shadow:var(--shadow);text-align:center}}
+.card::before{{content:"";position:absolute;inset:-1px 28px auto 28px;height:1px;background:linear-gradient(90deg,transparent,var(--accent),transparent);opacity:.6}}
+.brand{{display:inline-flex;align-items:center;gap:7px;padding:4px 11px;border-radius:999px;border:1px solid var(--line);font-size:12px;font-weight:600;color:var(--muted);margin-bottom:22px}}
+.brand i{{width:7px;height:7px;border-radius:50%;background:var(--accent);display:block}}
+.badge{{width:58px;height:58px;margin:0 auto 18px;border-radius:18px;display:grid;place-items:center}}
+.badge svg{{width:28px;height:28px;fill:none;stroke:currentColor;stroke-width:2.3;stroke-linecap:round;stroke-linejoin:round}}
+.ok .badge{{background:var(--ok-bg);border:1px solid var(--ok-line);color:var(--ok)}}
+.err .badge{{background:var(--err-bg);border:1px solid var(--err-line);color:var(--err)}}
+h1{{margin:0 0 8px;font-size:20px;font-weight:660;letter-spacing:-.02em}}
+p.detail{{margin:0;color:var(--muted);font-size:14px;line-height:1.65}}
+.foot{{margin-top:24px;padding-top:16px;border-top:1px solid var(--line);font-size:12px;color:var(--faint)}}
+</style>
+</head>
+<body>
+<main class="card {tone}">
+  <div class="brand"><i></i>DropDrawer</div>
+  <div class="badge">{badge_svg}</div>
+  <h1>{title}</h1>
+  <p class="detail">{detail}</p>
+  <div class="foot">{hint}</div>
+</main>
+</body>
+</html>"#
+    );
     (
         status,
         [
             (header::CACHE_CONTROL, "no-store"),
             (header::REFERRER_POLICY, "no-referrer"),
-            (header::CONTENT_SECURITY_POLICY, "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'"),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            (
+                header::CONTENT_SECURITY_POLICY,
+                "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+            ),
         ],
-        Html(format!(r#"<!doctype html>
-<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title} · DropDrawer</title>
-<style>body{{font:16px system-ui,sans-serif;color-scheme:light dark;margin:15vh auto;padding:0 24px;max-width:36rem}}h1{{font-size:1.8rem}}</style>
-<main><p>DropDrawer</p><h1>{title}</h1><p>{detail}</p></main></html>"#)),
-    ).into_response()
+        Html(html),
+    )
+        .into_response()
+}
+
+fn browser_page(result: Result<(), LoginError>) -> Response {
+    match result {
+        Ok(()) => render_oauth_result_page(
+            StatusCode::OK,
+            true,
+            "Google 登录已完成",
+            "授权成功，请返回 DropDrawer 客户端继续使用。",
+            "此标签页可安全关闭",
+        ),
+        Err((status, message)) => render_oauth_result_page(
+            status,
+            false,
+            "无法完成 Google 登录",
+            localized_browser_detail(message),
+            "你可以关闭此页面，返回 DropDrawer 重新尝试或更换登录方式",
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -615,5 +763,72 @@ mod tests {
                 .unwrap()
                 .password_hash
         ));
+    }
+
+    #[test]
+    fn google_invite_only_signup_consumes_invite_and_lets_existing_users_sign_in() {
+        use crate::db::{GoogleResolveError, GoogleSignupPolicy};
+
+        let state = test_state();
+        let db = &state.db;
+        db.create_invite_code("INVITE01", Some("test"), 1, None).unwrap();
+
+        // Missing invite code returns InviteRequired instead of RegistrationClosed.
+        assert_eq!(
+            db.resolve_google_user_with_policy(
+                "sub-1",
+                "newuser@example.com",
+                GoogleSignupPolicy::InviteOnly(None),
+            )
+            .unwrap()
+            .unwrap_err(),
+            GoogleResolveError::InviteRequired
+        );
+
+        // Wrong invite code returns InviteInvalid.
+        assert_eq!(
+            db.resolve_google_user_with_policy(
+                "sub-1",
+                "newuser@example.com",
+                GoogleSignupPolicy::InviteOnly(Some("WRONG")),
+            )
+            .unwrap()
+            .unwrap_err(),
+            GoogleResolveError::InviteInvalid
+        );
+
+        // Valid invite code creates user and atomically consumes 1 use.
+        let created = db
+            .resolve_google_user_with_policy(
+                "sub-1",
+                "newuser@example.com",
+                GoogleSignupPolicy::InviteOnly(Some("invite01")),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(created.email.as_deref(), Some("newuser@example.com"));
+
+        // Existing Google user logs back in without needing an invite code.
+        let existing = db
+            .resolve_google_user_with_policy(
+                "sub-1",
+                "newuser@example.com",
+                GoogleSignupPolicy::InviteOnly(None),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(existing.id, created.id);
+
+        // Second brand-new user reusing the single-use invite fails with InviteInvalid.
+        assert_eq!(
+            db.resolve_google_user_with_policy(
+                "sub-2",
+                "other@example.com",
+                GoogleSignupPolicy::InviteOnly(Some("INVITE01")),
+            )
+            .unwrap()
+            .unwrap_err(),
+            GoogleResolveError::InviteInvalid
+        );
     }
 }

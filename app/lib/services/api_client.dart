@@ -145,7 +145,7 @@ class ApiClient {
   }
 
   Future<({String url, String state, String pollKey, int expiresIn})>
-      startGoogleSignIn() async {
+      startGoogleSignIn({String? inviteCode}) async {
     final server = Uri.parse(_cleanBase);
     final loopback = const ['localhost', '127.0.0.1', '::1'].contains(
       server.host,
@@ -153,8 +153,17 @@ class ApiClient {
     if (server.scheme != 'https' && !(server.scheme == 'http' && loopback)) {
       throw const HttpException('Google 登录需要 HTTPS 服务器地址。');
     }
+    final trimmedInvite = inviteCode?.trim() ?? '';
     final response = await http
-        .post(Uri.parse('$_cleanBase/api/auth/google/start'))
+        .post(
+          Uri.parse('$_cleanBase/api/auth/google/start'),
+          headers: trimmedInvite.isNotEmpty
+              ? const {'Content-Type': 'application/json'}
+              : null,
+          body: trimmedInvite.isNotEmpty
+              ? jsonEncode({'invite_code': trimmedInvite})
+              : null,
+        )
         .timeout(const Duration(seconds: 10));
     if (response.statusCode == 404 || response.statusCode == 503) {
       throw const HttpException('此服务器尚未启用 Google 登录。');

@@ -271,12 +271,12 @@ public final class DropDrawerStore {
         }
     }
 
-    public func startGoogleSignIn(server: String) async throws -> GoogleSignInStart {
+    public func startGoogleSignIn(server: String, inviteCode: String? = nil) async throws -> GoogleSignInStart {
         let cleaned = server.trimmingCharacters(in: .whitespacesAndNewlines)
         serverUrl = cleaned
         storage.serverUrl = cleaned
         let client = APIClient(baseUrl: cleaned)
-        return try await client.startGoogleSignIn()
+        return try await client.startGoogleSignIn(inviteCode: inviteCode)
     }
 
     public func completeGoogleSignIn(start: GoogleSignInStart) async {

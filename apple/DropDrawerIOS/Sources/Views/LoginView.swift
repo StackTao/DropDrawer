@@ -210,7 +210,7 @@ struct LoginView: View {
                                         Text("等待 Google 授权…")
                                     } else {
                                         Image(systemName: "globe")
-                                        Text("使用 Google 登录")
+                                        Text(mode == .register ? "使用 Google 注册" : "使用 Google 登录")
                                             .fontWeight(.medium)
                                     }
                                 }
@@ -380,6 +380,12 @@ struct LoginView: View {
     }
 
     private func startGoogleFlow() {
+        let trimmedInvite = mode == .register ? inviteCode.trimmingCharacters(in: .whitespacesAndNewlines) : ""
+        if mode == .register && requireInvite && trimmedInvite.isEmpty {
+            store.authError = "当前服务器需要邀请码，请先填写邀请码再使用 Google 注册"
+            infoMessage = nil
+            return
+        }
         googleTask?.cancel()
         googleBusy = true
         store.authError = nil
@@ -387,7 +393,10 @@ struct LoginView: View {
         googleTask = Task {
             defer { googleBusy = false }
             do {
-                let start = try await store.startGoogleSignIn(server: serverUrl)
+                let start = try await store.startGoogleSignIn(
+                    server: serverUrl,
+                    inviteCode: trimmedInvite.isEmpty ? nil : trimmedInvite
+                )
                 authCoordinator.start(url: start.url)
                 await store.completeGoogleSignIn(start: start)
             } catch {

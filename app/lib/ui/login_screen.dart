@@ -187,6 +187,17 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _signInWithGoogle() async {
     if (_loading) return;
+    final inviteCode =
+        _mode == _AuthMode.register ? _inviteCtrl.text.trim() : null;
+    if (_mode == _AuthMode.register &&
+        (_serverConfig?.inviteCodeRequired ?? false) &&
+        (inviteCode == null || inviteCode.isEmpty)) {
+      setState(() {
+        _error = '当前服务器需要邀请码，请先填写邀请码再使用 Google 注册';
+        _info = null;
+      });
+      return;
+    }
     setState(() {
       _loading = true;
       _cancelGoogle = false;
@@ -196,6 +207,7 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       await widget.controller.authenticateWithGoogle(
         url: _serverCtrl.text,
+        inviteCode: inviteCode,
         isCancelled: () => !mounted || _cancelGoogle,
         onBrowserOpened: () => setState(() => _waitingForGoogle = true),
       );
@@ -502,7 +514,11 @@ class _LoginScreenState extends State<LoginScreen> {
                                   )
                                 : null,
                             onPressed: _loading ? null : _signInWithGoogle,
-                            child: const Text('使用 Google 登录'),
+                            child: Text(
+                              _mode == _AuthMode.register
+                                  ? '使用 Google 注册'
+                                  : '使用 Google 登录',
+                            ),
                           ),
                         ),
                     ],

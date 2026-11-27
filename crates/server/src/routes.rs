@@ -334,13 +334,12 @@ async fn register(
             ));
         }
         RegistrationMode::InviteOnly => {
-            if req
-                .invite_code
-                .as_deref()
-                .map(str::trim)
-                .is_none_or(|c| c.is_empty())
-            {
+            let code = req.invite_code.as_deref().map(str::trim).unwrap_or("");
+            if code.is_empty() {
                 return Err((StatusCode::FORBIDDEN, "当前服务器仅支持邀请码注册".to_string()));
+            }
+            if !state.db.is_invite_code_valid(code).map_err(internal_err)? {
+                return Err((StatusCode::FORBIDDEN, "邀请码无效、已用完或已过期".to_string()));
             }
         }
         RegistrationMode::Open => {}

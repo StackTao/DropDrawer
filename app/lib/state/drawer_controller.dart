@@ -385,10 +385,11 @@ class DropDrawerController extends ChangeNotifier {
     required String url,
     required bool Function() isCancelled,
     required void Function() onBrowserOpened,
+    String? inviteCode,
   }) async {
     final api = ApiClient(baseUrl: url.trim().replaceAll(RegExp(r'/+$'), ''));
     final clock = Stopwatch()..start();
-    final attempt = await api.startGoogleSignIn();
+    final attempt = await api.startGoogleSignIn(inviteCode: inviteCode);
     if (isCancelled()) return;
     if (!await windowService.openExternalUrl(attempt.url)) {
       throw const HttpException('无法打开系统浏览器。');

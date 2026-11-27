@@ -6,8 +6,8 @@ use std::{
 use axum::{
     Json,
     extract::{Query, State},
-    http::{StatusCode, header},
-    response::{Html, IntoResponse, Response},
+    http::StatusCode,
+    response::Response,
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -168,16 +168,16 @@ pub(super) async fn google_oauth_callback(
 // All messages are server-authored literals. Callback inputs and token responses
 // never become part of the HTML.
 fn callback_page(status: StatusCode, message: &'static str) -> Response {
-    (
-        status,
-        [
-            (header::CONTENT_SECURITY_POLICY, "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"),
-            (header::CACHE_CONTROL, "no-store"),
-            (header::REFERRER_POLICY, "no-referrer"),
-            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
-        ],
-        Html(format!(
-            "<!doctype html><html lang='zh-CN'><meta charset='utf-8'><title>DropDrawer</title><h2>{message}</h2></html>"
-        )),
-    ).into_response()
+    let ok = status.is_success();
+    let title = if ok {
+        "Google Drive 绑定成功"
+    } else {
+        "Google Drive 绑定未完成"
+    };
+    let hint = if ok {
+        "此标签页可安全关闭，回到 DropDrawer 点击刷新即可使用"
+    } else {
+        "你可以关闭此页面，回到 DropDrawer 重新发起授权"
+    };
+    crate::google_login::render_oauth_result_page(status, ok, title, message, hint)
 }

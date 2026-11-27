@@ -131,6 +131,35 @@ impl Database {
         Ok(affected > 0)
     }
 
+    pub fn is_invite_code_valid(&self, code: &str) -> anyhow::Result<bool> {
+        let trimmed = code.trim();
+        if trimmed.is_empty() {
+            return Ok(false);
+        }
+        let conn = self.lock_conn();
+        let rec: Option<(i64, i64, Option<String>)> = conn
+            .query_row(
+                "SELECT max_uses, used_count, expires_at FROM invite_codes WHERE UPPER(code) = UPPER(?1)",
+                params![trimmed],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+        let Some((max_uses, used_count, expires_raw)) = rec else {
+            return Ok(false);
+        };
+        if used_count >= max_uses {
+            return Ok(false);
+        }
+        if let Some(exp_str) = expires_raw {
+            if let Ok(exp) = DateTime::parse_from_rfc3339(&exp_str) {
+                if exp.with_timezone(&Utc) <= Utc::now() {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
+    }
+
     /// Atomically verify and increment `used_count` for an invite code.
     pub fn consume_invite_code(&self, code: &str) -> anyhow::Result<bool> {
         let trimmed = code.trim();
