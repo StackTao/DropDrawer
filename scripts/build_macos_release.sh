@@ -60,12 +60,12 @@ fi
 
 if [[ -n "$SIGN_ID" ]]; then
   echo "  Using certificate: $SIGN_ID"
-  EXTRA_SIGN_FLAGS=()
+  SIGN_FLAGS=(--force --sign "$SIGN_ID")
   if [[ "$NOTARIZE" == "true" ]]; then
-    EXTRA_SIGN_FLAGS+=(--options runtime --timestamp)
+    SIGN_FLAGS+=(--options runtime --timestamp)
   fi
-  codesign --force "${EXTRA_SIGN_FLAGS[@]}" --sign "$SIGN_ID" "$APP_BUNDLE/Contents/Frameworks/libdropdrawer_p2p.dylib"
-  codesign --force --deep "${EXTRA_SIGN_FLAGS[@]}" --sign "$SIGN_ID" \
+  codesign "${SIGN_FLAGS[@]}" "$APP_BUNDLE/Contents/Frameworks/libdropdrawer_p2p.dylib"
+  codesign "${SIGN_FLAGS[@]}" --deep \
     --entitlements "$ROOT_DIR/app/macos/Runner/Release.entitlements" \
     "$APP_BUNDLE"
 else
