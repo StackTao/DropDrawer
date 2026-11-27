@@ -1732,7 +1732,7 @@
           turnstileId = window.turnstile.render("#loginChallenge", {
             sitekey: options.turnstile_site_key,
             action: "admin_login",
-            size: "flexible",
+            size: matchMedia("(max-width: 420px)").matches ? "compact" : "flexible",
             callback: (token) => { challengeToken = token; },
             "expired-callback": () => refreshChallenge(),
             "error-callback": () => { challengeToken = null; },

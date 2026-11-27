@@ -2562,6 +2562,7 @@ async fn admin_google_flow_is_browser_bound_and_separate_from_client_login() {
     let response = app.clone().oneshot(browser_request).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let cookie = response.headers()[header::SET_COOKIE].to_str().unwrap();
+    assert!(cookie.starts_with("__Host-dd_admin_google_flow=") && cookie.contains("Path=/;"));
     assert!(cookie.contains("SameSite=Lax") && cookie.contains("HttpOnly") && cookie.contains("Secure"));
     let cookie = cookie.split(';').next().unwrap().to_owned();
     let bytes = axum::body::to_bytes(response.into_body(), 8192).await.unwrap();

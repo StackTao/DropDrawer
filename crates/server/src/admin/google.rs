@@ -16,7 +16,8 @@ use crate::{
     state::AppState,
 };
 
-const FLOW_COOKIE: &str = "dd_admin_google_flow";
+const SECURE_FLOW_COOKIE: &str = "__Host-dd_admin_google_flow";
+const LOOPBACK_FLOW_COOKIE: &str = "dd_admin_google_flow";
 
 pub(crate) struct AdminAttempt {
     started: Instant,
@@ -43,20 +44,30 @@ fn enabled_provider(state: &AppState) -> ApiResult<Arc<GoogleLogin>> {
     state.google_login().ok_or_else(disabled)
 }
 
+fn flow_cookie_name(provider: &GoogleLogin) -> &'static str {
+    if provider.config.redirect_uri().starts_with("https:") {
+        SECURE_FLOW_COOKIE
+    } else {
+        LOOPBACK_FLOW_COOKIE
+    }
+}
+
 fn flow_cookie(value: &str, max_age: u64, provider: &GoogleLogin) -> String {
-    let secure = if provider.config.redirect_uri().starts_with("https:") {
+    let name = flow_cookie_name(provider);
+    let secure = if name == SECURE_FLOW_COOKIE {
         "; Secure"
     } else {
         ""
     };
-    format!("{FLOW_COOKIE}={value}; Path=/api; HttpOnly; SameSite=Lax; Max-Age={max_age}{secure}")
+    format!("{name}={value}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}{secure}")
 }
 
-fn browser_flow(headers: &HeaderMap) -> Option<(Uuid, &str)> {
+fn browser_flow<'a>(headers: &'a HeaderMap, provider: &GoogleLogin) -> Option<(Uuid, &'a str)> {
+    let name = flow_cookie_name(provider);
     let cookie = headers.get(header::COOKIE)?.to_str().ok()?;
     let value = cookie
         .split(';')
-        .find_map(|part| part.trim().strip_prefix(FLOW_COOKIE)?.strip_prefix('='))?;
+        .find_map(|part| part.trim().strip_prefix(name)?.strip_prefix('='))?;
     let (id, secret) = value.split_once('.')?;
     Some((id.parse().ok()?, secret))
 }
@@ -170,7 +181,7 @@ pub(crate) async fn callback(
         let mut attempts = provider.admin_attempts.lock().await;
         let attempt = attempts.get_mut(&flow_id)?;
         if attempt.started.elapsed() >= LIFETIME
-            || browser_flow(headers) != Some((flow_id, attempt.browser_secret.as_str()))
+            || browser_flow(headers, provider) != Some((flow_id, attempt.browser_secret.as_str()))
         {
             return Some(failure());
         }
@@ -243,7 +254,7 @@ pub(super) async fn finish_totp(
 ) -> ApiResult<Response> {
     let provider = enabled_provider(&state)?;
     auth::check_login_limit(&state, &ip)?;
-    let (flow_id, secret) = browser_flow(&headers).ok_or_else(expired)?;
+    let (flow_id, secret) = browser_flow(&headers, &provider).ok_or_else(expired)?;
     let mut attempts = provider.admin_attempts.lock().await;
     let (id, version) = attempts
         .get(&flow_id)
@@ -382,7 +393,10 @@ mod tests {
         let app = crate::routes::build_router(state);
         let send_code = |code: &str| {
             Request::post("/api/admin/google/totp")
-                .header(header::COOKIE, format!("{FLOW_COOKIE}={id}.same-browser"))
+                .header(
+                    header::COOKIE,
+                    format!("{SECURE_FLOW_COOKIE}={id}.same-browser"),
+                )
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::json!({"code": code}).to_string()))
                 .unwrap()
