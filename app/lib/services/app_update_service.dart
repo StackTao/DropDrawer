@@ -85,8 +85,15 @@ class ReleaseAsset {
   final Uri url;
   final int size;
   final String sha256Digest;
+  final Uri? mirrorUrl;
 
-  const ReleaseAsset(this.name, this.url, this.size, this.sha256Digest);
+  const ReleaseAsset(
+    this.name,
+    this.url,
+    this.size,
+    this.sha256Digest, {
+    this.mirrorUrl,
+  });
 }
 
 /// Why a check or download failed, in terms a person can act on.
@@ -108,6 +115,9 @@ class AppUpdateService {
   static const _repo = '/StackTao/DropDrawer/releases';
   static const cacheFolder = 'dropdrawer-updates';
   static const _timeout = Duration(seconds: 20);
+  static const _mirrorTimeout = Duration(seconds: 6);
+  static const _mirrorHost = 'drop.stacktao.cn';
+  static const _mirrorPath = '/api/updates/download/';
   static const _assetHosts = {
     'github.com',
     'release-assets.githubusercontent.com',
@@ -224,6 +234,7 @@ class AppUpdateService {
         Uri.https('github.com', '$_repo/download/$tag/$name'),
         size,
         digest.group(1)!,
+        mirrorUrl: Uri.https(_mirrorHost, '$_mirrorPath$tag/$name'),
       );
     }
     return null;
@@ -256,16 +267,16 @@ class AppUpdateService {
     final folder = await cache.createTemp('package-');
     final file = File(p.join(folder.path, asset.name));
     try {
-      final sink = file.openWrite();
-      try {
-        await sink.addStream(_assetBytes(asset, onProgress: onProgress));
-      } finally {
-        await sink.close();
+      final mirror = asset.mirrorUrl;
+      if (mirror != null) {
+        try {
+          await _saveAsset(file, asset, mirror, onProgress);
+          return file;
+        } on Exception {
+          onProgress(0, asset.size);
+        }
       }
-      final digest = await sha256.bind(file.openRead()).first;
-      if (digest.toString() != asset.sha256Digest) {
-        throw const UpdateException(UpdateFailure.corrupted);
-      }
+      await _saveAsset(file, asset, asset.url, onProgress);
       return file;
     } catch (error) {
       await folder.delete(recursive: true);
@@ -277,18 +288,37 @@ class AppUpdateService {
     }
   }
 
+  Future<void> _saveAsset(
+    File file,
+    ReleaseAsset asset,
+    Uri url,
+    void Function(int, int) onProgress,
+  ) async {
+    final sink = file.openWrite(mode: FileMode.write);
+    try {
+      await sink.addStream(_assetBytes(asset, url, onProgress));
+    } finally {
+      await sink.close();
+    }
+    final digest = await sha256.bind(file.openRead()).first;
+    if (digest.toString() != asset.sha256Digest) {
+      throw const UpdateException(UpdateFailure.corrupted);
+    }
+  }
+
   Stream<List<int>> _assetBytes(
-    ReleaseAsset asset, {
-    void Function(int received, int total)? onProgress,
-  }) async* {
-    final response = await _openAsset(asset.url);
+    ReleaseAsset asset,
+    Uri url,
+    void Function(int, int) onProgress,
+  ) async* {
+    final response = await _openAsset(url);
     var received = 0;
     await for (final chunk in response.stream.timeout(_timeout)) {
       received += chunk.length;
       if (received > asset.size) {
         throw const FormatException('Package is larger than its release metadata');
       }
-      onProgress?.call(received, asset.size);
+      onProgress(received, asset.size);
       yield chunk;
     }
     if (received != asset.size) {
@@ -297,16 +327,22 @@ class AppUpdateService {
   }
 
   Future<http.StreamedResponse> _openAsset(Uri url) async {
+    final mirror = url.host == _mirrorHost;
     for (var hop = 0; hop < 5; hop++) {
-      if (!_isHttps(url) || !_assetHosts.contains(url.host)) {
+      final allowed = mirror
+          ? url.path.startsWith(_mirrorPath)
+          : _assetHosts.contains(url.host);
+      if (!_isHttps(url) || !allowed) {
         throw const FormatException('Untrusted release asset URL');
       }
       final request = http.Request('GET', url)..followRedirects = false;
-      final response = await _http.send(request).timeout(_timeout);
+      final timeout = mirror ? _mirrorTimeout : _timeout;
+      final response = await _http.send(request).timeout(timeout);
       if (response.statusCode == 200) return response;
-      await response.stream.timeout(_timeout).drain<void>();
+      await response.stream.timeout(timeout).drain<void>();
       final location = response.headers['location'];
-      if (![301, 302, 303, 307, 308].contains(response.statusCode) ||
+      if (mirror ||
+          ![301, 302, 303, 307, 308].contains(response.statusCode) ||
           location == null) {
         throw HttpException('Release asset HTTP ${response.statusCode}');
       }

@@ -190,6 +190,41 @@ void main() {
       expect(await failure(MockClient((_) async => http.Response('not json', 200))), UpdateFailure.unavailable);
     });
 
+    test('uses the mirror first and falls back when it is missing or corrupt', () async {
+      final temp = await Directory.systemTemp.createTemp('dropdrawer-mirror-test-');
+      addTearDown(() => temp.delete(recursive: true));
+      const name = 'DropDrawer-macOS-arm64.dmg';
+      const body = 'valid installer bytes';
+      for (final mirrorResponse in [
+        http.Response(body, 200),
+        http.Response('', 404),
+        http.Response('bad installer bytes!!', 200),
+      ]) {
+        final downloads = <Uri>[];
+        final service = AppUpdateService(
+          client: MockClient((request) async {
+            if (request.url.host == 'api.github.com') {
+              return http.Response(jsonEncode([_release('v0.2.0', [_asset(name, body)])]), 200);
+            }
+            downloads.add(request.url);
+            return request.url.host == 'drop.stacktao.cn'
+                ? mirrorResponse
+                : http.Response(body, 200);
+          }),
+          tempDir: () async => temp,
+        );
+        addTearDown(service.close);
+        final found = await service.check(Version.parse('0.1.0'), UpdatePlatform.macosArm64);
+        final file = await service.download(found.update!, onProgress: (_, _) {});
+        expect(await file.readAsString(), body);
+        expect(downloads, [
+          Uri.https('drop.stacktao.cn', '/api/updates/download/v0.2.0/$name'),
+          if (mirrorResponse.body != body)
+            Uri.https('github.com', '/StackTao/DropDrawer/releases/download/v0.2.0/$name'),
+        ]);
+      }
+    });
+
     test('downloads only an intact package and keeps just the latest one', () async {
       final temp = await Directory.systemTemp.createTemp('dropdrawer-updates-root-');
       addTearDown(() => temp.delete(recursive: true));

@@ -7,7 +7,7 @@ Release builds check the public [GitHub Releases](https://github.com/StackTao/Dr
 | macOS (Apple silicon) | Downloads the DMG, checks its size and SHA-256, and mounts it. If the app inside is signed by the same certificate as the running app, DropDrawer quits, replaces itself and relaunches. Otherwise it offers to open the DMG for a manual install. |
 | Windows (x64) | Downloads the installer, checks its size and SHA-256, and runs it with `/SILENT /UPDATE=1`. The installer closes DropDrawer, upgrades it and starts the new version. |
 | Android | Downloads the APK, checks its size and SHA-256, and opens the system installer. If the APK is signed with a different key than the installed app, DropDrawer explains that the old version must be uninstalled first. |
-| iOS | No in-app updates. App Store and TestFlight deliver updates themselves. |
+| Native iOS | Opens the release page. Download and sign the IPA before installing. |
 
 Only **release builds** take part. A release build embeds its tag with `--dart-define=DROPDRAWER_RELEASE_TAG=vX.Y.Z[-prerelease]`. A build without a tag is a development build: it shows its version and never checks, because `0.1.0` would otherwise rank above every `0.1.0-preview.N` and never be offered one.
 
@@ -39,4 +39,12 @@ Keep the keystore backed up and reuse it for every release. Untagged CI builds u
 ## Limits
 
 - The SHA-256 digest comes from GitHub, so it detects damaged downloads, not a tampered release. On macOS the code-signature check also rejects a bundle signed by anyone else. The Windows installer is not Authenticode-signed yet, so Windows relies on the digest alone.
-- Clients reach `api.github.com` and GitHub's download hosts directly. Where GitHub is slow or blocked, checks fail with a network message and the release page link still works.
+- The version list and expected SHA-256 still come from `api.github.com`. The app tries the official DropDrawer server for installer downloads first. It retries directly from GitHub if the mirror is unavailable, is missing the file, or serves bytes that fail validation.
+
+## Official download mirror
+
+`scripts/sync_update_mirror.py` reads public releases for this repository and mirrors allowed assets from the two most recent releases returned by GitHub, within a 768 MiB cache budget. It checks size and SHA-256 before switching the Nginx download directory. A failed sync keeps the previous cache available.
+
+The official deployment uses [a dedicated Compose service](../deploy/compose.update-mirror.yml) to run the sync every five minutes. Nginx serves the verified files with [the Nginx update location](../deploy/reverse-proxy/dropdrawer-update-mirror.conf). Check that this path returns the correct size after publishing a release. Packages outside the cache window continue to use GitHub.
+
+The production Compose file is installed under `/srv/dropdrawer/update-mirror` alongside the sync script as `sync.py` and the `cache/` directory. The sync container publishes no ports.

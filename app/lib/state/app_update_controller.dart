@@ -192,7 +192,9 @@ class AppUpdateController extends ChangeNotifier {
     try {
       package = await _service.download(found, onProgress: (received, total) {
         final next = received / total;
-        if ((next - (progress ?? 0)) >= 0.01 || received == total) {
+        if (received == 0 ||
+            (next - (progress ?? 0)) >= 0.01 ||
+            received == total) {
           progress = next;
           if (!_disposed) notifyListeners();
         }

@@ -1,0 +1,35 @@
+name: dropdrawer-update-mirror
+
+services:
+  sync:
+    image: python:3.12-slim-bookworm
+    container_name: dropdrawer-update-mirror
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    cpus: 0.5
+    mem_limit: 128m
+    pids_limit: 32
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - ./sync.py:/mirror/sync.py:ro
+      - ./cache:/cache
+    logging:
+      options:
+        max-size: "1m"
+        max-file: "2"
+    command:
+      - sh
+      - -c
+      - |
+        umask 022
+        while :; do
+          if timeout 15m python3 -u /mirror/sync.py /cache; then
+            echo "Release mirror sync completed"
+          else
+            echo "Release mirror sync failed; keeping the current cache" >&2
+          fi
+          sleep 300
+        done
