@@ -159,6 +159,27 @@ struct DropDrawerCoreTests {
         #expect(AppLanguage.locale.identifier == (AppLanguage.isChinese ? "zh-Hans" : "en"))
     }
 
+    @Test("An inactive scene keeps its last push visibility")
+    @MainActor
+    func pushVisibilityChangesOnlyOnBackgroundOrActive() async {
+        let suite = "test.push-visibility.\(UUID().uuidString)"
+        let storage = SessionStorage(suiteName: suite, keychainService: suite)
+        defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+        let store = DropDrawerStore(storage: storage)
+
+        await store.handleScenePhaseChanged(.inactive)
+        #expect(store.isPushForeground)
+        await store.handleScenePhaseChanged(.active)
+        #expect(store.isPushForeground)
+        await store.handleScenePhaseChanged(.inactive)
+        await store.handleScenePhaseChanged(.background)
+        #expect(!store.isPushForeground)
+        await store.handleScenePhaseChanged(.inactive)
+        #expect(!store.isPushForeground)
+        await store.handleScenePhaseChanged(.active)
+        #expect(store.isPushForeground)
+    }
+
     @Test("DropDrawerStore restores persisted session synchronously on init to avoid login flash")
     @MainActor
     func synchronousSessionRestore() {

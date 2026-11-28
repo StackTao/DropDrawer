@@ -44,8 +44,7 @@ final class DropDrawerIOSAppDelegate: NSObject, UIApplicationDelegate, UNUserNot
         // app keeps working through its WebSocket.
     }
 
-    /// The server only pushes to devices without an open connection, so a
-    /// notification arriving in the foreground is still worth showing.
+    /// A push sent while the app was in the background can arrive after it resumes.
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
@@ -85,7 +84,7 @@ struct DropDrawerIOSApp: App {
                     Task { await registerForPushNotifications() }
                 }
                 .onChange(of: scenePhase) { _, newPhase in
-                    Task { await store.handleScenePhaseChanged(active: newPhase == .active) }
+                    Task { await store.handleScenePhaseChanged(newPhase) }
                 }
                 .onOpenURL { url in
                     Task { await handleIncomingURL(url) }

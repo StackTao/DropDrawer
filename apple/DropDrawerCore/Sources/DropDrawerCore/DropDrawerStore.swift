@@ -1,6 +1,7 @@
 import Foundation
 import ImageIO
 import Observation
+import SwiftUI
 import UniformTypeIdentifiers
 #if canImport(UIKit)
 import UIKit
@@ -181,6 +182,7 @@ public final class DropDrawerStore {
     private var pendingCloudUploads: [String: String] = [:]
     private var thumbnailCache: [String: Data] = [:]
     private var isSceneActive: Bool = true
+    private(set) var isPushForeground = true
     private var wsReconnectAttempt: Int = 0
     #if os(iOS)
     private var backgroundTaskId: UIBackgroundTaskIdentifier = .invalid
@@ -490,16 +492,26 @@ public final class DropDrawerStore {
     }
 
     public func handleSceneActive() async {
-        await handleScenePhaseChanged(active: true)
+        await handleScenePhaseChanged(.active)
     }
 
     public func handleScenePhaseChanged(active: Bool) async {
-        isSceneActive = active
-        guard isLoggedIn else { return }
-        if let wsTask {
-            sendWSJSON(task: wsTask, type: "push_visibility", payload: ["foreground": active])
+        await handleScenePhaseChanged(active ? .active : .background)
+    }
+
+    public func handleScenePhaseChanged(_ phase: ScenePhase) async {
+        isSceneActive = phase == .active
+        let wasForeground = isPushForeground
+        if phase == .background {
+            isPushForeground = false
+        } else if phase == .active {
+            isPushForeground = true
         }
-        if active {
+        guard isLoggedIn else { return }
+        if isPushForeground != wasForeground, let wsTask {
+            sendWSJSON(task: wsTask, type: "push_visibility", payload: ["foreground": isPushForeground])
+        }
+        if isSceneActive {
             wsReconnectAttempt = 0
             if p2pReady {
                 startP2PPoller()
@@ -767,7 +779,7 @@ public final class DropDrawerStore {
         guard let task = try? api.makeWebSocketTask(deviceId: deviceId) else { return }
         wsTask = task
         task.resume()
-        sendWSJSON(task: task, type: "push_visibility", payload: ["foreground": isSceneActive])
+        sendWSJSON(task: task, type: "push_visibility", payload: ["foreground": isPushForeground])
         wsConnected = true
 
         wsPingTask?.cancel()
