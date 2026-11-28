@@ -857,7 +857,7 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
 name = "dropdrawer-p2p-cli"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "anyhow",
  "chrono",
@@ -870,7 +870,7 @@ dependencies = [
 
 [[package]]
 name = "dropdrawer-server"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "anyhow",
  "argon2",
@@ -2729,7 +2729,7 @@ dependencies = [
 
 [[package]]
 name = "p2p-core"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "anyhow",
  "blake3",
@@ -3063,7 +3063,7 @@ dependencies = [
 
 [[package]]
 name = "protocol"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "chrono",
  "serde",
