@@ -236,10 +236,18 @@ pub async fn ensure_endpoints_allowed(
                 if name.eq_ignore_ascii_case("localhost") || name.ends_with(".localhost") {
                     vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]
                 } else {
+                    // Fail closed: a name that can't be checked can't be allowed.
                     tokio::net::lookup_host((name, port))
                         .await
-                        .map(|it| it.map(|sa| sa.ip()).collect())
-                        .unwrap_or_default()
+                        .map(|it| it.map(|sa| sa.ip()).collect::<Vec<_>>())
+                        .ok()
+                        .filter(|addrs| !addrs.is_empty())
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "{}",
+                                tf!("无法解析存储地址 {name}，安全策略要求先确认它不是内网地址", "Couldn't resolve the storage host {name}; the security policy needs to confirm it isn't a private address")
+                            )
+                        })?
                 }
             }
         };
@@ -254,25 +262,49 @@ pub async fn ensure_endpoints_allowed(
 }
 
 fn is_restricted_v4(ip: Ipv4Addr) -> bool {
-    let [a, b, ..] = ip.octets();
+    let [a, b, c, _] = ip.octets();
     ip.is_loopback()
         || ip.is_private()
         || ip.is_link_local()
         || ip.is_unspecified()
         || ip.is_broadcast()
+        || ip.is_multicast() // 224.0.0.0/4
         || a == 0
+        || a >= 240 // reserved 240.0.0.0/4
         || (a == 100 && (64..128).contains(&b)) // carrier-grade NAT
+        || (a == 198 && (b == 18 || b == 19)) // benchmarking 198.18.0.0/15
+        || (a == 192 && b == 0 && c == 0) // IETF protocol assignments 192.0.0.0/24
 }
 
 fn is_restricted_v6(ip: Ipv6Addr) -> bool {
     if let Some(v4) = ip.to_ipv4_mapped() {
         return is_restricted_v4(v4);
     }
-    let first = ip.segments()[0];
+    let segments = ip.segments();
+    let first = segments[0];
+    let embedded_v4 = |hi: u16, lo: u16| {
+        let [a, b] = hi.to_be_bytes();
+        let [c, d] = lo.to_be_bytes();
+        Ipv4Addr::new(a, b, c, d)
+    };
+    // Deprecated IPv4-compatible addresses (`::a.b.c.d`).
+    if segments[..6].iter().all(|&s| s == 0) && !ip.is_loopback() && !ip.is_unspecified() {
+        return is_restricted_v4(embedded_v4(segments[6], segments[7]));
+    }
+    // NAT64 (64:ff9b::/96) reaches the embedded IPv4 address.
+    if segments[..6] == [0x64, 0xff9b, 0, 0, 0, 0] {
+        return is_restricted_v4(embedded_v4(segments[6], segments[7]));
+    }
+    // 6to4 (2002::/16) carries an IPv4 address in bits 16..48.
+    if first == 0x2002 {
+        return is_restricted_v4(embedded_v4(segments[1], segments[2]));
+    }
     ip.is_loopback()
         || ip.is_unspecified()
+        || ip.is_multicast() // ff00::/8
         || (first & 0xfe00) == 0xfc00 // unique local
         || (first & 0xffc0) == 0xfe80 // link local
+        || (first & 0xffc0) == 0xfec0 // deprecated site local
 }
 
 pub fn is_restricted_ip(ip: IpAddr) -> bool {
@@ -362,10 +394,18 @@ mod tests {
             "fd00::1",
             "fe80::1",
             "::ffff:127.0.0.1",
+            "224.0.0.251",
+            "240.0.0.1",
+            "198.18.0.1",
+            "192.0.0.8",
+            "::127.0.0.1",
+            "64:ff9b::a9fe:a9fe",
+            "2002:7f00:1::",
+            "ff02::1",
         ] {
             assert!(is_restricted_ip(ip.parse().unwrap()), "{ip} should be restricted");
         }
-        for ip in ["1.1.1.1", "8.8.8.8", "2606:4700::1111"] {
+        for ip in ["1.1.1.1", "8.8.8.8", "2606:4700::1111", "64:ff9b::808:808", "2002:808:808::"] {
             assert!(!is_restricted_ip(ip.parse().unwrap()), "{ip} should be allowed");
         }
     }

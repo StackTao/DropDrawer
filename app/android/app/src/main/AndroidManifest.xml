@@ -12,6 +12,9 @@
         android:label="DropDrawer"
         android:localeConfig="@xml/locales_config"
         android:name=".DropDrawerApplication"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"

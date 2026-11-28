@@ -58,6 +58,22 @@ class ApiClient {
 
   String get _cleanBase => baseUrl.trim().replaceAll(RegExp(r'/+$'), '');
 
+  /// A server-relative path from an API response, resolved against this
+  /// server. The bearer token goes with these requests, so a value such as
+  /// `@evil.example/x` or `//evil.example/x` must never change the host.
+  Uri _serverPath(String path) {
+    final base = Uri.parse(_cleanBase);
+    final uri = Uri.parse('$_cleanBase$path');
+    if (!path.startsWith('/') ||
+        path.startsWith('//') ||
+        uri.scheme != base.scheme ||
+        uri.host != base.host ||
+        uri.port != base.port) {
+      throw const FormatException('The server returned an unexpected path');
+    }
+    return uri;
+  }
+
   Map<String, String> _headers({bool json = true}) => {
         'Accept-Language': AppLocale.tag,
         if (json) 'Content-Type': 'application/json',
@@ -504,7 +520,7 @@ class ApiClient {
           jsonDecode(confirmResp.body) as Map<String, dynamic>);
     } else {
       final relUrl = plan['url'] as String;
-      final targetUri = Uri.parse('$_cleanBase$relUrl');
+      final targetUri = _serverPath(relUrl);
       final bodyStr = await _streamPutFile(
         targetUri,
         file,
@@ -602,7 +618,7 @@ class ApiClient {
   }) async {
     final uri = cloud.isDirectUrl
         ? Uri.parse(cloud.url)
-        : Uri.parse('$_cleanBase${cloud.url}');
+        : _serverPath(cloud.url);
     final client = _createHttpClient();
     cancelToken?.attach(() => client.close(force: true));
     IOSink? sink;
@@ -837,7 +853,13 @@ class ApiClient {
     );
     _check(resp);
     final data = jsonDecode(resp.body) as Map<String, dynamic>;
-    return data['auth_url'] as String;
+    final url = Uri.parse(data['auth_url'] as String);
+    if (url.scheme != 'https' ||
+        url.host != 'accounts.google.com' ||
+        url.userInfo.isNotEmpty) {
+      throw HttpException(l10n.theServerReturnedAnInvalidGoogle);
+    }
+    return url.toString();
   }
 
   WebSocketChannel connectWebSocket(String deviceId) {

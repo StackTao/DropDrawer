@@ -23,9 +23,13 @@ const MAX_SDP: usize = 48 * 1024;
 const OFFER_TIMEOUT: Duration = Duration::from_secs(8);
 const SESSION_TIMEOUT: Duration = Duration::from_secs(30);
 const FALLBACK_WINDOW: Duration = Duration::from_secs(30 * 60);
+const MAX_PENDING_SESSIONS: usize = 1024;
+const MAX_CLAIMED_SESSIONS: usize = 4096;
 
 struct Session {
     source: (String, String),
+    /// Address of the visitor that made the offer.
+    client: String,
     code: String,
     item_id: String,
     start_token: Option<String>,
@@ -43,12 +47,23 @@ impl Sessions {
         let mut sessions = self.0.lock().await;
         let now = Instant::now();
         sessions.retain(|_, entry| entry.expires > now);
-        if sessions.len() >= 1024
+        // Claimed sessions only wait for a possible HTTP fallback; they get a
+        // pool of their own so they can't crowd out new offers.
+        let pending = sessions.values().filter(|s| !s.claimed).count();
+        if pending >= MAX_PENDING_SESSIONS
+            || sessions.len() >= MAX_PENDING_SESSIONS + MAX_CLAIMED_SESSIONS
             || sessions
                 .values()
                 .filter(|s| !s.claimed && s.source == session.source)
                 .count()
                 >= 3
+            // The page downloads one file at a time, so one visitor never
+            // needs more than a couple of a device's three pending slots.
+            || sessions
+                .values()
+                .filter(|s| !s.claimed && s.source == session.source && s.client == session.client)
+                .count()
+                >= 2
         {
             return false;
         }
@@ -202,6 +217,15 @@ pub(super) async fn offer(
     Path(code): Path<String>,
     Json(request): Json<Offer>,
 ) -> Result<Json<Answer>, Error> {
+    // Each source device takes only a few pending offers, so one visitor
+    // repeating offers must not keep them all.
+    if state.browser_share_offers_by_ip.is_blocked(&ip) {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            t!("连接请求过于频繁，请稍后再试", "Too many connection attempts. Try again later").to_owned(),
+        ));
+    }
+    state.browser_share_offers_by_ip.record_failure(&ip);
     let share = lookup_public_share(&state, &ip, &code)?;
     policy::ensure_share_access(&state, &share.user_id)?;
     validate_share_access(&state, &share, request.passcode.as_deref(), true).await?;
@@ -229,6 +253,7 @@ pub(super) async fn offer(
     let (tx, rx) = oneshot::channel();
     let session = Session {
         source: (share.user_id.clone(), device.clone()),
+        client: ip.clone(),
         code,
         item_id: item.id.clone(),
         start_token: Some(start_token.clone()),

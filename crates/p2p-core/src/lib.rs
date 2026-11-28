@@ -30,6 +30,12 @@ const CHUNK_SIZE: usize = 256 * 1024; // 256 KiB QUIC streaming chunks
 /// How long a source waits for the control server's token push to arrive when a
 /// pull request races ahead of it.
 const TOKEN_ARRIVAL_GRACE: Duration = Duration::from_secs(5);
+/// Incoming connections handled at once (each is one pull or probe).
+const MAX_INCOMING_CONNECTIONS: usize = 64;
+/// Time a connecting peer has to open its stream and send the request header.
+/// Must exceed `RELAY_PROBE_PATH_GRACE` (10s) plus network RTT so auxiliary
+/// relay probes can close with `PROBE_CODE` without racing this timeout.
+const REQUEST_HEADER_TIMEOUT: Duration = Duration::from_secs(15);
 /// Files hashed concurrently in the background (startup re-registers every seeded file).
 const MAX_CONCURRENT_HASHES: usize = 2;
 
@@ -233,10 +239,19 @@ impl P2pNode {
         let source_clone = source.clone();
         let relay_probe = Arc::new(relay_probe::RelayProbe::new(endpoint.clone()));
         let accept_task = tokio::spawn(async move {
+            // Anyone who knows the endpoint id can connect before a token is
+            // checked, so concurrent incoming connections are capped.
+            let slots = Arc::new(tokio::sync::Semaphore::new(MAX_INCOMING_CONNECTIONS));
             while let Some(incoming) = ep_clone.accept().await {
+                let Ok(slot) = slots.clone().try_acquire_owned() else {
+                    tracing::warn!("refusing P2P connection: too many open connections");
+                    incoming.refuse();
+                    continue;
+                };
                 let source = source_clone.clone();
                 let transfers = incoming_transfers.clone();
                 tokio::spawn(async move {
+                    let _slot = slot;
                     match incoming.await {
                         Ok(conn) => {
                             if let Err(err) =
@@ -744,25 +759,30 @@ async fn handle_incoming_connection(
     source: Arc<SourceState>,
     transfers: Arc<Transfers>,
 ) -> anyhow::Result<()> {
-    let (mut send, mut recv) = match conn.accept_bi().await {
-        Ok(streams) => streams,
-        Err(ConnectionError::ApplicationClosed(reason))
+    // The request header must arrive promptly; an idle peer can't hold a slot.
+    let (mut send, mut recv) = match tokio::time::timeout(REQUEST_HEADER_TIMEOUT, conn.accept_bi()).await {
+        Err(_) => anyhow::bail!("peer opened no request stream in time"),
+        Ok(Ok(streams)) => streams,
+        Ok(Err(ConnectionError::ApplicationClosed(reason)))
             if reason.error_code == PROBE_CODE.into() =>
         {
             return Ok(());
         }
-        Err(err) => return Err(err.into()),
+        Ok(Err(err)) => return Err(err.into()),
     };
-    let req_bytes = read_frame(&mut recv).await?;
+    let req_bytes = tokio::time::timeout(REQUEST_HEADER_TIMEOUT, read_frame(&mut recv))
+        .await
+        .map_err(|_| anyhow::anyhow!("peer sent no request header in time"))??;
     let req: PullRequestHeader = serde_json::from_slice(&req_bytes)?;
 
     if source.require_auth_token {
         let remote = conn.remote_id().to_string();
         if !source.redeem_token(&req.token, &req.item_id, &remote).await {
-            return reject_pull(
+            return reject_pull_with_linger(
                 &conn,
                 &mut send,
                 "unauthorized or expired P2P transfer token",
+                AUTH_REJECTION_LINGER,
             )
             .await;
         }
@@ -834,7 +854,13 @@ async fn handle_incoming_connection(
         let mut last_report = Instant::now();
         let mut bytes_since_report = 0u64;
         loop {
-            let n = file.read(&mut buf).await?;
+            // Never send past the advertised size, even if the file is growing.
+            let left = entry_size.saturating_sub(progress.bytes_transferred);
+            let want = buf.len().min(usize::try_from(left).unwrap_or(usize::MAX));
+            if want == 0 {
+                break;
+            }
+            let n = file.read(&mut buf[..want]).await?;
             if n == 0 {
                 break;
             }
@@ -854,8 +880,9 @@ async fn handle_incoming_connection(
                 bytes_since_report = 0;
             }
         }
+        let grew = file.read(&mut [0u8; 1]).await? > 0;
         anyhow::ensure!(
-            progress.bytes_transferred == entry_size,
+            progress.bytes_transferred == entry_size && !grew,
             "source size changed while sending"
         );
         send.finish()?;
@@ -874,6 +901,9 @@ async fn handle_incoming_connection(
 const DELIVERED_CODE: u32 = 0x4444;
 /// How long a rejecting source keeps the connection open for the requester to read why.
 const REJECTION_LINGER: Duration = Duration::from_secs(10);
+/// Shorter linger for unauthenticated rejections so bogus peers can't pin slots.
+const AUTH_REJECTION_LINGER: Duration = Duration::from_secs(2);
+const REJECTION_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Sends a failed `PullResponseHeader`. Returning straight away would drop the
 /// connection and could discard the response, so wait for the requester to close it.
@@ -881,6 +911,15 @@ async fn reject_pull(
     conn: &Connection,
     send: &mut iroh::endpoint::SendStream,
     error: &str,
+) -> anyhow::Result<()> {
+    reject_pull_with_linger(conn, send, error, REJECTION_LINGER).await
+}
+
+async fn reject_pull_with_linger(
+    conn: &Connection,
+    send: &mut iroh::endpoint::SendStream,
+    error: &str,
+    linger: Duration,
 ) -> anyhow::Result<()> {
     let resp = PullResponseHeader {
         resumed_legacy: false,
@@ -890,9 +929,13 @@ async fn reject_pull(
         size: 0,
         blake3_hash: String::new(),
     };
-    write_frame(send, &serde_json::to_vec(&resp)?).await?;
-    send.finish()?;
-    let _ = tokio::time::timeout(REJECTION_LINGER, conn.closed()).await;
+    let _ = tokio::time::timeout(
+        REJECTION_WRITE_TIMEOUT,
+        write_frame(send, &serde_json::to_vec(&resp)?),
+    )
+    .await;
+    let _ = send.finish();
+    let _ = tokio::time::timeout(linger, conn.closed()).await;
     Ok(())
 }
 

@@ -115,6 +115,8 @@ Run Docker Compose or Cargo from the repository root. Docker Compose stores data
 
 ```bash
 cp -n .env.example .env
+# The container runs as UID 10001; on Linux, give it the data directory first.
+mkdir -p deploy/data/server && sudo chown 10001:10001 deploy/data/server
 # Option A: pull the prebuilt multi-arch GHCR image (fastest, no Rust compile)
 docker compose --env-file .env -f deploy/docker-compose.prebuilt.yml up -d
 # Option B: build from local source
@@ -176,7 +178,7 @@ cargo test --workspace
 (cd apple/DropDrawerCore && swift test)
 ```
 
-To test P2P independently, run `cargo run --bin dropdrawer-p2p-cli -- seed ./sample.zip` to generate a transfer ticket. On the receiving device, run `cargo run --bin dropdrawer-p2p-cli -- pull '<TICKET_JSON>' ./received.zip`.
+To test P2P independently, run `cargo run --bin dropdrawer-p2p-cli -- seed ./sample.zip` to generate a transfer ticket and a one-run token. On the receiving device, run `cargo run --bin dropdrawer-p2p-cli -- pull '<TICKET_JSON>' <TOKEN> ./received.zip`.
 
 Join the discussion on [LINUX DO](https://linux.do/).
 

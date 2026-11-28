@@ -1446,6 +1446,78 @@ async fn test_public_share_link_passcode_limit_and_revoke() {
     assert_eq!(&b_bytes[..], payload);
 }
 
+#[tokio::test]
+async fn websocket_that_stops_reading_is_dropped_not_buffered() {
+    let (_app, state, _tmp) = spawn_test_server().await;
+    let key = ("user-1".to_string(), "slow".to_string());
+    let (slow_tx, _slow_rx) = tokio::sync::mpsc::channel(1);
+    let (fast_tx, mut fast_rx) = tokio::sync::mpsc::channel(8);
+    let slow = dropdrawer_server::state::WsConnection::new(slow_tx);
+    let slow_closed = slow.closed_signal();
+    state.connections.insert(key.clone(), slow);
+    state.connections.insert(("user-1".into(), "fast".into()), fast_tx.into());
+
+    state.broadcast_user("user-1", protocol::WsEvent::ConfigChanged);
+    assert!(state.connections.contains_key(&key), "one queued event fits");
+    state.broadcast_user("user-1", protocol::WsEvent::ConfigChanged);
+    assert!(!state.connections.contains_key(&key), "a full queue drops the connection");
+    assert!(slow_closed.is_cancelled(), "its handler is told to stop without draining the queue");
+    assert!(state.connections.contains_key(&("user-1".into(), "fast".into())));
+    assert!(fast_rx.try_recv().is_ok() && fast_rx.try_recv().is_ok());
+}
+
+#[tokio::test]
+async fn limited_text_share_counts_when_its_text_is_shown() {
+    let (app, _state, _tmp) = spawn_test_server().await;
+    let (_, auth): (StatusCode, AuthResponse) = send_json(
+        &app,
+        "POST",
+        "/api/auth/register",
+        None,
+        Some(json!({ "username": "tess", "password": "password123" })),
+    )
+    .await;
+    let (_, note): (StatusCode, DrawerItem) = send_json(
+        &app,
+        "POST",
+        "/api/drawer/items",
+        Some(&auth.token),
+        Some(serde_json::to_value(CreateDrawerItemRequest {
+            device_id: "mac-tess".to_string(),
+            kind: DrawerItemKind::Text,
+            name: "note".to_string(),
+            size: 6,
+            mime_type: Some("text/plain".to_string()),
+            blake3_hash: None,
+            text_content: Some("secret".to_string()),
+            thumbnail_base64: None,
+            transfer_mode: TransferMode::CloudCached,
+            storage_backend_id: None,
+            ttl_hours: None,
+        })
+        .unwrap()),
+    )
+    .await;
+    let (st, share): (StatusCode, ShareLinkInfo) = send_json(
+        &app,
+        "POST",
+        &format!("/api/drawer/items/{}/share", note.id),
+        Some(&auth.token),
+        Some(json!({ "max_downloads": 1 })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+
+    let (st, meta): (StatusCode, serde_json::Value) =
+        send_json(&app, "GET", &format!("/api/s/{}/meta", share.code), None, None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(meta["text_content"], json!("secret"));
+    assert_eq!(meta["download_count"], json!(1));
+
+    let (st, _) = send_raw(&app, "GET", &format!("/api/s/{}/meta", share.code), None, None).await;
+    assert_eq!(st, StatusCode::GONE, "the limit covers viewing the text, not only downloading it");
+}
+
 async fn send_raw(
     app: &Router,
     method: &str,
@@ -2058,8 +2130,8 @@ async fn test_self_service_account_password_email_bind_and_delete() {
     // Two live devices: the one changing the password keeps its connection,
     // the other is disconnected along with its now-revoked token.
     for device in ["this-device", "other-device"] {
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        state.connections.insert((reg.user.id.clone(), device.into()), tx);
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        state.connections.insert((reg.user.id.clone(), device.into()), tx.into());
     }
     let (st, updated): (StatusCode, AuthResponse) = send_json(
         &app,

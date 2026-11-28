@@ -2,7 +2,7 @@ use std::sync::{Arc, LazyLock};
 
 use async_trait::async_trait;
 use dashmap::DashMap;
-use futures_util::{StreamExt, TryStreamExt};
+use futures_util::TryStreamExt;
 use md5::{Digest as Md5Digest, Md5};
 use protocol::StorageBackendConfig;
 use serde::Deserialize;
@@ -87,6 +87,7 @@ pub struct BaiduNetdiskProvider {
     /// Storage backend ID; keys the shared token session.
     session_key: String,
     token_sink: Option<BaiduTokenSink>,
+    guard: crate::net_guard::PrivateNetworkGuard,
 }
 
 #[derive(Debug, Deserialize)]
@@ -150,7 +151,15 @@ impl BaiduNetdiskProvider {
             cfg,
             session_key,
             token_sink: None,
+            guard: Default::default(),
         }
+    }
+
+    /// Applies the storage policy's private-network block to URLs this
+    /// provider receives from the remote API.
+    pub fn with_network_guard(mut self, guard: crate::net_guard::PrivateNetworkGuard) -> Self {
+        self.guard = guard;
+        self
     }
 
     /// Shares tokens across requests for `backend_id` and saves rotated pairs with `sink`.
@@ -323,32 +332,19 @@ impl StorageProvider for BaiduNetdiskProvider {
     async fn put_stream(
         &self,
         remote_key: &str,
-        _content_length: Option<u64>,
-        mut stream: ByteStream,
+        content_length: Option<u64>,
+        stream: ByteStream,
     ) -> anyhow::Result<PutResult> {
         let token = self.access_token().await?;
         let target_path = self.remote_path(remote_key);
 
         // Buffer to temp file to compute 4MB block MD5 list required by xpan precreate/create.
-        let tmp_path = std::env::temp_dir().join(format!(
-            "dropdrawer_baidu_{}.tmp",
-            uuid::Uuid::new_v4()
-        ));
-        let mut tmp_file = tokio::fs::File::create(&tmp_path).await?;
-        let mut total_bytes = 0u64;
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk?;
-            tokio::io::AsyncWriteExt::write_all(&mut tmp_file, &chunk).await?;
-            total_bytes += chunk.len() as u64;
-        }
-        tokio::io::AsyncWriteExt::flush(&mut tmp_file).await?;
-        drop(tmp_file);
-
-        let upload_res = self
-            .upload_slices(&token, &target_path, &tmp_path, total_bytes)
-            .await;
-        let _ = tokio::fs::remove_file(&tmp_path).await;
-        let (fs_id, final_path) = upload_res?;
+        // The spool file is removed on every exit path.
+        let spool = super::SpoolFile::new("dropdrawer_baidu");
+        let total_bytes = spool.fill(stream, content_length, |_| {}).await?;
+        let (fs_id, final_path) = self
+            .upload_slices(&token, &target_path, spool.path(), total_bytes)
+            .await?;
 
         Ok(PutResult {
             bytes_written: total_bytes,
@@ -383,6 +379,7 @@ impl StorageProvider for BaiduNetdiskProvider {
             format!("{}?access_token={}", item.dlink, urlencoding::encode(&token))
         };
 
+        self.guard.check_url(&item.dlink)?;
         let file_resp = self
             .http
             .get(&dlink_url)

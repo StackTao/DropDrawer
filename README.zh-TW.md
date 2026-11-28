@@ -167,7 +167,7 @@ cargo test --workspace
 (cd app && flutter analyze && flutter test)
 ```
 
-若要獨立測試 P2P，請執行 `cargo run --bin dropdrawer-p2p-cli -- seed ./sample.zip` 產生傳輸票據，再於接收端執行 `cargo run --bin dropdrawer-p2p-cli -- pull '<TICKET_JSON>' ./received.zip`。
+若要獨立測試 P2P，請執行 `cargo run --bin dropdrawer-p2p-cli -- seed ./sample.zip` 產生傳輸票據，再於接收端執行 `cargo run --bin dropdrawer-p2p-cli -- pull '<TICKET_JSON>' <TOKEN> ./received.zip`。
 
 歡迎到 [LINUX DO 社群](https://linux.do/) 交流。
 

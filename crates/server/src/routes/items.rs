@@ -91,7 +91,7 @@ pub(super) async fn batch_delete_drawer_items(
     let mut targets = if req.clear_all {
         state
             .db
-            .list_drawer_items(&auth.user_id)
+            .list_all_drawer_items(&auth.user_id)
             .map_err(internal_err)?
             .into_iter()
             .map(|item| item.id)
@@ -628,6 +628,9 @@ pub(super) async fn download_item_content(
                 header::CONTENT_DISPOSITION,
                 format!("attachment; filename*=UTF-8''{encoded_name}"),
             );
+            builder = builder
+                .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
+                .header(header::CONTENT_SECURITY_POLICY, "sandbox");
             let body = Body::from_stream(stream);
             builder.body(body).map_err(internal_err)
         }

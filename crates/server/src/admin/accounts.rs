@@ -223,11 +223,13 @@ pub(super) async fn change_own_password(
 ) -> ApiResult<Response> {
     let account = own_account(&state, &admin)?;
     validate_admin_password(&req.new_password)?;
+    check_reauth_limit(&state, &account)?;
     let (current, hash) = (req.current_password, account.password_hash.clone());
     let ok = tokio::task::spawn_blocking(move || verify_password(&current, &hash))
         .await
         .unwrap_or(false);
     if !ok {
+        state.failed_admin_logins.record_failure(&reauth_key(&account));
         return Err(bad_request(t!("当前密码不正确", "The current password is incorrect")));
     }
     let new_hash = hash_blocking(req.new_password).await?;
@@ -280,7 +282,32 @@ pub(super) struct TotpCodeRequest {
     code: String,
 }
 
+/// Limits password / code re-checks inside a signed-in session, so a stolen
+/// session cookie can't be used to guess the password or turn off TOTP.
+fn reauth_key(account: &AdminAccount) -> String {
+    format!("reauth:{}", account.id)
+}
+
+fn check_reauth_limit(state: &AppState, account: &AdminAccount) -> Result<(), ApiError> {
+    if state.failed_admin_logins.is_blocked(&reauth_key(account)) {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            t!("尝试次数过多，请 15 分钟后再试", "Too many attempts. Try again in 15 minutes").to_string(),
+        ));
+    }
+    Ok(())
+}
+
 fn check_code(state: &AppState, account: &AdminAccount, code: &str) -> Result<(), ApiError> {
+    check_reauth_limit(state, account)?;
+    let result = verify_code(state, account, code);
+    if result.is_err() {
+        state.failed_admin_logins.record_failure(&reauth_key(account));
+    }
+    result
+}
+
+fn verify_code(state: &AppState, account: &AdminAccount, code: &str) -> Result<(), ApiError> {
     let secret = account
         .totp_secret
         .as_deref()

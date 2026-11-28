@@ -46,14 +46,14 @@ final class ShareViewController: UIViewController {
             for provider in item.attachments ?? [] {
                 if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier),
                    let url = await loadFileURL(provider: provider, typeId: UTType.fileURL.identifier) {
-                    if Self.copyToQueue(source: url, queueDir: queueDir) { enqueued = true }
+                    if await Self.copyToQueueInBackground(source: url, queueDir: queueDir) { enqueued = true }
                 } else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
                     if await saveImageAttachment(provider: provider, queueDir: queueDir) {
                         enqueued = true
                     }
                 } else if provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier),
                           let url = await loadFileURL(provider: provider, typeId: UTType.movie.identifier) {
-                    if Self.copyToQueue(source: url, queueDir: queueDir) { enqueued = true }
+                    if await Self.copyToQueueInBackground(source: url, queueDir: queueDir) { enqueued = true }
                 } else if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier),
                           let text = await loadString(provider: provider, typeId: UTType.plainText.identifier) {
                     let dest = queueDir.appendingPathComponent("text_\(UUID().uuidString).ddtext")
@@ -70,17 +70,30 @@ final class ShareViewController: UIViewController {
             }
         }
 
+        // Finish only after the open request went out; completing the request
+        // first tears the extension down before the host app is asked to open.
         if enqueued, let openURL = URL(string: "dropdrawer://share") {
-            openHostApp(openURL)
+            openHostApp(openURL) { [weak self] in self?.finish() }
+        } else {
+            finish()
         }
-        finish()
+    }
+
+    /// Large videos take a while to copy; keep that off the main thread.
+    private nonisolated static func copyToQueueInBackground(source: URL, queueDir: URL) async -> Bool {
+        await Task.detached(priority: .userInitiated) {
+            ShareViewController.copyToQueue(source: source, queueDir: queueDir)
+        }.value
     }
 
     private nonisolated static func copyToQueue(source: URL, queueDir: URL) -> Bool {
         let scoped = source.startAccessingSecurityScopedResource()
         defer { if scoped { source.stopAccessingSecurityScopedResource() } }
         let name = source.lastPathComponent.isEmpty ? "shared_\(UUID().uuidString)" : source.lastPathComponent
-        let dest = queueDir.appendingPathComponent("\(Int(Date().timeIntervalSince1970 * 1000))_\(name)")
+        // "<digits>_<name>": the app strips the prefix again (queuedOriginalName);
+        // the random tail keeps two same-named files from one share apart.
+        let stamp = "\(Int(Date().timeIntervalSince1970 * 1000))\(Int.random(in: 1000...9999))"
+        let dest = queueDir.appendingPathComponent("\(stamp)_\(name)")
         return (try? FileManager.default.copyItem(at: source, to: dest)) != nil
     }
 
@@ -113,7 +126,12 @@ final class ShareViewController: UIViewController {
     }
 
     private func saveImageAttachment(provider: NSItemProvider, queueDir: URL) async -> Bool {
-        await withCheckedContinuation { cont in
+        // Ask for the encoded file first: decoding a 48 MP photo into a UIImage
+        // and re-encoding it would exceed the extension's memory limit.
+        if await saveImageFile(provider: provider, queueDir: queueDir) {
+            return true
+        }
+        return await withCheckedContinuation { cont in
             provider.loadItem(forTypeIdentifier: UTType.image.identifier, options: nil) { item, _ in
                 if let url = item as? URL {
                     cont.resume(returning: Self.copyToQueue(source: url, queueDir: queueDir))
@@ -130,15 +148,33 @@ final class ShareViewController: UIViewController {
         }
     }
 
-    private func openHostApp(_ url: URL) {
+    private func saveImageFile(provider: NSItemProvider, queueDir: URL) async -> Bool {
+        await withCheckedContinuation { cont in
+            _ = provider.loadFileRepresentation(forTypeIdentifier: UTType.image.identifier) { url, _ in
+                // The file is only valid inside this handler, which runs off the main thread.
+                guard let url else {
+                    cont.resume(returning: false)
+                    return
+                }
+                cont.resume(returning: Self.copyToQueue(source: url, queueDir: queueDir))
+            }
+        }
+    }
+
+    /// Opens the host app if the system lets the extension do so; the shared
+    /// items stay queued either way and sync the next time DropDrawer opens.
+    private func openHostApp(_ url: URL, completion: @escaping @MainActor @Sendable () -> Void) {
         var responder: UIResponder? = self
         while let current = responder {
             if let app = current as? UIApplication {
-                app.open(url, options: [:], completionHandler: nil)
+                app.open(url, options: [:]) { _ in
+                    Task { @MainActor in completion() }
+                }
                 return
             }
             responder = current.next
         }
+        completion()
     }
 
     private func finish() {

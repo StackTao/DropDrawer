@@ -53,6 +53,14 @@ async fn main() -> anyhow::Result<()> {
         .map(|value| value.trim().parse::<NonZeroU64>().map(NonZeroU64::get))
         .transpose()
         .map_err(|_| anyhow::anyhow!("DROPDRAWER_LOCAL_USER_QUOTA_BYTES must be a positive byte count"))?;
+    if let Some(bytes) = get("DROPDRAWER_MAX_SPOOL_BYTES")
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.trim().parse::<NonZeroU64>().map(NonZeroU64::get))
+        .transpose()
+        .map_err(|_| anyhow::anyhow!("DROPDRAWER_MAX_SPOOL_BYTES must be a positive byte count"))?
+    {
+        dropdrawer_server::storage::set_max_spool_bytes(bytes);
+    }
     let jwt_secret = resolve_jwt_secret(&db_path, get("DROPDRAWER_JWT_SECRET").as_deref())?;
     let cleanup_secs: u64 = get("DROPDRAWER_TTL_CLEANUP_SECS")
         .and_then(|v| v.parse().ok())
@@ -135,6 +143,7 @@ async fn main() -> anyhow::Result<()> {
 
     let trust_proxy = get("DROPDRAWER_TRUST_PROXY")
         .is_some_and(|value| matches!(value.trim().to_ascii_lowercase().as_str(), "true" | "1"));
+    let ws_shutdown = state.ws_shutdown.clone();
     let app = build_router_with_cors(state, cors_origins.as_deref())
         .layer(axum::Extension(TrustProxy(trust_proxy)));
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
@@ -143,7 +152,11 @@ async fn main() -> anyhow::Result<()> {
         listener,
         app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(async move {
+            shutdown_signal().await;
+            // Upgraded WebSockets would otherwise keep the shutdown waiting.
+            ws_shutdown.cancel();
+        })
         .await?;
     tracing::info!("DropDrawer server shut down cleanly");
     Ok(())

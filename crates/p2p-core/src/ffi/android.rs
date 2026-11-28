@@ -1,3 +1,4 @@
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::OnceLock;
 
 use jni::JNIEnv;
@@ -12,20 +13,24 @@ pub extern "system" fn Java_com_dropdrawer_dropdrawer_1app_DropDrawerApplication
     application: JObject,
 ) -> jboolean {
     static APPLICATION: OnceLock<GlobalRef> = OnceLock::new();
-    let (Ok(vm), Ok(context)) = (env.get_java_vm(), env.new_global_ref(application)) else {
-        return JNI_FALSE;
-    };
-    APPLICATION.get_or_init(|| {
-        // Both pointers must outlive every endpoint, including after logout/login.
-        unsafe {
-            iroh::dns::install_android_jni_context(
-                vm.get_java_vm_pointer().cast(),
-                context.as_obj().as_raw().cast(),
-            );
-        }
-        context
-    });
-    JNI_TRUE
+    // A panic must not unwind into the JVM.
+    catch_unwind(AssertUnwindSafe(|| {
+        let (Ok(vm), Ok(context)) = (env.get_java_vm(), env.new_global_ref(application)) else {
+            return JNI_FALSE;
+        };
+        APPLICATION.get_or_init(|| {
+            // Both pointers must outlive every endpoint, including after logout/login.
+            unsafe {
+                iroh::dns::install_android_jni_context(
+                    vm.get_java_vm_pointer().cast(),
+                    context.as_obj().as_raw().cast(),
+                );
+            }
+            context
+        });
+        JNI_TRUE
+    }))
+    .unwrap_or(JNI_FALSE)
 }
 
 #[unsafe(no_mangle)]
@@ -33,7 +38,9 @@ pub extern "system" fn Java_com_dropdrawer_dropdrawer_1app_DropDrawerApplication
     _env: JNIEnv,
     _application: JObject,
 ) {
-    if let Ok(node) = current_node() {
-        runtime().spawn(async move { node.endpoint.network_change().await });
-    }
+    let _ = catch_unwind(|| {
+        if let Ok(node) = current_node() {
+            runtime().spawn(async move { node.endpoint.network_change().await });
+        }
+    });
 }

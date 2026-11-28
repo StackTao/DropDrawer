@@ -30,11 +30,34 @@ impl PrivateNetworkGuard {
         self.0.load(Ordering::Relaxed)
     }
 
+    /// Checks a URL the server is about to request. Host names are filtered when
+    /// they resolve, but IP-literal hosts never reach the resolver, so every
+    /// URL that came from a remote API (download links, upload sessions) or
+    /// was assembled from configuration must pass through here first.
+    pub fn check_url(&self, raw: &str) -> anyhow::Result<()> {
+        if !self.enabled() {
+            return Ok(());
+        }
+        let url = reqwest::Url::parse(raw)
+            .map_err(|_| anyhow::anyhow!("the storage service returned an invalid URL"))?;
+        if !matches!(url.scheme(), "http" | "https") {
+            anyhow::bail!("the storage service returned a non-HTTP URL");
+        }
+        if url_targets_private_literal(&url) {
+            anyhow::bail!("a private network address is blocked by the storage policy");
+        }
+        Ok(())
+    }
+
     /// HTTP client that applies the guard to DNS answers and redirects.
     pub fn build_client(&self) -> reqwest::Client {
         let redirect_guard = self.clone();
         reqwest::Client::builder()
             .pool_idle_timeout(std::time::Duration::from_secs(60))
+            // No overall timeout: downloads stream for as long as they move.
+            // A stalled cloud API must not hold item / storage locks forever.
+            .connect_timeout(std::time::Duration::from_secs(15))
+            .read_timeout(std::time::Duration::from_secs(120))
             .dns_resolver(Arc::new(self.clone()))
             .redirect(reqwest::redirect::Policy::custom(move |attempt| {
                 if attempt.previous().len() >= 10 {
@@ -102,5 +125,23 @@ mod tests {
             assert!(url_targets_private_literal(&url.parse().unwrap()), "{url}");
         }
         assert!(!url_targets_private_literal(&"https://example.com/".parse().unwrap()));
+    }
+
+    #[test]
+    fn check_url_blocks_private_literals_only_when_enabled() {
+        let guard = PrivateNetworkGuard::new(false);
+        assert!(guard.check_url("http://169.254.169.254/latest/meta-data/").is_ok());
+        guard.set(true);
+        for url in [
+            "http://169.254.169.254/latest/meta-data/",
+            "http://127.0.0.1:8080/x",
+            "http://[::ffff:10.0.0.1]/",
+            // Authority injected through a bucket name ends up as the host.
+            "http://169.254.169.254/latest/meta-data/?.s3.example.com/key",
+            "file:///etc/passwd",
+        ] {
+            assert!(guard.check_url(url).is_err(), "{url}");
+        }
+        assert!(guard.check_url("https://example.com/file").is_ok());
     }
 }

@@ -538,8 +538,13 @@ class MainFlutterWindow: NSWindow {
           result(false)
         }
       case "openExternalUrl":
+        // Web links only, as on Windows and Android: a server-supplied
+        // file:, smb: or custom-scheme URL must not launch local handlers.
         if let urlStr = (call.arguments as? [String: Any])?["url"] as? String,
-           let url = URL(string: urlStr) {
+           let url = URL(string: urlStr),
+           let scheme = url.scheme?.lowercased(),
+           scheme == "https" || scheme == "http",
+           url.host?.isEmpty == false {
           result(NSWorkspace.shared.open(url))
         } else {
           result(false)
@@ -1630,7 +1635,8 @@ class MainFlutterWindow: NSWindow {
     do {
       try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
       let fmt = DateFormatter()
-      fmt.dateFormat = "yyyyMMdd_HHmmss"
+      // Milliseconds: two pastes in the same second must not overwrite each other.
+      fmt.dateFormat = "yyyyMMdd_HHmmss_SSS"
       let filename = "clip_\(fmt.string(from: Date())).png"
       let fileUrl = dir.appendingPathComponent(filename)
       try data.write(to: fileUrl, options: .atomic)

@@ -611,6 +611,49 @@ class DrawerWindowService {
     }
   }
 
+  /// Removes day-old working copies that nothing refers to any more: folder
+  /// ZIPs, pasted images (macOS) and files staged for sharing (Android).
+  /// Files still listed in [retainedPaths] (drawer items kept on this device,
+  /// pending cloud uploads) are never touched.
+  Future<void> pruneCacheFiles(Iterable<String> retainedPaths) async {
+    final retained = retainedPaths.map(p.canonicalize).toSet();
+    final cutoff = DateTime.now().subtract(const Duration(hours: 24));
+    final dirs = <String>[];
+    try {
+      final support = await getApplicationSupportDirectory();
+      dirs.add(p.join(support.path, 'folder_archives'));
+      if (Platform.isMacOS) {
+        final home = Platform.environment['HOME'];
+        if (home != null) {
+          dirs.add(p.join(home, 'Library', 'Application Support', 'DropDrawer', 'clipboard_images'));
+        }
+      }
+      if (isAndroid) {
+        final cache = await getTemporaryDirectory();
+        for (final name in const ['shared_incoming', 'picked_media', 'shared_outgoing']) {
+          dirs.add(p.join(cache.path, name));
+        }
+      }
+    } catch (_) {
+      return;
+    }
+    for (final path in dirs) {
+      final dir = Directory(path);
+      try {
+        if (!await dir.exists()) continue;
+        await for (final file in dir.list(followLinks: false)) {
+          if (file is File &&
+              !retained.contains(p.canonicalize(file.path)) &&
+              (await file.lastModified()).isBefore(cutoff)) {
+            await file.delete();
+          }
+        }
+      } on FileSystemException {
+        // Cache maintenance can be retried at the next startup.
+      }
+    }
+  }
+
   Future<bool> requestAccessibilityPermission() async {
     if (!Platform.isMacOS) return false;
     final ok = await _channel.invokeMethod<bool>('requestAccessibilityPermission');

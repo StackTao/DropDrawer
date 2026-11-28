@@ -40,7 +40,9 @@ async fn main() -> anyhow::Result<()> {
             .await?;
 
             let item_id = "cli-item".to_string();
-            let token = "cli-token".to_string();
+            // A fresh secret per run: anyone who learns the node id must not
+            // be able to pull the file with a well-known token.
+            let token = uuid::Uuid::new_v4().simple().to_string();
             let info = node.register_file(item_id.clone(), &file_path).await?;
             node.authorize_token(item_id.clone(), token.clone(), Utc::now() + Duration::hours(1));
 
@@ -52,18 +54,20 @@ async fn main() -> anyhow::Result<()> {
             println!("File   : {} ({} bytes)", info.path, info.size);
             println!("BLAKE3 : {}", info.blake3_hash);
             println!("Ticket : {}", serde_json::to_string(&node_info)?);
+            println!("Token  : {token}");
             println!("Press Ctrl+C to stop seeding.");
 
             tokio::signal::ctrl_c().await?;
             node.shutdown().await;
         }
         "pull" => {
-            if args.len() < 4 {
+            if args.len() < 5 {
                 print_usage();
                 return Ok(());
             }
             let ticket_json = &args[2];
-            let dest_path = PathBuf::from(&args[3]);
+            let token = args[3].clone();
+            let dest_path = PathBuf::from(&args[4]);
             let remote: dropdrawer_p2p::LocalNodeInfo = serde_json::from_str(ticket_json)?;
 
             let node = P2pNode::start(
@@ -82,7 +86,7 @@ async fn main() -> anyhow::Result<()> {
                     remote.node_id,
                     remote.relay_url,
                     remote.direct_addrs,
-                    "cli-token".to_string(),
+                    token,
                     dest_path,
                 )
                 .await?;
@@ -104,5 +108,5 @@ async fn main() -> anyhow::Result<()> {
 fn print_usage() {
     eprintln!("Usage:");
     eprintln!("  dropdrawer-p2p-cli seed <file_path> [data_dir]");
-    eprintln!("  dropdrawer-p2p-cli pull '<ticket_json>' <dest_path>");
+    eprintln!("  dropdrawer-p2p-cli pull '<ticket_json>' <token> <dest_path>");
 }

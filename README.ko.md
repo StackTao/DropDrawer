@@ -167,7 +167,7 @@ cargo test --workspace
 (cd app && flutter analyze && flutter test)
 ```
 
-P2P 전송을 따로 확인하려면 `cargo run --bin dropdrawer-p2p-cli -- seed ./sample.zip`을 실행해 전송 티켓을 생성합니다. 받는 기기에서는 `cargo run --bin dropdrawer-p2p-cli -- pull '<TICKET_JSON>' ./received.zip`을 실행합니다.
+P2P 전송을 따로 확인하려면 `cargo run --bin dropdrawer-p2p-cli -- seed ./sample.zip`을 실행해 전송 티켓을 생성합니다. 받는 기기에서는 `cargo run --bin dropdrawer-p2p-cli -- pull '<TICKET_JSON>' <TOKEN> ./received.zip`을 실행합니다.
 
 [LINUX DO](https://linux.do/) 커뮤니티에서 이야기를 나눠 보세요.
 

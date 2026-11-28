@@ -201,10 +201,15 @@ public final class DropDrawerStore {
         self.autoCloudThresholdMb = storage.autoCloudThresholdMb
         self.defaultTtlHours = storage.defaultTtlHours
         self.dismissedAnnouncementId = storage.dismissedAnnouncementId
-        self.localFilePaths = storage.localFilePaths
-        self.pendingCloudUploads = storage.pendingCloudUploads.filter {
-            FileManager.default.fileExists(atPath: $0.value)
+        let savedPaths = storage.localFilePaths
+        let relocatedPaths = savedPaths.mapValues(Self.relocatedToCurrentContainer)
+        self.localFilePaths = relocatedPaths
+        if relocatedPaths != savedPaths {
+            storage.localFilePaths = relocatedPaths
         }
+        self.pendingCloudUploads = storage.pendingCloudUploads
+            .mapValues(Self.relocatedToCurrentContainer)
+            .filter { FileManager.default.fileExists(atPath: $0.value) }
         // Restore API client synchronously so `isLoggedIn` is true on frame 0
         // and the login screen never flashes on app relaunch.
         if let token = storage.token, !token.isEmpty, self.user != nil {
@@ -464,6 +469,7 @@ public final class DropDrawerStore {
         pushToken = nil
         stopBackgroundTasks()
         p2p.shutdown()
+        removeSessionFiles()
         p2pReady = false
         localNodeInfo = nil
         api = nil
@@ -489,6 +495,50 @@ public final class DropDrawerStore {
         wsConnected = false
         syncBackgroundExecutionGuard()
         storage.clearSession()
+    }
+
+    /// Downloaded drawer files live in Documents, which the Files app shows, and
+    /// shared items may still wait in the App Group queue. Neither may outlive
+    /// the session: the next person to sign in on this device must not find them.
+    private func removeSessionFiles() {
+        let fm = FileManager.default
+        let dir = downloadsDirectory()
+        for entry in (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [] {
+            try? fm.removeItem(at: entry)
+        }
+        for path in pendingCloudUploads.values where fm.fileExists(atPath: path) {
+            try? fm.removeItem(atPath: path)
+        }
+        if let groupURL = fm.containerURL(forSecurityApplicationGroupIdentifier: SessionStorage.appGroupId) {
+            try? fm.removeItem(at: groupURL.appendingPathComponent("pending_shares", isDirectory: true))
+        }
+    }
+
+    /// The app container's path changes when iOS updates or reinstalls the app,
+    /// so a saved absolute path stops pointing at its file. Map it to the same
+    /// place in the current container.
+    nonisolated static func relocatedToCurrentContainer(_ path: String) -> String {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: path) { return path }
+        let anchors: [(String, FileManager.SearchPathDirectory)] = [
+            ("/Documents/", .documentDirectory),
+            ("/Library/Application Support/", .applicationSupportDirectory),
+            ("/Library/Caches/", .cachesDirectory),
+        ]
+        for (anchor, directory) in anchors {
+            guard let range = path.range(of: anchor),
+                  let base = fm.urls(for: directory, in: .userDomainMask).first
+            else { continue }
+            let relative = String(path[range.upperBound...])
+            let candidate = base.appendingPathComponent(relative).path
+            if fm.fileExists(atPath: candidate) { return candidate }
+        }
+        if path.contains("/tmp/") {
+            let relative = String(path[path.range(of: "/tmp/")!.upperBound...])
+            let candidate = fm.temporaryDirectory.appendingPathComponent(relative).path
+            if fm.fileExists(atPath: candidate) { return candidate }
+        }
+        return path
     }
 
     public func handleSceneActive() async {
@@ -1579,17 +1629,34 @@ public final class DropDrawerStore {
             return
         }
         let queueDir = groupURL.appendingPathComponent("pending_shares", isDirectory: true)
-        guard let entries = try? fm.contentsOfDirectory(at: queueDir, includingPropertiesForKeys: nil),
+        guard let entries = try? fm.contentsOfDirectory(
+            at: queueDir,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ),
               !entries.isEmpty
         else { return }
 
         var filesToAdd: [URL] = []
         var textsToAdd: [String] = []
+        var stagingDirs: [URL] = []
         for url in entries {
             if url.pathExtension.lowercased() == "ddtext",
                let text = try? String(contentsOf: url, encoding: .utf8) {
                 textsToAdd.append(text)
                 try? fm.removeItem(at: url)
+            } else if let original = Self.queuedOriginalName(url.lastPathComponent) {
+                // The extension prefixes a timestamp to keep queue names unique;
+                // the drawer item gets the file's own name.
+                let staging = queueDir.appendingPathComponent(".staging-\(UUID().uuidString)", isDirectory: true)
+                let dest = staging.appendingPathComponent(original)
+                if (try? fm.createDirectory(at: staging, withIntermediateDirectories: true)) != nil,
+                   (try? fm.moveItem(at: url, to: dest)) != nil {
+                    filesToAdd.append(dest)
+                    stagingDirs.append(staging)
+                } else {
+                    filesToAdd.append(url)
+                }
             } else {
                 filesToAdd.append(url)
             }
@@ -1603,6 +1670,20 @@ public final class DropDrawerStore {
                 try? fm.removeItem(at: url)
             }
         }
+        for dir in stagingDirs {
+            try? fm.removeItem(at: dir)
+        }
+    }
+
+    /// `"<milliseconds>_<name>"` as written by the Share Extension → `<name>`.
+    nonisolated static func queuedOriginalName(_ queued: String) -> String? {
+        guard let separator = queued.firstIndex(of: "_") else { return nil }
+        let stamp = queued[..<separator]
+        let name = String(queued[queued.index(after: separator)...])
+        guard stamp.count >= 12, stamp.allSatisfy(\.isASCII), stamp.allSatisfy(\.isNumber),
+              !name.isEmpty
+        else { return nil }
+        return name
     }
 
     // MARK: - Local File & Thumbnail Helpers
@@ -1628,7 +1709,9 @@ public final class DropDrawerStore {
         }
         let fm = FileManager.default
         let dir = downloadsDirectory()
-        let safeName = (fileName as NSString).lastPathComponent
+        // Names come from other devices: "." / ".." would point at a directory.
+        let lastComponent = (fileName as NSString).lastPathComponent
+        let safeName = (lastComponent == "." || lastComponent == "..") ? "" : lastComponent
         var dest = dir.appendingPathComponent(safeName.isEmpty ? itemId : safeName)
         if fm.fileExists(atPath: dest.path) {
             let stem = dest.deletingPathExtension().lastPathComponent

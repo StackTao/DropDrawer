@@ -239,11 +239,20 @@ pub(crate) struct StartRequest {
 
 pub(crate) async fn start(
     State(state): State<Arc<AppState>>,
+    crate::admin::ClientIp(ip): crate::admin::ClientIp,
     body: axum::body::Bytes,
 ) -> Result<Response, LoginError> {
     if !state.runtime_settings().google.enabled {
         return Err(UNAVAILABLE);
     }
+    // Per-IP budget, so one client can't fill the shared pool of pending flows.
+    if state.google_starts_by_ip.is_blocked(&ip) {
+        return Err(LoginError(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many Google sign-in attempts. Try again shortly.",
+        ));
+    }
+    state.google_starts_by_ip.record_failure(&ip);
     let req = if body.is_empty() {
         StartRequest::default()
     } else {

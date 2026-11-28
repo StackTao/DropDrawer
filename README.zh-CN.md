@@ -115,6 +115,11 @@ DropDrawer 的发布版本每天自动检查一次更新，有新版时在抽屉
 
 ```bash
 cp -n .env.example .env
+# 容器以 UID 10001 运行；Linux 上请先把数据目录交给它，否则无法写入数据库。
+mkdir -p deploy/data/server && sudo chown 10001:10001 deploy/data/server
+# 方式 A：拉取预构建的多架构 GHCR 镜像（最快，无需编译 Rust）
+docker compose --env-file .env -f deploy/docker-compose.prebuilt.yml up -d
+# 方式 B：从本地源码构建
 docker compose --env-file .env -f deploy/docker-compose.yml up -d --build
 
 curl -fsS http://localhost:8080/health
@@ -122,7 +127,7 @@ curl -fsS http://localhost:8080/health
 
 也可运行 `cargo run --bin dropdrawer-server` 启动本地开发实例。局域网中的其他设备填写运行服务端的主机地址，例如 `http://192.168.1.10:8080`。
 
-未设置 `DROPDRAWER_JWT_SECRET` 时，服务端会在首次启动时生成随机密钥并保存在数据库旁的 `jwt_secret` 文件中；也可以自行设置足够长的随机值。所需账号都创建好后，请设置 `DROPDRAWER_ALLOW_REGISTRATION=false` 关闭注册。生产部署请使用支持 WebSocket 升级的 HTTPS 反向代理。大文件传输需关闭代理缓冲，并按实际需求调整上传大小上限。外链下载要求收件人能够访问服务端。[生产 Compose 模板](deploy/compose.baota.yml) · [架构文档](docs/ARCHITECTURE.md)
+未设置 `DROPDRAWER_JWT_SECRET` 时，服务端会在首次启动时生成随机密钥并保存在数据库旁的 `jwt_secret` 文件中。网盘凭据等存储的密钥用 `DROPDRAWER_SECRET_KEY` 加密，未设置时使用数据库旁自动生成的 `secret_key` 文件；请把它和数据库一起备份，丢失后凭据无法恢复。两者也可以自行设置足够长的随机值。所需账号都创建好后，请设置 `DROPDRAWER_ALLOW_REGISTRATION=false` 关闭注册。生产部署请使用支持 WebSocket 升级的 HTTPS 反向代理。大文件传输需关闭代理缓冲，并按实际需求调整上传大小上限。外链下载要求收件人能够访问服务端。[生产 Compose 模板](deploy/compose.baota.yml) · [架构文档](docs/ARCHITECTURE.md)
 
 按 [Google 登录配置指南](docs/GOOGLE_SIGN_IN.md) 启用 Google 登录。在各设备使用同一 Google 账号即可访问同一个抽屉。
 
@@ -173,7 +178,7 @@ cargo test --workspace
 (cd apple/DropDrawerCore && swift test)
 ```
 
-如需独立验证 P2P，可用 `cargo run --bin dropdrawer-p2p-cli -- seed ./sample.zip` 生成传输票据，再在另一端运行 `cargo run --bin dropdrawer-p2p-cli -- pull '<TICKET_JSON>' ./received.zip`。
+如需独立验证 P2P，可用 `cargo run --bin dropdrawer-p2p-cli -- seed ./sample.zip` 生成传输票据和本次运行的令牌，再在另一端运行 `cargo run --bin dropdrawer-p2p-cli -- pull '<TICKET_JSON>' <TOKEN> ./received.zip`。
 
 欢迎到 [LINUX DO 社区](https://linux.do/) 交流。
 

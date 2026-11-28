@@ -186,7 +186,7 @@ pub(super) async fn reset_password(
     }
     // Sessions opened with the old password end with it.
     state.revoke_user_sessions(&id, None).await.map_err(internal_err)?;
-    state.failed_logins.reset(&user.username.to_lowercase());
+    state.reset_login_failures(&user.username, user.email.as_deref());
     audit(&state, &admin, "user.reset_password", Some(&user.username), None);
     Ok(Json(serde_json::json!({ "ok": true })))
 }
@@ -299,9 +299,15 @@ pub(super) async fn remove_device(
         .map_err(internal_err)?
         .ok_or_else(|| not_found("device"))?;
     let key = (id.clone(), device_id.clone());
-    state.connections.remove(&key);
-    state.ready_files.remove(&key);
-    state.background_push_devices.remove(&key);
+    {
+        let _presence = state.presence_changes.lock().await;
+        if let Some((_, connection)) = state.connections.remove(&key) {
+            connection.close();
+        }
+        state.ready_files.remove(&key);
+        state.browser_share_devices.remove(&key);
+        state.background_push_devices.remove(&key);
+    }
     state
         .db
         .remove_device_by_admin(&device_id, &id)

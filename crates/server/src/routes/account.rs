@@ -29,8 +29,15 @@ pub(super) async fn auth_public_config(State(state): State<Arc<AppState>>) -> Js
 
 pub(super) async fn send_email_code(
     State(state): State<Arc<AppState>>,
+    ClientIp(ip): ClientIp,
     Json(req): Json<SendEmailCodeRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if state.email_sends_by_ip.is_blocked(&ip) {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            t!("发送验证码过于频繁，请稍后再试", "Too many code requests. Try again later").to_string(),
+        ));
+    }
     let email = req.email.trim().to_ascii_lowercase();
     if !is_valid_email(&email) {
         return Err((StatusCode::BAD_REQUEST, t!("邮箱地址格式无效", "Invalid email address").to_string()));
@@ -56,6 +63,7 @@ pub(super) async fn send_email_code(
             t!("发送验证码过于频繁，请稍后再试", "Too many code requests. Try again later").to_string(),
         ));
     }
+    state.email_sends_by_ip.record_failure(&ip);
     if let Some(last) = state
         .db
         .last_email_verification_at(&email, purpose)
@@ -166,7 +174,7 @@ pub(super) async fn reset_password(
         return Err((StatusCode::FORBIDDEN, t!("该账号当前不可重置密码", "This account's password can't be reset right now").to_string()));
     }
 
-    let hash = hash_password(&req.new_password).map_err(internal_err)?;
+    let hash = hash_password_blocking(&req.new_password).await.map_err(internal_err)?;
     state
         .db
         .update_user_password(&user.id, &hash)
@@ -181,8 +189,16 @@ pub(super) async fn reset_password(
 
 pub(super) async fn register(
     State(state): State<Arc<AppState>>,
+    ClientIp(ip): ClientIp,
     Json(req): Json<RegisterRequest>,
 ) -> Result<Json<AuthResponse>, (StatusCode, String)> {
+    if state.registrations_by_ip.is_blocked(&ip) {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            t!("注册尝试过于频繁，请稍后再试", "Too many sign-up attempts. Try again later").to_string(),
+        ));
+    }
+    state.registrations_by_ip.record_failure(&ip);
     let settings = state.runtime_settings();
     match settings.registration_mode {
         RegistrationMode::Closed => {
@@ -280,7 +296,7 @@ pub(super) async fn register(
         }
     }
 
-    let hash = hash_password(&req.password).map_err(internal_err)?;
+    let hash = hash_password_blocking(&req.password).await.map_err(internal_err)?;
     let user_id = Uuid::new_v4().to_string();
     let user = state
         .db
@@ -410,7 +426,7 @@ pub(super) async fn change_own_password(
     // A Google-only account adding its first password must also prove it is the holder.
     confirm_account_holder(&auth, &user, req.current_password.as_deref()).await?;
 
-    let hash = hash_password(&req.new_password).map_err(internal_err)?;
+    let hash = hash_password_blocking(&req.new_password).await.map_err(internal_err)?;
     state
         .db
         .update_user_password(&user.id, &hash)
@@ -420,10 +436,7 @@ pub(super) async fn change_own_password(
         .revoke_user_sessions(&user.id, req.device_id.as_deref())
         .await
         .map_err(internal_err)?;
-    state.failed_logins.reset(&user.username.to_lowercase());
-    if let Some(ref email) = user.email {
-        state.failed_logins.reset(&email.to_lowercase());
-    }
+    state.reset_login_failures(&user.username, user.email.as_deref());
     let token = issue_user_token(&state, &user.id, &user.username).map_err(internal_err)?;
     Ok(Json(AuthResponse {
         token,

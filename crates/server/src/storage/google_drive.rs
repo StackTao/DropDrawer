@@ -24,12 +24,32 @@ struct CachedToken {
     expires_at: Instant,
 }
 
+type TokenSlot = Arc<Mutex<Option<CachedToken>>>;
+
+/// A provider is built for every request, so the access token is cached per
+/// credential set for the whole process; otherwise each request would spend an
+/// extra round trip refreshing it. Keyed by a hash so no secret is held twice.
+static TOKEN_CACHE: std::sync::LazyLock<dashmap::DashMap<[u8; 32], TokenSlot>> =
+    std::sync::LazyLock::new(dashmap::DashMap::new);
+
+fn token_slot(token_endpoint: &str, cfg: &GoogleDriveConfig) -> TokenSlot {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    for part in [token_endpoint, &cfg.client_id, &cfg.client_secret, &cfg.refresh_token] {
+        hasher.update((part.len() as u64).to_be_bytes());
+        hasher.update(part.as_bytes());
+    }
+    let key: [u8; 32] = hasher.finalize().into();
+    TOKEN_CACHE.entry(key).or_default().clone()
+}
+
 /// Native Google Drive API v3 storage provider (OAuth2 refresh token + Resumable Upload).
 /// Zero external sidecars required.
 pub struct GoogleDriveProvider {
     http: reqwest::Client,
     cfg: GoogleDriveConfig,
-    token_cache: Arc<Mutex<Option<CachedToken>>>,
+    token_cache: TokenSlot,
+    guard: crate::net_guard::PrivateNetworkGuard,
 }
 
 #[derive(Debug, Deserialize)]
@@ -71,11 +91,24 @@ struct DriveQuota {
 
 impl GoogleDriveProvider {
     pub fn new(http: reqwest::Client, cfg: GoogleDriveConfig) -> Self {
+        let endpoint = cfg
+            .token_url
+            .clone()
+            .unwrap_or_else(|| "https://oauth2.googleapis.com/token".to_string());
+        let token_cache = token_slot(&endpoint, &cfg);
         Self {
             http,
             cfg,
-            token_cache: Arc::new(Mutex::new(None)),
+            token_cache,
+            guard: Default::default(),
         }
+    }
+
+    /// Applies the storage policy's private-network block to URLs this
+    /// provider receives from the remote API.
+    pub fn with_network_guard(mut self, guard: crate::net_guard::PrivateNetworkGuard) -> Self {
+        self.guard = guard;
+        self
     }
 
     fn api_base(&self) -> String {
@@ -177,6 +210,7 @@ impl StorageProvider for GoogleDriveProvider {
             .and_then(|v| v.to_str().ok())
             .ok_or_else(|| anyhow::anyhow!("Google Drive resumable init missing Location header"))?
             .to_string();
+        self.guard.check_url(&session_uri)?;
 
         // Step 2: Stream file body directly to Google Drive resumable session URI (zero local disk buffering)
         let counter = Arc::new(std::sync::atomic::AtomicU64::new(0));

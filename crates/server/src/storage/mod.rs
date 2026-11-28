@@ -14,6 +14,87 @@ use protocol::StorageBackendConfig;
 
 pub type ByteStream = Pin<Box<dyn Stream<Item = Result<Bytes, anyhow::Error>> + Send + 'static>>;
 
+/// Default upper bound on temporary spool files for providers that must hash
+/// the full upload before forwarding (Quark, Baidu). Override with
+/// `DROPDRAWER_MAX_SPOOL_BYTES` if larger proxy uploads are needed.
+pub const DEFAULT_MAX_SPOOL_BYTES: u64 = 10 * 1024 * 1024 * 1024;
+
+static MAX_SPOOL_BYTES: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+
+/// Sets the spool limit once at startup (from the environment or the env
+/// file, like every other setting).
+pub fn set_max_spool_bytes(bytes: u64) {
+    let _ = MAX_SPOOL_BYTES.set(bytes);
+}
+
+fn max_spool_bytes() -> u64 {
+    MAX_SPOOL_BYTES.get().copied().unwrap_or(DEFAULT_MAX_SPOOL_BYTES)
+}
+
+/// Temporary copy of an upload for providers that must hash the whole file
+/// before sending it (Quark, Baidu). The file is removed when this value is
+/// dropped, so an aborted or failed upload never leaves data behind.
+pub(crate) struct SpoolFile {
+    path: std::path::PathBuf,
+}
+
+impl SpoolFile {
+    pub(crate) fn new(prefix: &str) -> Self {
+        Self {
+            path: std::env::temp_dir().join(format!("{prefix}_{}.tmp", uuid::Uuid::new_v4())),
+        }
+    }
+
+    pub(crate) fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+
+    /// Writes `stream` into the spool file, calling `inspect` on every chunk.
+    /// Enforces both `declared_len` (when present) and the server spool limit
+    /// so chunked or oversized bodies can never exhaust the temp directory.
+    pub(crate) async fn fill(
+        &self,
+        mut stream: ByteStream,
+        declared_len: Option<u64>,
+        mut inspect: impl FnMut(&[u8]),
+    ) -> anyhow::Result<u64> {
+        use futures_util::StreamExt;
+        use tokio::io::AsyncWriteExt;
+
+        let cap = max_spool_bytes();
+        if let Some(len) = declared_len.filter(|&len| len > cap) {
+            anyhow::bail!("upload exceeds server spool limit ({len} > {cap} bytes)");
+        }
+
+        let mut opts = tokio::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        opts.mode(0o600);
+        let mut file = opts.open(&self.path).await?;
+        let mut total = 0u64;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            total += chunk.len() as u64;
+            if total > cap {
+                anyhow::bail!("upload exceeds server spool limit ({cap} bytes)");
+            }
+            if declared_len.is_some_and(|len| total > len) {
+                anyhow::bail!("upload is larger than its declared size");
+            }
+            inspect(&chunk);
+            file.write_all(&chunk).await?;
+        }
+        file.flush().await?;
+        Ok(total)
+    }
+}
+
+impl Drop for SpoolFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
 /// Result returned by a storage provider after storing an object.
 /// `stored_key` is persisted on the drawer item (e.g. a Google Drive fileId, Quark fid, Baidu fs_id|path, or S3 key).
 #[derive(Debug, Clone)]
@@ -72,6 +153,7 @@ pub trait StorageProvider: Send + Sync {
 pub fn build_provider(
     config: &StorageBackendConfig,
     http: reqwest::Client,
+    guard: &crate::net_guard::PrivateNetworkGuard,
 ) -> anyhow::Result<Box<dyn StorageProvider>> {
     match config {
         StorageBackendConfig::Local {
@@ -98,7 +180,8 @@ pub fn build_provider(
                 api_base_url: api_base_url.clone(),
                 token_url: token_url.clone(),
             },
-        ))),
+        )
+        .with_network_guard(guard.clone()))),
         StorageBackendConfig::Quark {
             cookie,
             root_folder_id,
@@ -108,12 +191,14 @@ pub fn build_provider(
             cookie.clone(),
             root_folder_id.clone(),
             api_base_url.clone(),
-        ))),
+        )
+        .with_network_guard(guard.clone()))),
         StorageBackendConfig::BaiduNetdisk { .. } => Ok(Box::new(baidu::BaiduNetdiskProvider::new(
             http,
             baidu::BaiduNetdiskConfig::from_backend(config)
                 .ok_or_else(|| anyhow::anyhow!("not a Baidu Netdisk configuration"))?,
-        ))),
+        )
+        .with_network_guard(guard.clone()))),
         StorageBackendConfig::WebDav {
             base_url,
             username,
@@ -144,5 +229,29 @@ pub fn build_provider(
                 force_path_style: *force_path_style,
             },
         )?)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn spool_file_is_private_and_removed_on_drop() {
+        let spool = SpoolFile::new("dropdrawer_test_spool");
+        let path = spool.path().to_path_buf();
+        let stream: ByteStream =
+            Box::pin(futures_util::stream::iter([Ok(bytes::Bytes::from_static(b"secret"))]));
+        let n = spool.fill(stream, Some(6), |_| {}).await.unwrap();
+        assert_eq!(n, 6);
+        assert!(path.exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+        drop(spool);
+        assert!(!path.exists());
     }
 }

@@ -1423,15 +1423,26 @@ impl Database {
         .map_err(Into::into)
     }
 
+    /// The newest 200 items, as the drawer list shows them.
     pub fn list_drawer_items(&self, user_id: &str) -> anyhow::Result<Vec<DrawerItemRow>> {
+        self.query_drawer_items(user_id, 200)
+    }
+
+    /// Every item of a user. Bulk deletion must use this so items beyond the
+    /// list page never lose their records while their storage objects remain.
+    pub fn list_all_drawer_items(&self, user_id: &str) -> anyhow::Result<Vec<DrawerItemRow>> {
+        self.query_drawer_items(user_id, -1)
+    }
+
+    fn query_drawer_items(&self, user_id: &str, limit: i64) -> anyhow::Result<Vec<DrawerItemRow>> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT id, user_id, owner_device_id, kind, name, size, mime_type,
                     blake3_hash, text_content, thumbnail_base64, transfer_mode,
                     storage_backend_id, storage_path, cloud_ready, expires_at, created_at
-             FROM drawer_items WHERE user_id = ?1 ORDER BY created_at DESC LIMIT 200",
+             FROM drawer_items WHERE user_id = ?1 ORDER BY created_at DESC LIMIT ?2",
         )?;
-        let rows = stmt.query_map(params![user_id], Self::map_item_row)?;
+        let rows = stmt.query_map(params![user_id, limit], Self::map_item_row)?;
         let mut out = Vec::new();
         for r in rows {
             out.push(r?);

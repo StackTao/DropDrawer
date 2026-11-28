@@ -40,6 +40,10 @@ class MainActivity : FlutterActivity() {
     private var pendingMediaResult: MethodChannel.Result? = null
     private val pendingFiles = mutableListOf<String>()
     private val pendingTexts = mutableListOf<String>()
+    /** Shared files still being copied off the main thread. */
+    private var shareCopiesInFlight = 0
+    /** `consumePendingShares` calls that arrived while a copy was running. */
+    private val waitingShareConsumers = mutableListOf<MethodChannel.Result>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -68,13 +72,13 @@ class MainActivity : FlutterActivity() {
     private fun handleMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "consumePendingShares" -> {
-                val payload = mapOf(
-                    "files" to pendingFiles.toList(),
-                    "texts" to pendingTexts.toList(),
-                )
-                pendingFiles.clear()
-                pendingTexts.clear()
-                result.success(payload)
+                // At cold start Flutter may ask before a large shared video is
+                // copied; answer once the copy is done instead of with nothing.
+                if (shareCopiesInFlight > 0) {
+                    waitingShareConsumers.add(result)
+                } else {
+                    result.success(takePendingShares())
+                }
             }
             "pickMedia" -> pickMedia(result)
             "shareFiles" -> {
@@ -92,7 +96,11 @@ class MainActivity : FlutterActivity() {
             }
             "saveToGallery" -> {
                 val path = call.argument<String>("path") ?: ""
-                result.success(saveToGallery(path))
+                // Copying a large video into MediaStore must not block the UI thread.
+                Thread {
+                    val saved = saveToGallery(path)
+                    runOnUiThread { result.success(saved) }
+                }.start()
             }
             "openExternalUrl" -> {
                 val url = call.argument<String>("url") ?: ""
@@ -234,14 +242,14 @@ class MainActivity : FlutterActivity() {
     private fun handleShareIntent(intent: Intent?, pushLive: Boolean) {
         if (intent == null) return
         val action = intent.action ?: return
-        val newFiles = mutableListOf<String>()
+        val uris = mutableListOf<Uri>()
         val newTexts = mutableListOf<String>()
 
         when (action) {
             Intent.ACTION_SEND -> {
                 val stream = getParcelableUri(intent, Intent.EXTRA_STREAM)
                 if (stream != null) {
-                    copyUriToIncomingCache(stream)?.let { newFiles.add(it) }
+                    uris.add(stream)
                 } else {
                     val text = intent.getStringExtra(Intent.EXTRA_TEXT)
                     if (!text.isNullOrBlank()) {
@@ -250,25 +258,58 @@ class MainActivity : FlutterActivity() {
                 }
             }
             Intent.ACTION_SEND_MULTIPLE -> {
-                val streams = getParcelableUriList(intent, Intent.EXTRA_STREAM)
-                for (uri in streams) {
-                    copyUriToIncomingCache(uri)?.let { newFiles.add(it) }
-                }
+                uris.addAll(getParcelableUriList(intent, Intent.EXTRA_STREAM))
             }
         }
 
-        if (newFiles.isEmpty() && newTexts.isEmpty()) return
-
-        val channel = mobileChannel
-        if (pushLive && channel != null) {
-            channel.invokeMethod(
-                "onSharedPayload",
-                mapOf("files" to newFiles, "texts" to newTexts),
-            )
-        } else {
-            pendingFiles.addAll(newFiles)
-            pendingTexts.addAll(newTexts)
+        if (uris.isEmpty()) {
+            deliverShared(emptyList(), newTexts, pushLive)
+            return
         }
+        // Copying shared videos can take seconds; doing it here would freeze
+        // the app (ANR). The URI grants last as long as this activity.
+        shareCopiesInFlight++
+        Thread {
+            val newFiles = uris.mapNotNull { copyUriToIncomingCache(it) }
+            runOnUiThread {
+                shareCopiesInFlight--
+                deliverShared(newFiles, newTexts, pushLive)
+            }
+        }.start()
+    }
+
+    private fun deliverShared(newFiles: List<String>, newTexts: List<String>, pushLive: Boolean) {
+        if (newFiles.isNotEmpty() || newTexts.isNotEmpty()) {
+            val channel = mobileChannel
+            if (pushLive && channel != null) {
+                channel.invokeMethod(
+                    "onSharedPayload",
+                    mapOf("files" to newFiles, "texts" to newTexts),
+                )
+            } else {
+                pendingFiles.addAll(newFiles)
+                pendingTexts.addAll(newTexts)
+            }
+        }
+        if (shareCopiesInFlight == 0 && waitingShareConsumers.isNotEmpty()) {
+            val waiting = waitingShareConsumers.toList()
+            waitingShareConsumers.clear()
+            for (consumer in waiting) {
+                try {
+                    consumer.success(takePendingShares())
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    private fun takePendingShares(): Map<String, List<String>> {
+        val payload = mapOf(
+            "files" to pendingFiles.toList(),
+            "texts" to pendingTexts.toList(),
+        )
+        pendingFiles.clear()
+        pendingTexts.clear()
+        return payload
     }
 
     @Suppress("DEPRECATION")
@@ -292,7 +333,20 @@ class MainActivity : FlutterActivity() {
     private fun copyUriToIncomingCache(uri: Uri): String? =
         copyUriToCacheDir(uri, "shared_incoming")
 
+    /**
+     * Only content another app grants us may be imported. Any app can send
+     * ACTION_SEND with a file:// URI or a URI of our own FileProvider; reading
+     * those with DropDrawer's identity would expose its private files (session,
+     * P2P key). `uri.host` drops a user prefix, so `content://0@<our authority>/…`
+     * is refused too, while shares forwarded from a work profile
+     * (`content://10@media/…`) still work.
+     */
+    private fun isImportableUri(uri: Uri): Boolean =
+        uri.scheme.equals("content", ignoreCase = true) &&
+            !uri.host.equals("$packageName.fileprovider", ignoreCase = true)
+
     private fun copyUriToCacheDir(uri: Uri, subDir: String): String? {
+        if (!isImportableUri(uri)) return null
         return try {
             val dir = File(cacheDir, subDir).apply { mkdirs() }
             val rawName = queryDisplayName(uri) ?: "media_${System.currentTimeMillis()}"
@@ -322,9 +376,6 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun queryDisplayName(uri: Uri): String? {
-        if (uri.scheme == "file") {
-            return uri.lastPathSegment
-        }
         contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
             if (cursor.moveToFirst()) {
                 val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
@@ -572,7 +623,7 @@ class MainActivity : FlutterActivity() {
 
         val item = clip.getItemAt(0)
         val uri = item.uri
-        if (uri != null && imagePath.isNotBlank()) {
+        if (uri != null && imagePath.isNotBlank() && isImportableUri(uri)) {
             val mime = contentResolver.getType(uri) ?: ""
             if (mime.startsWith("image/")) {
                 try {

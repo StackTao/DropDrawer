@@ -146,16 +146,21 @@ function buildDlUrl(itemId, session) {
   return shareApi + "/download?" + params.toString();
 }
 
-async function load(errMsg) {
-  const q = currentPasscode ? ("?passcode=" + encodeURIComponent(currentPasscode)) : "";
-  const resp = await fetch("/api/s/" + encodeURIComponent(code) + "/meta" + q);
+async function load(errMsg, preloaded) {
   const el = document.getElementById("app");
-  if (!resp.ok) {
-    const t = await resp.text();
-    el.innerHTML = `<p class="name">${T.cantOpen}</p><p class="err">${esc(t || resp.statusText)}</p>`;
-    return;
+  // Opening a text share with a download limit counts as a download, so the
+  // response of a successful unlock is rendered as is instead of fetched again.
+  let d = preloaded;
+  if (!d) {
+    const q = currentPasscode ? ("?passcode=" + encodeURIComponent(currentPasscode)) : "";
+    const resp = await fetch("/api/s/" + encodeURIComponent(code) + "/meta" + q);
+    if (!resp.ok) {
+      const t = await resp.text();
+      el.innerHTML = `<p class="name">${T.cantOpen}</p><p class="err">${esc(t || resp.statusText)}</p>`;
+      return;
+    }
+    d = await resp.json();
   }
-  const d = await resp.json();
   const items = Array.isArray(d.items) ? d.items : [];
   const countInfo = d.item_count > 1 ? T.count(d.item_count) : "";
   const limitInfo = T.downloads(d.download_count, d.max_downloads);
@@ -247,7 +252,7 @@ async function unlock() {
     load(T.wrongPasscode);
   } else {
     currentPasscode = typed;
-    load();
+    load(undefined, d);
   }
 }
 

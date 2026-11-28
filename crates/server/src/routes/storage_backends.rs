@@ -35,10 +35,31 @@ pub(super) async fn create_storage_backend(
                 .to_string(),
             max_bytes,
         },
+        StorageBackendConfig::S3 {
+            endpoint,
+            region,
+            bucket,
+            access_key_id,
+            secret_access_key,
+            prefix,
+            force_path_style,
+        } => StorageBackendConfig::S3 {
+            endpoint,
+            region,
+            bucket: bucket.trim().to_string(),
+            access_key_id,
+            secret_access_key,
+            prefix,
+            force_path_style,
+        },
         other => other,
     };
     let settings = state.runtime_settings();
     policy::ensure_backend_kind_allowed(&settings.storage_policy, config.kind())?;
+    if let StorageBackendConfig::S3 { bucket, .. } = &config {
+        crate::storage::s3::validate_bucket_name(bucket)
+            .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    }
     policy::ensure_endpoints_allowed(&settings, &config)
         .await
         .map_err(|e| (StatusCode::FORBIDDEN, e.to_string()))?;

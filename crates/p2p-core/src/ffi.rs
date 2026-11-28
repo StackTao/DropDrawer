@@ -3,7 +3,8 @@ mod android;
 
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -13,6 +14,9 @@ use crate::{DownloadFileReq, P2pConfig, P2pNode};
 
 static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 static NODE: OnceLock<Mutex<Option<Arc<P2pNode>>>> = OnceLock::new();
+/// Held for a whole start or shutdown, so a shutdown racing a start can't leave
+/// an endpoint running that no slot refers to (or bring one back after shutdown).
+static LIFECYCLE: Mutex<()> = Mutex::new(());
 
 fn runtime() -> &'static Runtime {
     RUNTIME.get_or_init(|| {
@@ -24,8 +28,31 @@ fn runtime() -> &'static Runtime {
     })
 }
 
-fn node_slot() -> &'static Mutex<Option<Arc<P2pNode>>> {
+/// The current node. A panic caught by [`ffi_call`] may have poisoned the
+/// lock; the slot itself is always consistent, so keep using it.
+fn node_slot() -> MutexGuard<'static, Option<Arc<P2pNode>>> {
     NODE.get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn lifecycle() -> MutexGuard<'static, ()> {
+    LIFECYCLE.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Runs an exported call. A panic must never unwind into the host app (it
+/// aborts the process), so it becomes an error result instead.
+fn ffi_call<T: Serialize>(f: impl FnOnce() -> Result<T, String>) -> *mut c_char {
+    let res = catch_unwind(AssertUnwindSafe(f)).unwrap_or_else(|panic| {
+        let reason = panic
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| panic.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "unknown panic".to_string());
+        tracing::error!("P2P native call panicked: {reason}");
+        Err(format!("internal P2P error: {reason}"))
+    });
+    to_c_json(res)
 }
 
 #[derive(Serialize)]
@@ -70,8 +97,6 @@ unsafe fn parse_c_str(ptr: *const c_char) -> Result<String, String> {
 
 fn current_node() -> Result<Arc<P2pNode>, String> {
     node_slot()
-        .lock()
-        .map_err(|_| "mutex poisoned".to_string())?
         .clone()
         .ok_or_else(|| "P2P node is not started".to_string())
 }
@@ -81,14 +106,12 @@ fn current_node() -> Result<Arc<P2pNode>, String> {
 /// for the duration of this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dropdrawer_p2p_start(config_json: *const c_char) -> *mut c_char {
-    let res = (|| -> Result<_, String> {
+    ffi_call(|| -> Result<_, String> {
         let raw = unsafe { parse_c_str(config_json)? };
         let cfg: P2pConfig = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
         // Restarting must not leave the previous endpoint running and bound.
-        let previous = node_slot()
-            .lock()
-            .map_err(|_| "mutex poisoned".to_string())?
-            .take();
+        let _lifecycle = lifecycle();
+        let previous = node_slot().take();
         if let Some(previous) = previous {
             runtime().block_on(previous.shutdown());
         }
@@ -96,18 +119,14 @@ pub unsafe extern "C" fn dropdrawer_p2p_start(config_json: *const c_char) -> *mu
             .block_on(P2pNode::start(cfg, true))
             .map_err(|e| e.to_string())?;
         let info = node.node_info();
-        *node_slot()
-            .lock()
-            .map_err(|_| "mutex poisoned".to_string())? = Some(node);
+        *node_slot() = Some(node);
         Ok(info)
-    })();
-    to_c_json(res)
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn dropdrawer_p2p_node_info() -> *mut c_char {
-    let res = current_node().map(|n| n.node_info());
-    to_c_json(res)
+    ffi_call(|| current_node().map(|n| n.node_info()))
 }
 
 #[derive(Deserialize)]
@@ -121,7 +140,7 @@ struct RegisterFileReq {
 /// for the duration of this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dropdrawer_p2p_register_file(req_json: *const c_char) -> *mut c_char {
-    let res = (|| -> Result<_, String> {
+    ffi_call(|| -> Result<_, String> {
         let node = current_node()?;
         let raw = unsafe { parse_c_str(req_json)? };
         let req: RegisterFileReq = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
@@ -137,8 +156,7 @@ pub unsafe extern "C" fn dropdrawer_p2p_register_file(req_json: *const c_char) -
             }
         });
         Ok(info)
-    })();
-    to_c_json(res)
+    })
 }
 
 #[derive(Deserialize)]
@@ -155,7 +173,7 @@ struct AuthorizeTokenReq {
 /// for the duration of this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dropdrawer_p2p_authorize_token(req_json: *const c_char) -> *mut c_char {
-    let res = (|| -> Result<_, String> {
+    ffi_call(|| -> Result<_, String> {
         let node = current_node()?;
         let raw = unsafe { parse_c_str(req_json)? };
         let req: AuthorizeTokenReq = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
@@ -166,8 +184,7 @@ pub unsafe extern "C" fn dropdrawer_p2p_authorize_token(req_json: *const c_char)
             req.requester_node_id,
         );
         Ok(true)
-    })();
-    to_c_json(res)
+    })
 }
 
 /// # Safety
@@ -175,13 +192,12 @@ pub unsafe extern "C" fn dropdrawer_p2p_authorize_token(req_json: *const c_char)
 /// for the duration of this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dropdrawer_p2p_unregister_file(item_id: *const c_char) -> *mut c_char {
-    let res = (|| -> Result<_, String> {
+    ffi_call(|| -> Result<_, String> {
         let node = current_node()?;
         let id = unsafe { parse_c_str(item_id)? };
         node.unregister_file(&id);
         Ok(true)
-    })();
-    to_c_json(res)
+    })
 }
 
 /// # Safety
@@ -189,7 +205,7 @@ pub unsafe extern "C" fn dropdrawer_p2p_unregister_file(item_id: *const c_char) 
 /// for the duration of this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dropdrawer_p2p_download_file(req_json: *const c_char) -> *mut c_char {
-    let res = (|| -> Result<_, String> {
+    ffi_call(|| -> Result<_, String> {
         let node = current_node()?;
         let raw = unsafe { parse_c_str(req_json)? };
         let req: DownloadFileReq = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
@@ -199,8 +215,7 @@ pub unsafe extern "C" fn dropdrawer_p2p_download_file(req_json: *const c_char) -
             let _ = node.run_download(transfer, req).await;
         });
         Ok(id)
-    })();
-    to_c_json(res)
+    })
 }
 
 /// # Safety
@@ -208,15 +223,14 @@ pub unsafe extern "C" fn dropdrawer_p2p_download_file(req_json: *const c_char) -
 /// for the duration of this call. Call from a background thread.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dropdrawer_p2p_prepare_browser_share(req_json: *const c_char) -> *mut c_char {
-    let res = (|| -> Result<_, String> {
+    ffi_call(|| -> Result<_, String> {
         let node = current_node()?;
         let raw = unsafe { parse_c_str(req_json)? };
         let request = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
         runtime()
             .block_on(node.prepare_browser_share(request))
             .map_err(|e| e.to_string())
-    })();
-    to_c_json(res)
+    })
 }
 
 /// # Safety
@@ -224,34 +238,29 @@ pub unsafe extern "C" fn dropdrawer_p2p_prepare_browser_share(req_json: *const c
 /// for the duration of this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dropdrawer_p2p_cancel_transfer(transfer_id: *const c_char) -> *mut c_char {
-    let res = (|| -> Result<_, String> {
+    ffi_call(|| -> Result<_, String> {
         let node = current_node()?;
         let id = unsafe { parse_c_str(transfer_id)? };
         node.transfers.cancel(&id);
         Ok(true)
-    })();
-    to_c_json(res)
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn dropdrawer_p2p_poll_events() -> *mut c_char {
-    let res = current_node().map(|n| n.drain_events());
-    to_c_json(res)
+    ffi_call(|| current_node().map(|n| n.drain_events()))
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn dropdrawer_p2p_shutdown() -> *mut c_char {
-    let res = (|| -> Result<_, String> {
-        let maybe = node_slot()
-            .lock()
-            .map_err(|_| "mutex poisoned".to_string())?
-            .take();
+    ffi_call(|| -> Result<_, String> {
+        let _lifecycle = lifecycle();
+        let maybe = node_slot().take();
         if let Some(node) = maybe {
             runtime().block_on(node.shutdown());
         }
         Ok(true)
-    })();
-    to_c_json(res)
+    })
 }
 
 /// # Safety

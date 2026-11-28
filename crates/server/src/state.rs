@@ -20,8 +20,55 @@ use crate::storage::{build_provider, local::LocalProvider, StorageProvider};
 pub struct ConnectionHandle {
     pub user_id: String,
     pub device_id: String,
-    pub tx: mpsc::UnboundedSender<WsEvent>,
+    pub tx: mpsc::Sender<WsEvent>,
 }
+
+/// The queue of one open WebSocket, plus a signal that ends its handler at
+/// once. Removing a connection from [`AppState::connections`] alone would only
+/// take effect after the queued events drained, which never happens when the
+/// connection is dropped for being stuck.
+#[derive(Clone)]
+pub struct WsConnection {
+    tx: mpsc::Sender<WsEvent>,
+    closed: tokio_util::sync::CancellationToken,
+}
+
+impl WsConnection {
+    pub fn new(tx: mpsc::Sender<WsEvent>) -> Self {
+        Self {
+            tx,
+            closed: tokio_util::sync::CancellationToken::new(),
+        }
+    }
+
+    /// Ends the connection's handler now, even with events still queued.
+    pub fn close(&self) {
+        self.closed.cancel();
+    }
+
+    pub fn closed_signal(&self) -> tokio_util::sync::CancellationToken {
+        self.closed.clone()
+    }
+}
+
+impl std::ops::Deref for WsConnection {
+    type Target = mpsc::Sender<WsEvent>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.tx
+    }
+}
+
+impl From<mpsc::Sender<WsEvent>> for WsConnection {
+    fn from(tx: mpsc::Sender<WsEvent>) -> Self {
+        Self::new(tx)
+    }
+}
+
+/// Events queued for one WebSocket before the client counts as stuck. A
+/// client that stops reading is disconnected (it resyncs from a snapshot when
+/// it reconnects) instead of making the server buffer without limit.
+pub const WS_QUEUE_CAPACITY: usize = 4096;
 
 #[derive(Debug, Clone)]
 pub struct PendingGoogleOAuth {
@@ -41,7 +88,10 @@ pub struct AppState {
     pub jwt_secret: String,
     pub default_local_storage_dir: PathBuf,
     /// Active WebSocket connections keyed by `(user_id, device_id)`.
-    pub connections: DashMap<(String, String), mpsc::UnboundedSender<WsEvent>>,
+    pub connections: DashMap<(String, String), WsConnection>,
+    /// Cancelled when the server shuts down, so open WebSockets close and the
+    /// graceful shutdown doesn't wait on them.
+    pub ws_shutdown: tokio_util::sync::CancellationToken,
     pub(crate) ready_files: DashMap<(String, String), std::collections::BTreeMap<String, String>>,
     pub(crate) browser_share_devices: DashSet<(String, String)>,
     pub(crate) background_push_devices: DashSet<(String, String)>,
@@ -76,6 +126,14 @@ pub struct AppState {
     pub started_at: Instant,
     /// Email verification send attempts per email.
     pub email_send_limiter: AttemptLimiter,
+    /// Email verification sends per client IP (any address).
+    pub email_sends_by_ip: AttemptLimiter,
+    /// Account registrations per client IP.
+    pub registrations_by_ip: AttemptLimiter,
+    /// Google sign-in flows started per client IP.
+    pub google_starts_by_ip: AttemptLimiter,
+    /// Browser LAN download offers per client IP.
+    pub browser_share_offers_by_ip: AttemptLimiter,
     /// APNs / FCM delivery, when configured (see [`crate::push`]).
     push: std::sync::OnceLock<Arc<crate::push::PushService>>,
 }
@@ -87,7 +145,17 @@ pub struct AttemptLimiter {
     attempts: DashMap<String, (u32, Instant)>,
     max_failures: u32,
     window: Duration,
+    /// Last time expired keys were swept, so a flood of new keys costs one
+    /// full scan per second instead of one per failure.
+    last_sweep: std::sync::Mutex<Instant>,
 }
+
+/// Keys tracked before expired entries are swept.
+const LIMITER_SWEEP_AT: usize = 10_000;
+/// Hard ceiling on tracked keys; past it, low-count/oldest entries are evicted
+/// down to `LIMITER_TARGET_KEYS` so memory stays bounded under any key flood.
+const LIMITER_MAX_KEYS: usize = 100_000;
+const LIMITER_TARGET_KEYS: usize = LIMITER_MAX_KEYS * 3 / 4;
 
 impl AttemptLimiter {
     pub fn new(max_failures: u32, window: Duration) -> Self {
@@ -95,6 +163,7 @@ impl AttemptLimiter {
             attempts: DashMap::new(),
             max_failures,
             window,
+            last_sweep: std::sync::Mutex::new(Instant::now()),
         }
     }
 
@@ -104,10 +173,19 @@ impl AttemptLimiter {
             .is_some_and(|e| e.1.elapsed() < self.window && e.0 >= self.max_failures)
     }
 
+    /// Whether `key` failed at least once in the current window.
+    pub fn has_failures(&self, key: &str) -> bool {
+        self.attempts
+            .get(key)
+            .is_some_and(|e| e.1.elapsed() < self.window && e.0 > 0)
+    }
+
     pub fn record_failure(&self, key: &str) {
-        if self.attempts.len() > 10_000 {
-            let window = self.window;
-            self.attempts.retain(|_, e| e.1.elapsed() < window);
+        let len = self.attempts.len();
+        if len >= LIMITER_MAX_KEYS && !self.attempts.contains_key(key) {
+            self.sweep(true);
+        } else if len > LIMITER_SWEEP_AT {
+            self.sweep(false);
         }
         let mut entry = self
             .attempts
@@ -119,8 +197,49 @@ impl AttemptLimiter {
         entry.0 += 1;
     }
 
+    fn sweep(&self, force: bool) {
+        {
+            let Ok(mut last) = self.last_sweep.lock() else {
+                return;
+            };
+            if !force && last.elapsed() < Duration::from_secs(1) {
+                return;
+            }
+            *last = Instant::now();
+        }
+        let window = self.window;
+        self.attempts.retain(|_, e| e.1.elapsed() < window);
+        if self.attempts.len() > LIMITER_MAX_KEYS {
+            // Under a flood of distinct keys, first drop one-off failures so
+            // accounts close to (or over) the limit stay tracked.
+            self.attempts.retain(|_, e| e.0 > 1);
+        }
+        if self.attempts.len() > LIMITER_MAX_KEYS {
+            // A flood hitting each distinct key >= 2 times still must not grow
+            // unbounded: evict the lowest-count, oldest entries down to target.
+            let mut entries: Vec<(String, u32, Instant)> = self
+                .attempts
+                .iter()
+                .map(|e| (e.key().clone(), e.value().0, e.value().1))
+                .collect();
+            let to_drop = entries.len().saturating_sub(LIMITER_TARGET_KEYS);
+            if to_drop > 0 {
+                entries.select_nth_unstable_by(to_drop - 1, |a, b| a.1.cmp(&b.1).then(a.2.cmp(&b.2)));
+                for (key, _, _) in entries.into_iter().take(to_drop) {
+                    self.attempts.remove(&key);
+                }
+            }
+        }
+    }
+
     pub fn reset(&self, key: &str) {
         self.attempts.remove(key);
+    }
+
+    /// Clears every key ending in `suffix`, e.g. all `"{ip}|{username}"` login
+    /// counters of one account after its password was changed.
+    pub fn reset_suffix(&self, suffix: &str) {
+        self.attempts.retain(|key, _| !key.ends_with(suffix));
     }
 }
 
@@ -176,6 +295,7 @@ impl AppState {
             jwt_secret,
             default_local_storage_dir,
             connections: DashMap::new(),
+            ws_shutdown: tokio_util::sync::CancellationToken::new(),
             ready_files: DashMap::new(),
             browser_share_devices: DashSet::new(),
             background_push_devices: DashSet::new(),
@@ -199,6 +319,10 @@ impl AppState {
             settings_update: Mutex::new(()),
             started_at: Instant::now(),
             email_send_limiter: AttemptLimiter::new(10, Duration::from_secs(15 * 60)),
+            email_sends_by_ip: AttemptLimiter::new(20, Duration::from_secs(15 * 60)),
+            registrations_by_ip: AttemptLimiter::new(10, Duration::from_secs(60 * 60)),
+            google_starts_by_ip: AttemptLimiter::new(20, Duration::from_secs(60)),
+            browser_share_offers_by_ip: AttemptLimiter::new(60, Duration::from_secs(60)),
             push: std::sync::OnceLock::new(),
         })
     }
@@ -319,7 +443,9 @@ impl AppState {
             .map(|e| e.key().clone())
             .collect();
         for key in keys {
-            self.connections.remove(&key);
+            if let Some((_, connection)) = self.connections.remove(&key) {
+                connection.close();
+            }
             self.ready_files.remove(&key);
             self.browser_share_devices.remove(&key);
             self.background_push_devices.remove(&key);
@@ -435,11 +561,19 @@ impl AppState {
         Ok(true)
     }
 
+    /// Clears the per-IP login counters of an account (keys are `"{ip}|{name}"`).
+    pub(crate) fn reset_login_failures(&self, username: &str, email: Option<&str>) {
+        for name in std::iter::once(username).chain(email) {
+            self.failed_logins
+                .reset_suffix(&format!("|{}", name.trim().to_lowercase()));
+        }
+    }
+
     /// Deletes every drawer item of a user, storage files included. Returns how
     /// many could not be removed; those keep their records so cleanup can retry.
     pub(crate) async fn delete_all_drawer_items(&self, user_id: &str) -> anyhow::Result<usize> {
         let mut failed = 0;
-        for item in self.db.list_drawer_items(user_id)? {
+        for item in self.db.list_all_drawer_items(user_id)? {
             if let Err(err) = self
                 .delete_drawer_item_with_storage_policy(user_id, &item.id, true)
                 .await
@@ -503,27 +637,46 @@ impl AppState {
     }
 
     pub fn broadcast_user(&self, user_id: &str, event: WsEvent) {
-        for entry in self.connections.iter() {
-            if entry.key().0 == user_id {
-                let _ = entry.value().send(event.clone());
-            }
-        }
+        self.deliver(|key| key.0 == user_id, &event);
     }
 
     pub fn broadcast_all(&self, event: WsEvent) {
-        for entry in self.connections.iter() {
-            let _ = entry.value().send(event.clone());
-        }
+        self.deliver(|_| true, &event);
     }
 
     pub fn send_to_device(&self, user_id: &str, device_id: &str, event: WsEvent) -> bool {
-        if let Some(tx) = self
-            .connections
-            .get(&(user_id.to_string(), device_id.to_string()))
-        {
-            return tx.send(event).is_ok();
+        let key = (user_id.to_string(), device_id.to_string());
+        self.deliver(|k| *k == key, &event) > 0
+    }
+
+    /// Queues `event` for every connection whose key matches; returns how many
+    /// took it. Connections whose queue is full are dropped (see
+    /// [`WS_QUEUE_CAPACITY`]), after the map is no longer being iterated.
+    fn deliver(&self, matches: impl Fn(&(String, String)) -> bool, event: &WsEvent) -> usize {
+        let mut delivered = 0;
+        let mut stuck = Vec::new();
+        for entry in self.connections.iter().filter(|e| matches(e.key())) {
+            match entry.value().try_send(event.clone()) {
+                Ok(()) => delivered += 1,
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    stuck.push((entry.key().clone(), entry.value().clone()));
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {}
+            }
         }
-        false
+        for (key, tx) in stuck {
+            tracing::warn!(user_id = %key.0, device_id = %key.1, "dropping a WebSocket that stopped reading");
+            // Its queue is full, so the receiver would not see the sender go
+            // away until thousands of events drained. Signal the handler to end
+            // now; it clears the presence maps and broadcasts offline.
+            if let Some((_, connection)) = self
+                .connections
+                .remove_if(&key, |_, current| current.same_channel(&tx))
+            {
+                connection.close();
+            }
+        }
+        delivered
     }
 
     pub fn resolve_backend(
@@ -602,10 +755,11 @@ impl AppState {
             });
             return Ok(Box::new(
                 crate::storage::baidu::BaiduNetdiskProvider::new(self.http.clone(), cfg)
-                    .with_token_store(&record.id, sink),
+                    .with_token_store(&record.id, sink)
+                    .with_network_guard(self.network_guard.clone()),
             ));
         }
-        build_provider(&record.config, self.http.clone())
+        build_provider(&record.config, self.http.clone(), &self.network_guard)
     }
 
     /// Build a provider for a request handler, refusing endpoints blocked by the storage policy.
@@ -662,6 +816,45 @@ mod tests {
         short.record_failure("k");
         std::thread::sleep(Duration::from_millis(5));
         assert!(!short.is_blocked("k"));
+    }
+
+    #[test]
+    fn suffix_reset_clears_every_address_of_an_account() {
+        let limiter = AttemptLimiter::new(1, Duration::from_secs(60));
+        for key in ["1.2.3.4|alice", "5.6.7.8|alice", "1.2.3.4|malice"] {
+            limiter.record_failure(key);
+        }
+        limiter.reset_suffix("|alice");
+        assert!(!limiter.is_blocked("1.2.3.4|alice"));
+        assert!(!limiter.is_blocked("5.6.7.8|alice"));
+        assert!(limiter.is_blocked("1.2.3.4|malice"));
+    }
+
+    #[test]
+    fn limiter_stays_bounded_under_a_flood_of_keys() {
+        let limiter = AttemptLimiter::new(3, Duration::from_secs(60));
+        limiter.record_failure("target");
+        limiter.record_failure("target");
+        for i in 0..(LIMITER_MAX_KEYS + 10) {
+            limiter.record_failure(&format!("junk-{i}"));
+        }
+        assert!(limiter.attempts.len() <= LIMITER_MAX_KEYS);
+        assert!(limiter.has_failures("target"));
+    }
+
+    #[test]
+    fn limiter_stays_bounded_when_flood_hits_each_key_twice() {
+        let limiter = AttemptLimiter::new(3, Duration::from_secs(60));
+        for _ in 0..3 {
+            limiter.record_failure("blocked-target");
+        }
+        for i in 0..(LIMITER_MAX_KEYS + 500) {
+            let key = format!("pair-{i}");
+            limiter.record_failure(&key);
+            limiter.record_failure(&key);
+        }
+        assert!(limiter.attempts.len() <= LIMITER_MAX_KEYS);
+        assert!(limiter.is_blocked("blocked-target"));
     }
 
     #[test]

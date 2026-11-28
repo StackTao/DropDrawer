@@ -6,3 +6,9 @@ app/build
 dist
 deploy/data
 data
+# Only Cargo.toml, Cargo.lock and crates/ are copied into the image.
+app
+apple
+docs
+website
+scripts

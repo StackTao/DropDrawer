@@ -1,13 +1,21 @@
 use async_trait::async_trait;
 use base64::Engine;
 use chrono::Utc;
-use futures_util::{StreamExt, TryStreamExt};
+use futures_util::TryStreamExt;
 use md5::{Digest as Md5Digest, Md5};
 use serde::Deserialize;
 use serde_json::json;
 use sha1::Sha1;
 
 use super::{ByteStream, DownloadResolution, PutResult, StorageProvider};
+
+/// Bounds for the multipart size Quark asks for; the read buffer is this big.
+const PART_SIZE_MIN: u64 = 1;
+const PART_SIZE_MAX: u64 = 64 * 1024 * 1024;
+/// Alibaba OSS / Quark multipart uploads allow at most 10,000 parts; capping
+/// the part count stops a tiny `part_size` (e.g. 1 byte) from causing millions
+/// of requests while keeping small test fixtures working.
+const MAX_UPLOAD_PARTS: u64 = 10_000;
 
 const QUARK_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/3.24.0 Chrome/120.0.0.0 Electron/28.0.0 Safari/537.36";
 
@@ -18,6 +26,7 @@ pub struct QuarkProvider {
     cookie: String,
     root_folder_id: String,
     api_base_url: String,
+    guard: crate::net_guard::PrivateNetworkGuard,
 }
 
 #[derive(Debug, Deserialize)]
@@ -97,7 +106,15 @@ impl QuarkProvider {
                 .unwrap_or_else(|| "https://drive-pc.quark.cn".to_string())
                 .trim_end_matches('/')
                 .to_string(),
+            guard: Default::default(),
         }
+    }
+
+    /// Applies the storage policy's private-network block to URLs this
+    /// provider receives from the remote API.
+    pub fn with_network_guard(mut self, guard: crate::net_guard::PrivateNetworkGuard) -> Self {
+        self.guard = guard;
+        self
     }
 
     fn endpoint(&self, path: &str) -> String {
@@ -121,29 +138,20 @@ impl StorageProvider for QuarkProvider {
     async fn put_stream(
         &self,
         remote_key: &str,
-        _content_length: Option<u64>,
-        mut stream: ByteStream,
+        content_length: Option<u64>,
+        stream: ByteStream,
     ) -> anyhow::Result<PutResult> {
         // Buffer stream into a temp file to compute MD5 + SHA1 required by Quark pre-upload & hash check
-        // without blowing RAM on large files.
-        let tmp_path = std::env::temp_dir().join(format!(
-            "dropdrawer_quark_{}.tmp",
-            uuid::Uuid::new_v4()
-        ));
-        let mut tmp_file = tokio::fs::File::create(&tmp_path).await?;
+        // without blowing RAM on large files. The spool file is removed on every exit path.
+        let spool = super::SpoolFile::new("dropdrawer_quark");
         let mut md5 = Md5::new();
         let mut sha1 = Sha1::new();
-        let mut total_bytes = 0u64;
-
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk?;
-            md5.update(&chunk);
-            sha1.update(&chunk);
-            tokio::io::AsyncWriteExt::write_all(&mut tmp_file, &chunk).await?;
-            total_bytes += chunk.len() as u64;
-        }
-        tokio::io::AsyncWriteExt::flush(&mut tmp_file).await?;
-        drop(tmp_file);
+        let total_bytes = spool
+            .fill(stream, content_length, |chunk| {
+                md5.update(chunk);
+                sha1.update(chunk);
+            })
+            .await?;
 
         let md5_hex = hex::encode(md5.finalize());
         let sha1_hex = hex::encode(sha1.finalize());
@@ -153,11 +161,9 @@ impl StorageProvider for QuarkProvider {
             .filter(|s| !s.is_empty())
             .unwrap_or("file.bin");
 
-        let upload_res = self
-            .upload_local_temp(&tmp_path, file_name, total_bytes, &md5_hex, &sha1_hex)
-            .await;
-        let _ = tokio::fs::remove_file(&tmp_path).await;
-        let fid = upload_res?;
+        let fid = self
+            .upload_local_temp(spool.path(), file_name, total_bytes, &md5_hex, &sha1_hex)
+            .await?;
 
         Ok(PutResult {
             bytes_written: total_bytes,
@@ -182,6 +188,7 @@ impl StorageProvider for QuarkProvider {
             .ok_or_else(|| anyhow::anyhow!("Quark returned empty download list"))?;
 
         // Proxy with Quark Cookie + PC UA so clients never hit UA/Cookie 403 rejections.
+        self.guard.check_url(&item.download_url)?;
         let file_resp = self
             .apply_headers(self.http.get(&item.download_url))
             .send()
@@ -308,12 +315,23 @@ impl QuarkProvider {
         }
 
         // Step 3: Multipart upload chunks to Alibaba OSS using Quark-signed auth_key
-        let part_size: usize = pre_env
+        let raw_part_size: u64 = pre_env
             .metadata
             .as_ref()
             .and_then(|m| m.get("part_size"))
             .and_then(|v| v.as_u64())
-            .unwrap_or(4 * 1024 * 1024) as usize;
+            .unwrap_or(4 * 1024 * 1024);
+        // The buffer below is allocated from this value; refuse absurd ones.
+        if !(PART_SIZE_MIN..=PART_SIZE_MAX).contains(&raw_part_size) {
+            anyhow::bail!("Quark returned an unsupported part size ({raw_part_size} bytes)");
+        }
+        if size > 0 && size.div_ceil(raw_part_size) > MAX_UPLOAD_PARTS {
+            anyhow::bail!(
+                "Quark part size ({raw_part_size} bytes) would require too many parts for a {size}-byte upload"
+            );
+        }
+        let part_size = usize::try_from(raw_part_size)
+            .map_err(|_| anyhow::anyhow!("Quark part size exceeds platform limits"))?;
 
         let upload_host = pre
             .upload_url
@@ -356,6 +374,7 @@ impl QuarkProvider {
                 "https://{}.{}/{}?partNumber={}&uploadId={}",
                 pre.bucket, upload_host, pre.obj_key, part_num, pre.upload_id
             );
+            self.guard.check_url(&oss_url)?;
             let oss_resp = self
                 .http
                 .put(&oss_url)
@@ -424,6 +443,7 @@ impl QuarkProvider {
             "https://{}.{}/{}?uploadId={}",
             pre.bucket, upload_host, pre.obj_key, pre.upload_id
         );
+        self.guard.check_url(&commit_url)?;
         let mut commit_req = self
             .http
             .post(&commit_url)

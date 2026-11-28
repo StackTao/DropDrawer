@@ -10,7 +10,10 @@ COPY crates/p2p-cli ./crates/p2p-cli
 COPY crates/server ./crates/server
 
 ARG CARGO_BUILD_JOBS=2
-RUN CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS} cargo build --release --locked --bin dropdrawer-server
+# Strip symbols from the server binary only; the shared [profile.release] also
+# builds the client P2P libraries, whose build scripts set their own options.
+RUN CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS} CARGO_PROFILE_RELEASE_STRIP=symbols \
+    cargo build --release --locked --bin dropdrawer-server
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/* \

@@ -19,6 +19,7 @@ services:
       - DROPDRAWER_LOCAL_STORAGE=/data/blobs
       - DROPDRAWER_LOCAL_MAX_FILE_BYTES=${DROPDRAWER_LOCAL_MAX_FILE_BYTES:-}
       - DROPDRAWER_LOCAL_USER_QUOTA_BYTES=${DROPDRAWER_LOCAL_USER_QUOTA_BYTES:-}
+      - DROPDRAWER_MAX_SPOOL_BYTES=${DROPDRAWER_MAX_SPOOL_BYTES:-}
       # Leave empty to auto-generate and persist in /data/jwt_secret.
       - DROPDRAWER_JWT_SECRET=${DROPDRAWER_JWT_SECRET:-}
       # Encrypts stored credentials. Leave empty to use /data/secret_key; back it up with the database.
@@ -57,4 +58,6 @@ services:
       - DROPDRAWER_FCM_API_KEY=${DROPDRAWER_FCM_API_KEY:-}
       - DROPDRAWER_FCM_SENDER_ID=${DROPDRAWER_FCM_SENDER_ID:-}
     volumes:
+      # The server runs as UID 10001. On Linux, create and hand over the host
+      # directory first: mkdir -p deploy/data/server && sudo chown 10001:10001 deploy/data/server
       - ./data/server:/data

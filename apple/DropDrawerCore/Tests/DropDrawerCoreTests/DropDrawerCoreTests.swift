@@ -446,4 +446,24 @@ struct DropDrawerCoreTests {
         #expect(info.googleLinked == true)
         #expect(info.emailBindingAvailable == true)
     }
+
+    @Test("Share queue names lose the extension's timestamp prefix")
+    func queuedNamesAreRestored() {
+        #expect(DropDrawerStore.queuedOriginalName("17000000000001234_photo_1.jpg") == "photo_1.jpg")
+        #expect(DropDrawerStore.queuedOriginalName("image_1700000000000.jpg") == nil)
+        #expect(DropDrawerStore.queuedOriginalName("2024_report.pdf") == nil)
+    }
+
+    @Test("Saved paths from an old app container point into the current one")
+    func pathsFollowTheContainer() throws {
+        let fm = FileManager.default
+        let docs = try #require(fm.urls(for: .documentDirectory, in: .userDomainMask).first)
+        let file = docs.appendingPathComponent("dd-relocate-\(UUID().uuidString).txt")
+        try fm.createDirectory(at: docs, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: file)
+        defer { try? fm.removeItem(at: file) }
+        let stale = "/var/mobile/Containers/Data/Application/OLD-UUID/Documents/\(file.lastPathComponent)"
+        #expect(DropDrawerStore.relocatedToCurrentContainer(stale) == file.path)
+        #expect(DropDrawerStore.relocatedToCurrentContainer("/nowhere/x") == "/nowhere/x")
+    }
 }

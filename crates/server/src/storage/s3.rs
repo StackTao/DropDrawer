@@ -20,6 +20,23 @@ pub struct S3Config {
     pub force_path_style: bool,
 }
 
+/// Bucket names become part of the host name (virtual-hosted style) or the
+/// path, so only the characters S3-compatible services allow are accepted;
+/// anything else could rewrite the request's authority.
+pub fn validate_bucket_name(bucket: &str) -> anyhow::Result<()> {
+    let valid = (1..=255).contains(&bucket.len())
+        && bucket
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
+        && !bucket.starts_with('.')
+        && !bucket.ends_with('.')
+        && !bucket.contains("..");
+    if !valid {
+        anyhow::bail!("{}", t!("S3 存储桶名称只能包含字母、数字、点、连字符和下划线", "S3 bucket names may only contain letters, digits, dots, hyphens and underscores"));
+    }
+    Ok(())
+}
+
 /// Lightweight S3-compatible provider implementing AWS Signature Version 4 Presigned URLs.
 /// Compatible with AWS S3, Cloudflare R2, Aliyun OSS, Tencent COS, and MinIO.
 pub struct S3Provider {
@@ -31,6 +48,7 @@ pub struct S3Provider {
 impl S3Provider {
     pub fn new(http: reqwest::Client, cfg: S3Config) -> anyhow::Result<Self> {
         let endpoint_url = Url::parse(&cfg.endpoint)?;
+        validate_bucket_name(&cfg.bucket)?;
         Ok(Self {
             http,
             cfg,

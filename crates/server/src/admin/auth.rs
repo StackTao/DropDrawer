@@ -179,10 +179,14 @@ async fn verify_password_blocking(password: String, hash: String) -> bool {
 }
 
 pub(super) fn check_login_limit(state: &AppState, ip: &str) -> ApiResult<()> {
+    // While the server-wide ceiling is hit, addresses that already failed are
+    // refused, but an address with a clean record keeps one try. Otherwise a
+    // handful of proxies could lock every administrator out indefinitely.
     if state.failed_admin_logins.is_blocked(ip)
-        || state
+        || (state
             .failed_admin_logins_global
             .is_blocked(GLOBAL_LIMIT_KEY)
+            && state.failed_admin_logins.has_failures(ip))
     {
         return Err((
             StatusCode::TOO_MANY_REQUESTS,

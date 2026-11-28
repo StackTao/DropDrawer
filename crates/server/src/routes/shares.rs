@@ -18,6 +18,7 @@ pub(super) async fn create_share_link(
         req.expires_hours,
         req.max_downloads,
     )
+    .await
     .map(Json)
 }
 
@@ -35,6 +36,7 @@ pub(super) async fn create_batch_share_link(
         req.expires_hours,
         req.max_downloads,
     )
+    .await
     .map(Json)
 }
 
@@ -55,7 +57,7 @@ pub(super) fn format_share_display_name(custom_title: Option<&str>, items: &[Dra
     }
 }
 
-pub(super) fn create_share_for_items(
+pub(super) async fn create_share_for_items(
     state: &Arc<AppState>,
     user_id: &str,
     raw_item_ids: Vec<String>,
@@ -98,13 +100,10 @@ pub(super) fn create_share_for_items(
     let (expires_hours, max_downloads) = (terms.expires_hours, terms.max_downloads);
 
     let code = generate_short_code();
-    let passcode_hash = passcode
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(hash_password)
-        .transpose()
-        .map_err(internal_err)?;
+    let passcode_hash = match passcode.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(passcode) => Some(hash_password_blocking(passcode).await.map_err(internal_err)?),
+        None => None,
+    };
 
     let clean_title = title
         .as_deref()
@@ -314,6 +313,21 @@ pub(super) async fn public_share_meta(
     } else {
         format_share_display_name(share.title.as_deref(), &items)
     };
+    // Text is delivered inside this response, so on a share with a download
+    // limit, revealing it counts as one download (as the download route does).
+    // (Mixed shares count when a file is downloaded.)
+    let reveals_text = !locked && items.iter().all(|it| it.kind == DrawerItemKind::Text);
+    let mut download_count = share.download_count;
+    if reveals_text && share.max_downloads.is_some() {
+        if !state
+            .db
+            .increment_share_download(&share.code)
+            .map_err(internal_err)?
+        {
+            return Err((StatusCode::GONE, t!("该分享链接已达到下载次数上限", "This share link has reached its download limit").to_string()));
+        }
+        download_count += 1;
+    }
     let total_size: u64 = items.iter().map(|it| it.size).sum();
     let primary_kind = if items.iter().any(|it| it.kind == DrawerItemKind::File) {
         DrawerItemKind::File
@@ -356,7 +370,7 @@ pub(super) async fn public_share_meta(
         "items": serialized_items,
         "locked": locked,
         "has_passcode": share.passcode_hash.is_some(),
-        "download_count": share.download_count,
+        "download_count": download_count,
         "max_downloads": share.max_downloads,
         "expires_at": share.expires_at,
         "text_content": single_text,
@@ -459,6 +473,10 @@ pub(super) async fn public_share_download(
                 header::CONTENT_DISPOSITION,
                 format!("attachment; filename*=UTF-8''{encoded_name}"),
             );
+            // Uploaded content never runs as a page of this origin.
+            builder = builder
+                .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
+                .header(header::CONTENT_SECURITY_POLICY, "sandbox");
             let body = Body::from_stream(stream);
             builder.body(body).map_err(internal_err)
         }
@@ -497,7 +515,16 @@ pub(super) async fn public_share_page(Path(code): Path<String>) -> impl IntoResp
         .replace("__BRAND__", t!("DropDrawer 外链分享", "DropDrawer share"))
         .replace("__LOADING__", t!("正在加载分享信息...", "Loading the share…"))
         .replace("__SHARE_CODE__", &safe_code);
-    ([(header::VARY, "Accept-Language"), (header::REFERRER_POLICY, "no-referrer")], Html(html))
+    (
+        [
+            (header::VARY, "Accept-Language"),
+            (header::REFERRER_POLICY, "no-referrer"),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            (header::X_FRAME_OPTIONS, "DENY"),
+            (header::CONTENT_SECURITY_POLICY, SHARE_PAGE_CSP),
+        ],
+        Html(html),
+    )
 }
 
 pub(super) fn generate_short_code() -> String {
@@ -506,3 +533,9 @@ pub(super) fn generate_short_code() -> String {
 }
 
 pub(super) const PUBLIC_SHARE_HTML: &str = include_str!("public_share.html");
+
+/// The page renders with inline script and styles; everything else is
+/// same-origin, and the page can't be framed (clickjacking the download button).
+const SHARE_PAGE_CSP: &str = "default-src 'none'; script-src 'self' 'unsafe-inline'; \
+style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; \
+base-uri 'none'; form-action 'none'; frame-ancestors 'none'";

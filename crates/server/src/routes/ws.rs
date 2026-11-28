@@ -11,6 +11,8 @@ pub(super) struct WsQuery {
     device_id: String,
 }
 
+const WS_MAX_MESSAGE: usize = 4 * 1024 * 1024;
+
 pub(super) async fn ws_upgrade(
     ws: WebSocketUpgrade,
     Query(query): Query<WsQuery>,
@@ -39,21 +41,35 @@ pub(super) async fn ws_upgrade(
         return Err((StatusCode::NOT_FOUND, t!("设备尚未注册，请重新登录", "This device isn't registered. Sign in again").to_string()));
     }
 
-    Ok(ws.on_upgrade(move |socket| handle_ws(socket, state, claims, query.device_id)))
+    // Client commands are small JSON (the largest is the ready-file list); the
+    // 64 MiB default would let one connection make the server buffer a lot.
+    Ok(ws
+        .max_message_size(WS_MAX_MESSAGE)
+        .max_frame_size(WS_MAX_MESSAGE)
+        .on_upgrade(move |socket| handle_ws(socket, state, claims, query.device_id)))
 }
 
 pub(super) async fn handle_ws(socket: WebSocket, state: Arc<AppState>, claims: Claims, device_id: String) {
     const PING_INTERVAL: StdDuration = StdDuration::from_secs(20);
     const READ_TIMEOUT: StdDuration = StdDuration::from_secs(60);
     let (mut ws_sink, mut ws_stream) = socket.split();
-    let (tx, mut rx) = mpsc::unbounded_channel::<WsEvent>();
+    let (tx, mut rx) = mpsc::channel::<WsEvent>(crate::state::WS_QUEUE_CAPACITY);
+    // Keep only a weak handle in `handle_ws`: `state.connections` holds the sole
+    // strong `Sender`, so a removed connection's `rx` closes once its queue is
+    // drained. `closed` ends this handler right away when the connection is
+    // replaced, signed out or dropped for being stuck (queue full).
+    let tx_weak = tx.downgrade();
+    let connection = crate::state::WsConnection::new(tx);
+    let closed = connection.closed_signal();
     let user_id = claims.sub.clone();
     let key = (user_id.clone(), device_id.clone());
     let is_current = || {
-        state
-            .connections
-            .get(&key)
-            .is_some_and(|current| current.same_channel(&tx))
+        tx_weak.upgrade().is_some_and(|tx| {
+            state
+                .connections
+                .get(&key)
+                .is_some_and(|current| current.same_channel(&tx))
+        })
     };
 
     {
@@ -65,13 +81,16 @@ pub(super) async fn handle_ws(socket: WebSocket, state: Arc<AppState>, claims: C
         state.ready_files.remove(&key);
         state.browser_share_devices.remove(&key);
         state.background_push_devices.remove(&key);
-        state.connections.insert(key.clone(), tx.clone());
+        if let Some(previous) = state.connections.insert(key.clone(), connection) {
+            previous.close();
+        }
 
         if let (Ok(devices), Ok(items)) = (
             state.list_devices_with_presence(&user_id),
             state.list_hydrated_items(&user_id),
-        ) {
-            let _ = tx.send(WsEvent::Snapshot { devices, items });
+        ) && let Some(tx) = tx_weak.upgrade()
+        {
+            let _ = tx.try_send(WsEvent::Snapshot { devices, items });
         }
 
         if let Ok(Some(mut dev)) = state.db.get_device(&device_id, &user_id) {
@@ -103,6 +122,8 @@ pub(super) async fn handle_ws(socket: WebSocket, state: Arc<AppState>, claims: C
         let incoming = tokio::select! {
             incoming = tokio::time::timeout(READ_TIMEOUT, ws_stream.next()) => incoming,
             _ = &mut send_task => break,
+            _ = state.ws_shutdown.cancelled() => break,
+            _ = closed.cancelled() => break,
         };
         let Ok(Some(Ok(message))) = incoming else { break };
         if !is_current() {
@@ -111,7 +132,9 @@ pub(super) async fn handle_ws(socket: WebSocket, state: Arc<AppState>, claims: C
         match message {
             Message::Text(text) => match serde_json::from_str::<WsClientCommand>(&text) {
                 Ok(WsClientCommand::Ping) => {
-                    let _ = tx.send(WsEvent::Pong);
+                    if let Some(tx) = tx_weak.upgrade() {
+                        let _ = tx.try_send(WsEvent::Pong);
+                    }
                 }
                 Ok(WsClientCommand::PushVisibility { foreground }) => {
                     let _presence = state.presence_changes.lock().await;
@@ -181,11 +204,13 @@ pub(super) async fn handle_ws(socket: WebSocket, state: Arc<AppState>, claims: C
 
     send_task.abort();
     let _presence = state.presence_changes.lock().await;
-    if state
-        .connections
-        .remove_if(&key, |_, current| current.same_channel(&tx))
-        .is_some()
-    {
+    let removed_self = tx_weak.upgrade().is_some_and(|tx| {
+        state
+            .connections
+            .remove_if(&key, |_, current| current.same_channel(&tx))
+            .is_some()
+    });
+    if removed_self || !state.connections.contains_key(&key) {
         state.ready_files.remove(&key);
         state.browser_share_devices.remove(&key);
         state.background_push_devices.remove(&key);

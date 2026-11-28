@@ -178,6 +178,12 @@ async fn verify_password_blocking(password: &str, hash: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Runs Argon2 hashing off the async worker threads.
+async fn hash_password_blocking(password: &str) -> anyhow::Result<String> {
+    let password = password.to_string();
+    tokio::task::spawn_blocking(move || hash_password(&password)).await?
+}
+
 fn sanitize_filename(name: &str) -> String {
     let cleaned: String = name
         .chars()

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
@@ -30,6 +31,9 @@ class DropDrawerController extends ChangeNotifier {
   StreamSubscription<dynamic>? _wsSub;
   Timer? _p2pPollTimer;
   Timer? _wsReconnectTimer;
+  /// Failed reconnects in a row; resets once a socket is open.
+  int _wsReconnectAttempt = 0;
+  static final _jitter = math.Random();
   Timer? _nodeAddressTimer;
   Map<String, String> _publishedFiles = const {};
   final Set<String> _replicaDownloads = {};
@@ -342,6 +346,10 @@ class DropDrawerController extends ChangeNotifier {
       if (localFilePaths.isNotEmpty) {
         await windowService.pruneClipboardFiles(localFilePaths.values);
       }
+      unawaited(windowService.pruneCacheFiles([
+        ...localFilePaths.values,
+        ..._pendingCloudUploads.values.map((upload) => upload.path),
+      ]));
       try {
         await _postLoginInit();
       } catch (e) {
@@ -353,6 +361,8 @@ class DropDrawerController extends ChangeNotifier {
           unawaited(updates.check());
         } else if (isUnauthorized) {
           statusBanner = l10n.yourSessionHasExpiredSignIn;
+          // The server rejected this token; don't keep it on disk.
+          await prefs.remove('auth_token');
           token = null;
           user = null;
           _api = null;
@@ -897,7 +907,13 @@ class DropDrawerController extends ChangeNotifier {
     _ws = channel;
     _wsSub = channel.stream.listen(
       (message) {
-        if (identical(_ws, channel)) _onWsMessage(message);
+        if (!identical(_ws, channel)) return;
+        try {
+          _onWsMessage(message);
+        } catch (e) {
+          // One malformed event must not end the subscription.
+          debugPrint('ignored WebSocket event: $e');
+        }
       },
       onError: (Object _) => _scheduleReconnect(channel),
       onDone: () => _scheduleReconnect(channel),
@@ -911,6 +927,7 @@ class DropDrawerController extends ChangeNotifier {
 
     if (!identical(_ws, channel)) return;
     wsConnected = true;
+    _wsReconnectAttempt = 0;
     _publishPushVisibility(channel);
     notifyListeners();
     if (!p2pReady) return;
@@ -987,6 +1004,15 @@ class DropDrawerController extends ChangeNotifier {
     wsConnected = false;
   }
 
+  /// 3 s, 6 s, 12 s … up to a minute, with jitter so devices that lost the
+  /// same server don't all come back at once (and phones don't spin the radio).
+  Duration _nextReconnectDelay() {
+    final step = math.min(_wsReconnectAttempt, 5);
+    _wsReconnectAttempt++;
+    final base = math.min(3000 * (1 << step), 60000);
+    return Duration(milliseconds: base + _jitter.nextInt(1000));
+  }
+
   void _scheduleReconnect(WebSocketChannel channel) {
     if (!identical(_ws, channel)) return;
     _closeWs();
@@ -994,7 +1020,7 @@ class DropDrawerController extends ChangeNotifier {
       // The server also drops the socket when it revokes this session; a cheap
       // authenticated call tells the two cases apart.
       unawaited(refreshClientConfig());
-      _wsReconnectTimer = Timer(const Duration(seconds: 3), _connectWs);
+      _wsReconnectTimer = Timer(_nextReconnectDelay(), _connectWs);
     }
     notifyListeners();
   }
@@ -2102,9 +2128,11 @@ class DropDrawerController extends ChangeNotifier {
 
     // Fallback for other platforms using standard zip CLI if available.
     final parentDir = p.dirname(folderPath);
+    // A folder named like "-T…" must not be read as a zip option.
+    final source = folderName.startsWith('-') ? './$folderName' : folderName;
     final res = await Process.run(
       'zip',
-      ['-r', '-q', outZip, folderName],
+      ['-r', '-q', outZip, source],
       workingDirectory: parentDir,
     );
     if (res.exitCode != 0) {

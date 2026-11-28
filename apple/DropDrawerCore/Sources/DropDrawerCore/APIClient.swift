@@ -395,13 +395,29 @@ public final class APIClient: @unchecked Sendable {
     }
 
     private func makeURL(_ path: String) throws -> URL {
-        let full = path.hasPrefix("http://") || path.hasPrefix("https://")
-            ? path
-            : "\(cleanBase)\(path)"
+        let absolute = path.hasPrefix("http://") || path.hasPrefix("https://")
+        // A server-relative path must not be able to change the host
+        // (`@evil.example/x`, `//evil.example/x`).
+        if !absolute && (!path.hasPrefix("/") || path.hasPrefix("//")) {
+            throw APIError.invalidURL(path)
+        }
+        let full = absolute ? path : "\(cleanBase)\(path)"
         guard let url = URL(string: full) else {
             throw APIError.invalidURL(full)
         }
+        if !absolute && !isServerOrigin(url) {
+            throw APIError.invalidURL(full)
+        }
         return url
+    }
+
+    /// Whether `url` points at this client's server (scheme, host and port).
+    private func isServerOrigin(_ url: URL) -> Bool {
+        guard let base = URL(string: cleanBase) else { return false }
+        func port(_ u: URL) -> Int? { u.port ?? (u.scheme?.lowercased() == "https" ? 443 : 80) }
+        return url.scheme?.lowercased() == base.scheme?.lowercased()
+            && url.host?.lowercased() == base.host?.lowercased()
+            && port(url) == port(base)
     }
 
     private func makeRequest(
@@ -413,7 +429,9 @@ public final class APIClient: @unchecked Sendable {
         var req = URLRequest(url: try makeURL(path))
         req.httpMethod = method
         req.setValue(AppLanguage.acceptLanguage, forHTTPHeaderField: "Accept-Language")
-        if authenticated, let tok = token, !tok.isEmpty {
+        // The session token only ever goes to this server, never to a
+        // presigned storage URL or another host named in a response.
+        if authenticated, let tok = token, !tok.isEmpty, let url = req.url, isServerOrigin(url) {
             req.setValue("Bearer \(tok)", forHTTPHeaderField: "Authorization")
         }
         if let jsonBody {
@@ -1120,8 +1138,12 @@ public final class APIClient: @unchecked Sendable {
         let data = try await perform(req)
         struct Resp: Decodable { let auth_url: String }
         let decoded = try JSONDecoder().decode(Resp.self, from: data)
-        guard let url = URL(string: decoded.auth_url) else {
-            throw APIError.invalidURL(decoded.auth_url)
+        guard let url = URL(string: decoded.auth_url),
+              url.scheme?.lowercased() == "https",
+              url.host?.lowercased() == "accounts.google.com",
+              url.user == nil
+        else {
+            throw APIError.message(String(localized: "服务器返回了无效的 Google 授权地址。", bundle: Bundle.module))
         }
         return url
     }
