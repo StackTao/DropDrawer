@@ -148,7 +148,7 @@
     "功能与限额": "Features & limits",
     "功能开关": "Feature switches",
     "加密方式": "Encryption",
-    "包含账号与存储凭据，请妥善保管；不含文件本体": "Contains accounts and storage credentials, so keep it safe. File contents aren't included",
+    "存储凭据已加密，恢复时需要原来的 secret_key 文件或 DROPDRAWER_SECRET_KEY；不含文件本体": "Storage credentials are encrypted. Restoring needs the original secret_key file or DROPDRAWER_SECRET_KEY. File contents aren't included",
     "单个外链最多下载次数": "Maximum downloads per link",
     "单文件上传上限": "File size limit",
     "单文件上限": "File size limit",

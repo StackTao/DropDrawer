@@ -14,6 +14,9 @@ class DropDrawerApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // Before the P2P setup, which returns early when the native library is missing.
+        PushRegistrar.ensureChannel(this)
+        PushRegistrar.initializeStored(this)
         try {
             System.loadLibrary("dropdrawer_p2p")
             if (!initializeP2pDns()) {

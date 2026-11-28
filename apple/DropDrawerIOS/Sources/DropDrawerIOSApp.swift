@@ -1,8 +1,58 @@
 import DropDrawerCore
 import SwiftUI
 import UIKit
+import UserNotifications
 
-final class DropDrawerIOSAppDelegate: NSObject, UIApplicationDelegate {
+final class DropDrawerIOSAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+    /// Set by the app once the store exists, so APNs tokens can be forwarded.
+    weak var store: DropDrawerStore?
+
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        UNUserNotificationCenter.current().delegate = self
+        return true
+    }
+
+    func application(
+        _ application: UIApplication,
+        didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+    ) {
+        let token = deviceToken.map { String(format: "%02x", $0) }.joined()
+        #if targetEnvironment(simulator)
+        let sandbox = true
+        #else
+        let profile: Data?
+        if let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision") {
+            guard let data = try? Data(contentsOf: url) else { return }
+            profile = data
+        } else {
+            profile = nil
+        }
+        guard let environment = APNsEnvironment.fromProvisioningProfile(profile) else { return }
+        let sandbox = environment == .development
+        #endif
+        Task { await store?.updatePushToken(token, sandbox: sandbox) }
+    }
+
+    func application(
+        _ application: UIApplication,
+        didFailToRegisterForRemoteNotificationsWithError error: Error
+    ) {
+        // Simulators without push support and unsigned builds end up here; the
+        // app keeps working through its WebSocket.
+    }
+
+    /// The server only pushes to devices without an open connection, so a
+    /// notification arriving in the foreground is still worth showing.
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        [.banner, .list, .sound]
+    }
+
     func application(
         _ application: UIApplication,
         handleEventsForBackgroundURLSession identifier: String,
@@ -27,7 +77,12 @@ struct DropDrawerIOSApp: App {
         WindowGroup {
             RootView(store: store)
                 .task {
+                    appDelegate.store = store
                     await store.bootstrap()
+                }
+                .onChange(of: store.wantsPushNotifications, initial: true) { _, wants in
+                    guard wants else { return }
+                    Task { await registerForPushNotifications() }
                 }
                 .onChange(of: scenePhase) { _, newPhase in
                     Task { await store.handleScenePhaseChanged(active: newPhase == .active) }
@@ -36,6 +91,15 @@ struct DropDrawerIOSApp: App {
                     Task { await handleIncomingURL(url) }
                 }
         }
+    }
+
+    /// Asks once for permission (iOS remembers the answer) and registers with
+    /// APNs; the token arrives in the app delegate.
+    private func registerForPushNotifications() async {
+        let center = UNUserNotificationCenter.current()
+        let granted = (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
+        guard granted, store.wantsPushNotifications else { return }
+        UIApplication.shared.registerForRemoteNotifications()
     }
 
     private func handleIncomingURL(_ url: URL) async {

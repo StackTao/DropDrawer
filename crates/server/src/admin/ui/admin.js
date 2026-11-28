@@ -845,7 +845,7 @@
       }),
       isSuper() ? h("div", { class: "toolbar" },
         h("a", { class: "btn", href: "/api/admin/maintenance/backup", download: "" }, icon("download"), t("下载数据库备份")),
-        h("span", { class: "meta", text: t("包含账号与存储凭据，请妥善保管；不含文件本体") })) : null);
+        h("span", { class: "meta", text: t("存储凭据已加密，恢复时需要原来的 secret_key 文件或 DROPDRAWER_SECRET_KEY；不含文件本体") })) : null);
     maintenance.lastChild && maintenance.lastChild.classList && maintenance.lastChild.classList.contains("toolbar") && (maintenance.lastChild.style.marginTop = "12px");
 
     return h("div", { class: "page" },

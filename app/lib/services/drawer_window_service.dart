@@ -267,6 +267,26 @@ class DrawerWindowService {
     } catch (_) {}
   }
 
+  /// Initializes Firebase with the server's options and returns this device's
+  /// FCM token, or `null` when push is unavailable (no Google Play services,
+  /// or an older app build). Also asks for the notification permission.
+  Future<String?> configurePush(Map<String, String> options) async {
+    if (!isAndroid) return null;
+    try {
+      return await _mobileChannel.invokeMethod<String>('configurePush', options);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Stops push delivery to this device (sign-out).
+  Future<void> disablePush() async {
+    if (!isAndroid) return;
+    try {
+      await _mobileChannel.invokeMethod('disablePush');
+    } catch (_) {}
+  }
+
   Future<void> revealInFinder(String path) async {
     if (!supportsEdgeDrawer) return;
     await _channel.invokeMethod('revealInFinder', {'path': path});

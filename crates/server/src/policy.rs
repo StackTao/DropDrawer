@@ -99,6 +99,7 @@ pub fn client_config(state: &AppState, user_id: &str) -> Result<protocol::Client
         },
         announcement: settings.client_announcement(),
         min_client_version: settings.client_policy.min_version.clone(),
+        push: state.push().map(|push| push.client_config()),
     })
 }
 

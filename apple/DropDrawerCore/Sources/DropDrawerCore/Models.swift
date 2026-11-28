@@ -807,24 +807,29 @@ public struct ClientConfig: Codable, Sendable, Equatable {
     public var features: ClientFeatures
     public var announcement: ClientAnnouncement?
     public var minClientVersion: String?
+    /// Push services the server can deliver to; `nil` when it has none configured.
+    public var push: PushClientConfig?
 
     enum CodingKeys: String, CodingKey {
         case serverVersion = "server_version"
         case features
         case announcement
         case minClientVersion = "min_client_version"
+        case push
     }
 
     public init(
         serverVersion: String = "",
         features: ClientFeatures = ClientFeatures(),
         announcement: ClientAnnouncement? = nil,
-        minClientVersion: String? = nil
+        minClientVersion: String? = nil,
+        push: PushClientConfig? = nil
     ) {
         self.serverVersion = serverVersion
         self.features = features
         self.announcement = announcement
         self.minClientVersion = minClientVersion
+        self.push = push
     }
 
     public init(from decoder: Decoder) throws {
@@ -833,5 +838,20 @@ public struct ClientConfig: Codable, Sendable, Equatable {
         features = try c.decodeIfPresent(ClientFeatures.self, forKey: .features) ?? ClientFeatures()
         announcement = try c.decodeIfPresent(ClientAnnouncement.self, forKey: .announcement)
         minClientVersion = try c.decodeIfPresent(String.self, forKey: .minClientVersion)
+        push = try? c.decodeIfPresent(PushClientConfig.self, forKey: .push)
+    }
+}
+
+/// Only the APNs switch matters on iOS; the Android FCM options are ignored.
+public struct PushClientConfig: Codable, Sendable, Equatable {
+    public var apns: Bool
+
+    public init(apns: Bool = false) {
+        self.apns = apns
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        apns = try c.decodeIfPresent(Bool.self, forKey: .apns) ?? false
     }
 }

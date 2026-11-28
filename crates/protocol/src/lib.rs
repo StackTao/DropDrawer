@@ -263,6 +263,10 @@ pub enum StorageBackendConfig {
         refresh_token: String,
         #[serde(default)]
         access_token: String,
+        /// Unix time when `access_token` expires. Baidu refresh tokens work only
+        /// once, so the server stores every rotated pair back into this config.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        access_token_expires_at: Option<i64>,
         /// Target path under Baidu app sandbox, e.g. "/apps/dropdrawer".
         #[serde(default = "default_baidu_root")]
         root_path: String,
@@ -546,6 +550,7 @@ pub enum WsEvent {
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum WsClientCommand {
     Ping,
+    PushVisibility { foreground: bool },
     BrowserShareReady {},
     BrowserShareAnswer {
         session_id: String,
@@ -647,4 +652,46 @@ pub struct ClientConfig {
     pub announcement: Option<ClientAnnouncement>,
     #[serde(default)]
     pub min_client_version: Option<String>,
+    /// Push notification services this server can deliver to. Absent on servers
+    /// without push configured, or older servers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub push: Option<PushClientConfig>,
+}
+
+/// Which push services the server is configured for.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PushClientConfig {
+    /// Apple Push Notification service (the native iOS app).
+    #[serde(default)]
+    pub apns: bool,
+    /// Firebase Cloud Messaging options for the Android app. The app has no
+    /// built-in Firebase project: it initializes Firebase with these values, so
+    /// every deployment can use its own project.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fcm: Option<FcmClientOptions>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FcmClientOptions {
+    pub project_id: String,
+    pub application_id: String,
+    pub api_key: String,
+    pub sender_id: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PushProvider {
+    Apns,
+    Fcm,
+}
+
+/// `PUT /api/devices/{id}/push-token`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegisterPushTokenRequest {
+    pub provider: PushProvider,
+    pub token: String,
+    /// APNs development environment from the signed app's provisioning.
+    #[serde(default)]
+    pub sandbox: bool,
 }

@@ -4,6 +4,7 @@ import Observation
 import UniformTypeIdentifiers
 #if canImport(UIKit)
 import UIKit
+import UserNotifications
 #endif
 
 @Observable
@@ -73,7 +74,10 @@ public final class DropDrawerStore {
     public func refreshClientConfig() async {
         guard let api else { return }
         do {
-            clientConfig = try await api.fetchClientConfig(deviceId: deviceId)
+            let config = try await api.fetchClientConfig(deviceId: deviceId)
+            guard self.api === api else { return }
+            clientConfig = config
+            await syncPushRegistration()
         } catch APIError.httpStatus(401, _) {
             handleSessionRevoked(by: api)
         } catch {
@@ -90,6 +94,67 @@ public final class DropDrawerStore {
     }
 
     public var maxItemTtlHours: Int? { clientConfig?.features.maxItemTtlHours }
+
+    // MARK: - Push notifications
+
+    /// This device's APNs token (hex), reported by the app delegate.
+    public private(set) var pushToken: String?
+    private var pushSandbox = false
+    /// "<device id>|<token>" last accepted by the server, to avoid re-sending it.
+    private var registeredPushKey: String?
+    private var pushRequest: Task<Void, Never>?
+    private var pushRequestSequence = 0
+
+
+    /// The app should ask for notification permission and register with APNs:
+    /// the server can notify this device while the app is in the background.
+    public var wantsPushNotifications: Bool {
+        isLoggedIn && clientConfig?.push?.apns == true
+    }
+
+    public func updatePushToken(_ token: String, sandbox: Bool) async {
+        guard wantsPushNotifications else { return }
+        pushToken = token
+        pushSandbox = sandbox
+        await syncPushRegistration()
+    }
+
+    private func enqueuePushRequest(
+        _ operation: @escaping @MainActor () async -> Void
+    ) -> Task<Void, Never> {
+        let previous = pushRequest
+        pushRequestSequence += 1
+        let sequence = pushRequestSequence
+        let task = Task { [weak self] in
+            await previous?.value
+            await operation()
+            if let self, pushRequestSequence == sequence {
+                pushRequest = nil
+            }
+        }
+        pushRequest = task
+        return task
+    }
+
+    private func syncPushRegistration() async {
+        guard let api, wantsPushNotifications, let deviceId, let pushToken else { return }
+        let sandbox = pushSandbox
+        let key = "\(deviceId)|\(pushToken)|\(sandbox)"
+        let request = enqueuePushRequest { [weak self] in
+            guard let self, self.api === api, wantsPushNotifications,
+                  self.deviceId == deviceId, self.pushToken == pushToken, pushSandbox == sandbox,
+                  registeredPushKey != key else { return }
+            do {
+                try await api.registerPushToken(deviceId: deviceId, token: pushToken, sandbox: sandbox)
+                if self.api === api {
+                    registeredPushKey = key
+                }
+            } catch {
+                // Retried on the next config refresh.
+            }
+        }
+        await request.value
+    }
 
     private var appVersion: String? {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
@@ -385,6 +450,16 @@ public final class DropDrawerStore {
     }
 
     public func logout() {
+        #if canImport(UIKit)
+        UIApplication.shared.unregisterForRemoteNotifications()
+        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+        #endif
+        if let api, let deviceId {
+            // Run after any in-flight PUT and before a subsequent login's PUT.
+            _ = enqueuePushRequest { try? await api.deletePushToken(deviceId: deviceId) }
+        }
+        registeredPushKey = nil
+        pushToken = nil
         stopBackgroundTasks()
         p2p.shutdown()
         p2pReady = false
@@ -421,6 +496,9 @@ public final class DropDrawerStore {
     public func handleScenePhaseChanged(active: Bool) async {
         isSceneActive = active
         guard isLoggedIn else { return }
+        if let wsTask {
+            sendWSJSON(task: wsTask, type: "push_visibility", payload: ["foreground": active])
+        }
         if active {
             wsReconnectAttempt = 0
             if p2pReady {
@@ -689,6 +767,7 @@ public final class DropDrawerStore {
         guard let task = try? api.makeWebSocketTask(deviceId: deviceId) else { return }
         wsTask = task
         task.resume()
+        sendWSJSON(task: task, type: "push_visibility", payload: ["foreground": isSceneActive])
         wsConnected = true
 
         wsPingTask?.cancel()

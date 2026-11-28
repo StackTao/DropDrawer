@@ -238,7 +238,7 @@ impl Database {
     pub fn backend_kind_counts(&self) -> anyhow::Result<Vec<AdminBackendKindCount>> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
-            "SELECT json_extract(config_json, '$.kind') AS kind, COUNT(*)
+            "SELECT kind, COUNT(*)
              FROM storage_backends GROUP BY kind ORDER BY COUNT(*) DESC",
         )?;
         let rows = stmt.query_map([], |row| {

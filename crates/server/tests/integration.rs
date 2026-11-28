@@ -3862,3 +3862,445 @@ async fn error_messages_follow_accept_language() {
     let zh = page("zh-CN").await;
     assert!(zh.contains(r#"<html lang="zh-CN">"#) && zh.contains("授权已取消或失败"));
 }
+
+#[test]
+fn stored_credentials_are_encrypted_at_rest() {
+    use dropdrawer_server::{db::AdminRole, secret_box};
+    use protocol::StorageBackendConfig;
+
+    let tmp = TempDir::new().unwrap();
+    let path = tmp.path().join("secrets.db");
+    let key_path = tmp.path().join(secret_box::KEY_FILE_NAME);
+    let legacy_config = serde_json::to_string(&StorageBackendConfig::WebDav {
+        base_url: "https://dav.example.test/files".into(),
+        username: "alice".into(),
+        password: "legacy-webdav-pass".into(),
+    })
+    .unwrap();
+
+    // A database written before encryption at rest existed: plaintext rows, no key file.
+    {
+        let db = Database::open(&path).unwrap();
+        db.create_user("u1", "alice", "hash").unwrap();
+        db.create_user("u2", "bob", "hash").unwrap();
+        db.create_admin_account("a1", "root", "hash", AdminRole::Super).unwrap();
+    }
+    std::fs::remove_file(&key_path).unwrap();
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute(
+            "INSERT INTO storage_backends (id, user_id, name, config_json, is_default, created_at)
+             VALUES ('legacy', 'u1', 'Old', ?1, 1, '2026-01-01T00:00:00Z')",
+            [&legacy_config],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO system_settings (key, value_json, updated_at)
+             VALUES ('runtime', '{\"smtp\":{\"password\":\"legacy-smtp-pass\"}}', 'x')",
+            [],
+        )
+        .unwrap();
+        conn.execute("UPDATE admin_accounts SET totp_secret = 'JBSWY3DPEHPK3PXP' WHERE id = 'a1'", [])
+            .unwrap();
+    }
+
+    let raw = |sql: &str| -> String {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.query_row(sql, [], |row| row.get(0)).unwrap()
+    };
+
+    {
+        // Opening generates a key and seals every plaintext credential.
+        let db = Database::open(&path).unwrap();
+        assert!(key_path.exists());
+        for sql in [
+            "SELECT config_json FROM storage_backends WHERE id = 'legacy'",
+            "SELECT value_json FROM system_settings WHERE key = 'runtime'",
+            "SELECT totp_secret FROM admin_accounts WHERE id = 'a1'",
+        ] {
+            assert!(raw(sql).starts_with("enc:v1:"), "{sql} was not sealed");
+        }
+        // ...and everything still reads back as before.
+        let backend = db.get_storage_backend("legacy", "u1").unwrap().unwrap();
+        assert!(matches!(&backend.config, StorageBackendConfig::WebDav { password, .. } if password == "legacy-webdav-pass"));
+        assert_eq!(
+            db.get_setting("runtime").unwrap().as_deref(),
+            Some("{\"smtp\":{\"password\":\"legacy-smtp-pass\"}}")
+        );
+        assert_eq!(
+            db.get_admin_account("a1").unwrap().unwrap().totp_secret.as_deref(),
+            Some("JBSWY3DPEHPK3PXP")
+        );
+        let kinds = db.backend_kind_counts().unwrap();
+        assert_eq!(kinds.len(), 1, "the kind column is backfilled from the old plaintext");
+        assert_eq!(kinds[0].count, 1);
+
+        // New rows are sealed when written; patches merge into the decrypted config.
+        db.create_storage_backend(
+            "s3",
+            "u1",
+            "Bucket",
+            &StorageBackendConfig::S3 {
+                endpoint: "https://s3.example.test".into(),
+                region: "auto".into(),
+                bucket: "drops".into(),
+                access_key_id: "AKIDEXAMPLE".into(),
+                secret_access_key: "new-s3-secret".into(),
+                prefix: String::new(),
+                force_path_style: true,
+            },
+            false,
+        )
+        .unwrap();
+        assert!(raw("SELECT config_json FROM storage_backends WHERE id = 's3'").starts_with("enc:v1:"));
+        let mut patch = serde_json::Map::new();
+        patch.insert("password".into(), json!("rotated-webdav-pass"));
+        assert!(db.update_storage_backend("legacy", "u1", "Renamed", &patch).unwrap());
+        assert!(!db.update_storage_backend("legacy", "u2", "Hijack", &patch).unwrap());
+        let backend = db.get_storage_backend("legacy", "u1").unwrap().unwrap();
+        assert_eq!(backend.name, "Renamed");
+        assert!(matches!(&backend.config, StorageBackendConfig::WebDav { username, password, .. }
+            if username == "alice" && password == "rotated-webdav-pass"));
+        db.set_setting("runtime", "{\"smtp\":{\"password\":\"new-smtp-pass\"}}").unwrap();
+        assert!(raw("SELECT value_json FROM system_settings WHERE key = 'runtime'").starts_with("enc:v1:"));
+        db.set_admin_totp_pending("a1", "NEWTOTPSECRETXYZ").unwrap();
+        assert_eq!(
+            db.get_admin_account("a1").unwrap().unwrap().totp_secret.as_deref(),
+            Some("NEWTOTPSECRETXYZ")
+        );
+
+        let downgrade = tmp.path().join("downgrade.db");
+        db.export_legacy_database(&downgrade).unwrap();
+        assert!(db.export_legacy_database(&downgrade).is_err());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&downgrade).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        let legacy = rusqlite::Connection::open(&downgrade).unwrap();
+        let config: String = legacy.query_row(
+            "SELECT config_json FROM storage_backends WHERE id = 'legacy'",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert!(matches!(
+            serde_json::from_str::<StorageBackendConfig>(&config).unwrap(),
+            StorageBackendConfig::WebDav { password, .. } if password == "rotated-webdav-pass"
+        ));
+        let settings: String = legacy.query_row(
+            "SELECT value_json FROM system_settings WHERE key = 'runtime'",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&settings).unwrap()["smtp"]["password"], "new-smtp-pass");
+        let totp: String = legacy.query_row(
+            "SELECT totp_secret FROM admin_accounts WHERE id = 'a1'",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(totp, "NEWTOTPSECRETXYZ");
+        assert!(raw("SELECT config_json FROM storage_backends WHERE id = 'legacy'").starts_with("enc:v1:"));
+    }
+
+    // No credential is left readable anywhere in the database file.
+    let bytes = std::fs::read(&path).unwrap();
+    let haystack = String::from_utf8_lossy(&bytes);
+    for secret in [
+        "legacy-webdav-pass",
+        "rotated-webdav-pass",
+        "new-s3-secret",
+        "legacy-smtp-pass",
+        "new-smtp-pass",
+        "JBSWY3DPEHPK3PXP",
+        "NEWTOTPSECRETXYZ",
+    ] {
+        assert!(!haystack.contains(secret), "{secret} is stored in plaintext");
+    }
+
+    // A ciphertext moved into another user's row does not decrypt there.
+    let db = Database::open(&path).unwrap();
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute(
+            "INSERT INTO storage_backends (id, user_id, name, config_json, kind, is_default, created_at)
+             SELECT 'stolen', 'u2', name, config_json, kind, 1, created_at FROM storage_backends WHERE id = 'legacy'",
+            [],
+        )
+        .unwrap();
+    }
+    assert!(db.list_storage_backends("u2").is_err());
+    assert!(Database::open(&path).is_err());
+    drop(db);
+    rusqlite::Connection::open(&path).unwrap()
+        .execute("DELETE FROM storage_backends WHERE id = 'stolen'", []).unwrap();
+
+    // The same key from DROPDRAWER_SECRET_KEY works; a different key or a lost key file is refused.
+    let key = secret_box::parse_key(&std::fs::read_to_string(&key_path).unwrap()).unwrap();
+    assert!(Database::open_with_secret_key(&path, Some(key)).is_ok());
+    let wrong = Database::open_with_secret_key(&path, Some([9u8; 32])).err().unwrap();
+    assert!(wrong.to_string().contains("does not match"), "{wrong}");
+    std::fs::remove_file(&key_path).unwrap();
+    let missing = Database::open(&path).err().unwrap();
+    assert!(missing.to_string().contains("secret_key"), "{missing}");
+    assert!(!key_path.exists(), "a lost key must not be silently replaced");
+}
+
+#[derive(Clone, Default)]
+struct PushMock {
+    requests: Arc<Mutex<Vec<(String, HashMap<String, String>, serde_json::Value)>>>,
+}
+
+async fn spawn_push_mock() -> (String, PushMock) {
+    use axum::{extract::State as MockState, http::HeaderMap, routing::post};
+    async fn record(
+        MockState(mock): MockState<PushMock>,
+        uri: axum::http::Uri,
+        headers: HeaderMap,
+        body: axum::body::Bytes,
+    ) -> axum::response::Response {
+        use axum::response::IntoResponse;
+        let path = uri.path().to_string();
+        let headers = headers
+            .iter()
+            .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or_default().to_string()))
+            .collect();
+        let body = serde_json::from_slice(&body)
+            .unwrap_or_else(|_| json!(String::from_utf8_lossy(&body).to_string()));
+        mock.requests.lock().unwrap().push((path.clone(), headers, body));
+        if path == "/token" {
+            return Json(json!({"access_token": "fcm-access-token", "expires_in": 3600})).into_response();
+        }
+        if path.ends_with("/expired-apns-token") {
+            return (StatusCode::GONE, Json(json!({"reason": "Unregistered"}))).into_response();
+        }
+        Json(json!({"name": "projects/p/messages/1"})).into_response()
+    }
+    let mock = PushMock::default();
+    let router = Router::new()
+        .route("/token", post(record))
+        .route("/3/device/{token}", post(record))
+        .route("/v1/projects/{project}/messages:send", post(record))
+        .with_state(mock.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    (format!("http://{addr}"), mock)
+}
+
+#[tokio::test]
+async fn pushes_reach_background_and_offline_devices() {
+    use dropdrawer_server::push::{ApnsConfig, FcmConfig, PushService};
+    use futures_util::SinkExt;
+    use std::time::Duration;
+    use tokio_tungstenite::{connect_async, tungstenite::Message};
+
+    let (base, mock) = spawn_push_mock().await;
+    let mut apns = ApnsConfig::new(
+        include_str!("fixtures/push_test_apns.p8"),
+        "KEYID12345",
+        "TEAMID1234",
+        "com.dropdrawer.ios",
+    )
+    .unwrap();
+    apns.base_url = Some(base.clone());
+    let service_account = json!({
+        "project_id": "dropdrawer-test",
+        "client_email": "push@dropdrawer-test.iam.gserviceaccount.com",
+        "private_key": include_str!("fixtures/push_test_fcm.pem"),
+        "token_uri": format!("{base}/token"),
+    });
+    let mut fcm = FcmConfig::new(&service_account.to_string(), "1:123:android:abc", "test-api-key", "123").unwrap();
+    fcm.api_base_url = Some(base.clone());
+
+    let (app, state, _tmp) = spawn_test_server().await;
+    let (_, auth): (_, AuthResponse) = send_json(
+        &app,
+        "POST",
+        "/api/auth/register",
+        None,
+        Some(json!({"username": "pusher", "password": "test-password"})),
+    )
+    .await;
+    let token = Some(auth.token.as_str());
+    let mut devices = HashMap::new();
+    for (id, platform) in [("mac", "macos"), ("iphone", "ios"), ("pixel", "android"), ("ipad", "ios")] {
+        let (status, device): (_, DeviceInfo) = send_json(
+            &app,
+            "POST",
+            "/api/devices",
+            token,
+            Some(json!({"device_id": id, "name": format!("My {id}"), "platform": platform})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        devices.insert(id, device.id);
+    }
+    let register = |device: &str, provider: &str, push_token: &str| {
+        let uri = format!("/api/devices/{}/push-token", devices[device]);
+        let body = json!({"provider": provider, "token": push_token});
+        let app = app.clone();
+        async move { send_raw(&app, "PUT", &uri, token, Some(body)).await.0 }
+    };
+
+    // Without a configured service the server refuses tokens instead of dropping them.
+    assert_eq!(register("iphone", "apns", "aabbcc").await, StatusCode::CONFLICT);
+    state.set_push_service(PushService::new(Some(apns), Some(fcm)).unwrap());
+    let (_, config): (_, serde_json::Value) =
+        send_json(&app, "GET", "/api/client/config", token, None).await;
+    assert_eq!(config["push"]["apns"], true);
+    assert_eq!(config["push"]["fcm"]["project_id"], "dropdrawer-test");
+    assert_eq!(config["push"]["fcm"]["sender_id"], "123");
+
+    assert_eq!(register("iphone", "apns", "aabbcc").await, StatusCode::NO_CONTENT);
+    assert_eq!(register("pixel", "fcm", "fcm-token-1").await, StatusCode::NO_CONTENT);
+    assert_eq!(register("ipad", "apns", "expired-apns-token").await, StatusCode::NO_CONTENT);
+    assert_eq!(register("mac", "apns", "bad token!").await, StatusCode::BAD_REQUEST);
+    let (status, _) = send_raw(
+        &app,
+        "PUT",
+        "/api/devices/someone-elses/push-token",
+        token,
+        Some(json!({"provider": "fcm", "token": "fcm-token-2"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // A foreground Pixel gets the WebSocket event and no push.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let router = app.clone();
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let (mut pixel, _) = connect_async(format!(
+        "ws://{addr}/ws?token={}&device_id={}", auth.token, devices["pixel"],
+    )).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(3), pixel.next()).await.unwrap().unwrap().unwrap();
+
+    let (status, _item): (_, DrawerItem) = send_json(
+        &app,
+        "POST",
+        "/api/drawer/items",
+        token,
+        Some(json!({
+            "device_id": devices["mac"],
+            "kind": "file",
+            "name": "report.pdf",
+            "size": 10,
+            "transfer_mode": "p2p_only",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while mock.requests.lock().unwrap().len() < 2 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    {
+        let requests = mock.requests.lock().unwrap();
+        let paths: Vec<_> = requests.iter().map(|(p, _, _)| p.as_str()).collect();
+        assert!(paths.contains(&"/3/device/aabbcc"), "{paths:?}");
+        assert!(paths.contains(&"/3/device/expired-apns-token"), "{paths:?}");
+        assert!(!paths.iter().any(|p| p.contains("messages:send")), "connected devices get no push");
+        let (_, headers, body) = requests.iter().find(|(p, _, _)| p == "/3/device/aabbcc").unwrap();
+        assert_eq!(headers["apns-topic"], "com.dropdrawer.ios");
+        assert_eq!(headers["apns-push-type"], "alert");
+        assert!(headers["authorization"].starts_with("bearer ") || headers["authorization"].starts_with("Bearer "));
+        assert_eq!(body["aps"]["alert"]["title"], "来自 My mac");
+        assert_eq!(body["aps"]["alert"]["body"], "report.pdf");
+    }
+    // The token APNs reported as gone is removed; the others stay.
+    let remaining: Vec<_> = state
+        .db
+        .list_push_tokens(&auth.user.id)
+        .unwrap()
+        .into_iter()
+        .map(|t| t.token)
+        .collect();
+    assert!(remaining.contains(&"aabbcc".to_string()));
+    assert!(!remaining.contains(&"expired-apns-token".to_string()));
+
+    // Moving to the background keeps the socket available for transfers.
+    pixel.send(Message::text(r#"{"type":"push_visibility","payload":{"foreground":false}}"#)).await.unwrap();
+    pixel.send(Message::text(r#"{"type":"ping"}"#)).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while let Some(Ok(Message::Text(text))) = pixel.next().await {
+            if serde_json::from_str::<serde_json::Value>(&text).unwrap()["type"] == "pong" {
+                return;
+            }
+        }
+        panic!("Pixel disconnected");
+    }).await.unwrap();
+    assert!(state.is_device_online(&auth.user.id, &devices["pixel"]));
+    mock.requests.lock().unwrap().clear();
+    let uri = format!("/api/devices/{}/push-token", devices["pixel"]);
+    let request = Request::builder()
+        .method("PUT")
+        .uri(&uri)
+        .header(header::AUTHORIZATION, format!("Bearer {}", auth.token))
+        .header(header::ACCEPT_LANGUAGE, "en-US")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json!({"provider": "fcm", "token": "fcm-token-1"}).to_string()))
+        .unwrap();
+    assert_eq!(app.clone().oneshot(request).await.unwrap().status(), StatusCode::NO_CONTENT);
+    let (status, _item): (_, DrawerItem) = send_json(
+        &app,
+        "POST",
+        "/api/drawer/items",
+        token,
+        Some(json!({
+            "device_id": devices["iphone"],
+            "kind": "text",
+            "name": "secret note",
+            "size": 11,
+            "text_content": "secret note",
+            "transfer_mode": "p2p_only",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !mock
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(p, _, _)| p.contains("messages:send"))
+        {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    {
+        let requests = mock.requests.lock().unwrap();
+        let (_, headers, body) = requests.iter().find(|(p, _, _)| p.contains("messages:send")).unwrap();
+        assert_eq!(headers["authorization"], "Bearer fcm-access-token");
+        let message = &body["message"];
+        assert_eq!(message["token"], "fcm-token-1");
+        assert_eq!(message["notification"]["title"], "From My iphone");
+        assert_eq!(message["notification"]["body"], "A text snippet");
+        assert_eq!(message["android"]["notification"]["channel_id"], "drawer_items");
+        assert!(!body.to_string().contains("secret note"), "text content never leaves the server");
+        assert!(requests.iter().any(|(p, _, _)| p == "/token"), "the service account token is exchanged");
+        // The sending iPhone is not notified about its own item.
+        assert!(!requests.iter().any(|(p, _, _)| p == "/3/device/aabbcc"));
+    }
+
+    // Signing out everywhere else (password change) drops the other devices' tokens.
+    let (status, _) = send_raw(
+        &app,
+        "POST",
+        "/api/auth/me/password",
+        token,
+        Some(json!({
+            "current_password": "test-password",
+            "new_password": "another-password",
+            "device_id": devices["mac"],
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(state.db.list_push_tokens(&auth.user.id).unwrap().is_empty());
+    server.abort();
+    let _ = server.await;
+}

@@ -15,6 +15,8 @@ services:
       - DROPDRAWER_LOCAL_USER_QUOTA_BYTES=${DROPDRAWER_LOCAL_USER_QUOTA_BYTES:-}
       # Leave empty to have the server generate one and keep it in /data/jwt_secret.
       - DROPDRAWER_JWT_SECRET=${DROPDRAWER_JWT_SECRET:-}
+      # Encrypts stored credentials. Leave empty to use /data/secret_key; back it up with the database.
+      - DROPDRAWER_SECRET_KEY=${DROPDRAWER_SECRET_KEY:-}
       # Enable the console after provisioning a named administrator.
       - DROPDRAWER_ADMIN_ENABLED=${DROPDRAWER_ADMIN_ENABLED:-}
       # Legacy enable flag for upgrades. Its value no longer authenticates requests.
@@ -36,5 +38,15 @@ services:
       - DROPDRAWER_SMTP_PASSWORD=${DROPDRAWER_SMTP_PASSWORD:-}
       - DROPDRAWER_SMTP_FROM=${DROPDRAWER_SMTP_FROM:-}
       - DROPDRAWER_SMTP_FROM_NAME=${DROPDRAWER_SMTP_FROM_NAME:-DropDrawer}
+      # Optional push notifications (see docs/CONFIGURATION.md). Put key files in the data
+      # folder and reference them as /data/<file>.
+      - DROPDRAWER_APNS_KEY_PATH=${DROPDRAWER_APNS_KEY_PATH:-}
+      - DROPDRAWER_APNS_KEY_ID=${DROPDRAWER_APNS_KEY_ID:-}
+      - DROPDRAWER_APNS_TEAM_ID=${DROPDRAWER_APNS_TEAM_ID:-}
+      - DROPDRAWER_APNS_TOPIC=${DROPDRAWER_APNS_TOPIC:-}
+      - DROPDRAWER_FCM_SERVICE_ACCOUNT_PATH=${DROPDRAWER_FCM_SERVICE_ACCOUNT_PATH:-}
+      - DROPDRAWER_FCM_APP_ID=${DROPDRAWER_FCM_APP_ID:-}
+      - DROPDRAWER_FCM_API_KEY=${DROPDRAWER_FCM_API_KEY:-}
+      - DROPDRAWER_FCM_SENDER_ID=${DROPDRAWER_FCM_SENDER_ID:-}
     volumes:
       - ./data/server:/data

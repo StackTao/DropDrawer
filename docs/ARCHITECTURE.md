@@ -69,6 +69,8 @@ DropDrawer 将**控制面**与**数据面**解耦：
 - **对象 key 由服务端生成**：`confirm-upload` 只接受与上传计划一致的 `remote_key`（`<user_id>/<item_id>_<name>`），且不适用于 `local` 存储。
 - **注册开关**：`DROPDRAWER_ALLOW_REGISTRATION=false` 关闭新用户注册（默认开启）。
 - **JWT 密钥**：未设置或使用旧占位值时自动生成随机密钥并以 `0600` 权限保存到数据库同目录的 `jwt_secret`。
+- **推送通知**（`crate::push`）：设备通过 `PUT /api/devices/{id}/push-token` 注册 APNs / FCM 令牌（`device_push_tokens`，同一令牌只属于一台设备）。新条目广播后，服务端在后台给同账号下没有 WebSocket 连接、且不是来源设备的其他设备推送；通知只含设备名与文件名，文字条目不带内容，文案按设备注册时的语言生成。APNs 用 `.p8` 密钥签 ES256 令牌、走 HTTP/2；FCM 用服务账号换取访问令牌、走 HTTP v1。提供方报告失效的令牌自动删除，`disconnect_user_except`（改密码、强制下线、停用）同时删除被下线设备的令牌。Android 端不打包 `google-services.json`，由 `/api/client/config` 的 `push.fcm` 下发 Firebase 选项后在 `PushRegistrar` 里初始化。
+- **凭据加密存储**：`storage_backends.config_json`（网盘 Cookie、刷新令牌、访问密钥）、`system_settings` 的值（SMTP 密码、OAuth 客户端密钥等）和管理员 `totp_secret` 用 XChaCha20-Poly1305 加密后写入（`crate::secret_box`，格式 `enc:v1:<base64>`），附加认证数据绑定表名与行 ID，密文挪到别的行无法解密。密钥来自 `DROPDRAWER_SECRET_KEY`，否则是数据库同目录以 `0600` 生成的 `secret_key`；数据库文件和控制台下载的备份单独泄露时读不出凭据。旧数据库首次启动时自动加密明文并 `VACUUM` 清掉残留页；密钥文件丢失或密钥不匹配时拒绝启动，不会悄悄换新密钥。统计用的网盘类型存在明文 `kind` 列。
 - **暴力破解限流**：同一用户名 15 分钟内登录失败 10 次、同一分享码 15 分钟内提取码错误 10 次后返回 `429`，Argon2 校验在 `spawn_blocking` 中执行。
 - **CORS 与优雅停机**：服务端默认允许跨域（可通过 `DROPDRAWER_CORS_ORIGINS` 逗号分隔收紧），收到 `SIGINT`/`SIGTERM` 时通过 `with_graceful_shutdown` 排空在途请求；SQLite 启用 WAL、`synchronous = NORMAL` 与 `busy_timeout = 5000`。
 - **WebSocket 鉴权**：客户端通过 `Authorization: Bearer` 头传 JWT；`?token=` 查询参数仅为兼容旧客户端保留。

@@ -26,6 +26,21 @@ async fn main() -> anyhow::Result<()> {
 
     let bind_addr = get("DROPDRAWER_BIND").unwrap_or_else(|| "0.0.0.0:8080".to_string());
     let db_path = get("DROPDRAWER_DB_PATH").unwrap_or_else(|| "./data/dropdrawer.db".to_string());
+    let args: Vec<_> = env::args().skip(1).collect();
+    let secret_key = get("DROPDRAWER_SECRET_KEY")
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| dropdrawer_server::secret_box::parse_key(&value))
+        .transpose()
+        .map_err(|err| anyhow::anyhow!("DROPDRAWER_SECRET_KEY: {err}"))?;
+    if args.first().is_some_and(|arg| arg == "db-export-for-downgrade") {
+        let [_, output] = args.as_slice() else {
+            anyhow::bail!("Usage: dropdrawer-server db-export-for-downgrade <new-database-file>");
+        };
+        anyhow::ensure!(Path::new(&db_path).is_file(), "source database does not exist");
+        Database::open_with_secret_key(&db_path, secret_key)?
+            .export_legacy_database(Path::new(output))?;
+        return Ok(());
+    }
     let local_storage =
         get("DROPDRAWER_LOCAL_STORAGE").unwrap_or_else(|| "./data/blobs".to_string());
     let local_max_file_bytes = get("DROPDRAWER_LOCAL_MAX_FILE_BYTES")
@@ -75,7 +90,7 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("Admin console enabled at /admin");
     }
 
-    let db = Database::open(&db_path)?;
+    let db = Database::open_with_secret_key(&db_path, secret_key)?;
     let state = AppState::with_full_config(
         db,
         jwt_secret,
@@ -83,7 +98,11 @@ async fn main() -> anyhow::Result<()> {
         env_defaults,
         admin_enabled,
     );
-    let args: Vec<_> = env::args().skip(1).collect();
+    if let Some(push) = dropdrawer_server::push::PushService::from_settings(get)? {
+        let config = push.client_config();
+        tracing::info!(apns = config.apns, fcm = config.fcm.is_some(), "push notifications are enabled");
+        state.set_push_service(push);
+    }
     if !args.is_empty() {
         return admin::local_account_command(&state, &args);
     }

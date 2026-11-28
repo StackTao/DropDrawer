@@ -64,3 +64,9 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // Push notifications. Firebase is initialized at runtime with the options the
+    // server provides, so no google-services.json or Gradle plugin is needed.
+    implementation("com.google.firebase:firebase-messaging:24.1.0")
+}

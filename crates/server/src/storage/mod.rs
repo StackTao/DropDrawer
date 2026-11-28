@@ -109,23 +109,10 @@ pub fn build_provider(
             root_folder_id.clone(),
             api_base_url.clone(),
         ))),
-        StorageBackendConfig::BaiduNetdisk {
-            client_id,
-            client_secret,
-            refresh_token,
-            access_token,
-            root_path,
-            api_base_url,
-        } => Ok(Box::new(baidu::BaiduNetdiskProvider::new(
+        StorageBackendConfig::BaiduNetdisk { .. } => Ok(Box::new(baidu::BaiduNetdiskProvider::new(
             http,
-            baidu::BaiduNetdiskConfig {
-                client_id: client_id.clone(),
-                client_secret: client_secret.clone(),
-                refresh_token: refresh_token.clone(),
-                access_token: access_token.clone(),
-                root_path: root_path.clone(),
-                api_base_url: api_base_url.clone(),
-            },
+            baidu::BaiduNetdiskConfig::from_backend(config)
+                .ok_or_else(|| anyhow::anyhow!("not a Baidu Netdisk configuration"))?,
         ))),
         StorageBackendConfig::WebDav {
             base_url,

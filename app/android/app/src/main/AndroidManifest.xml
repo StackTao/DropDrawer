@@ -45,6 +45,22 @@
         </activity>
 
         <service
+            android:name=".DropDrawerMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <!-- Firebase starts from the server's options (PushRegistrar), not google-services.json. -->
+        <meta-data
+            android:name="firebase_messaging_auto_init_enabled"
+            android:value="false" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="drawer_items" />
+
+        <service
             android:name=".TransferForegroundService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />

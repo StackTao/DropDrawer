@@ -44,6 +44,7 @@ pub struct AppState {
     pub connections: DashMap<(String, String), mpsc::UnboundedSender<WsEvent>>,
     pub(crate) ready_files: DashMap<(String, String), std::collections::BTreeMap<String, String>>,
     pub(crate) browser_share_devices: DashSet<(String, String)>,
+    pub(crate) background_push_devices: DashSet<(String, String)>,
     pub(crate) browser_shares: crate::routes::browser_share::Sessions,
     // Order connection replacement, removal and the corresponding presence events.
     pub(crate) presence_changes: Mutex<()>,
@@ -75,6 +76,8 @@ pub struct AppState {
     pub started_at: Instant,
     /// Email verification send attempts per email.
     pub email_send_limiter: AttemptLimiter,
+    /// APNs / FCM delivery, when configured (see [`crate::push`]).
+    push: std::sync::OnceLock<Arc<crate::push::PushService>>,
 }
 
 /// Fixed-window counter of failed attempts per key (username, share code, ...).
@@ -175,6 +178,7 @@ impl AppState {
             connections: DashMap::new(),
             ready_files: DashMap::new(),
             browser_share_devices: DashSet::new(),
+            background_push_devices: DashSet::new(),
             browser_shares: Default::default(),
             presence_changes: Mutex::new(()),
             item_mutations: DashMap::new(),
@@ -195,7 +199,17 @@ impl AppState {
             settings_update: Mutex::new(()),
             started_at: Instant::now(),
             email_send_limiter: AttemptLimiter::new(10, Duration::from_secs(15 * 60)),
+            push: std::sync::OnceLock::new(),
         })
+    }
+
+    /// Enables push notifications. Set once at startup (or in tests).
+    pub fn set_push_service(&self, service: Arc<crate::push::PushService>) {
+        let _ = self.push.set(service);
+    }
+
+    pub fn push(&self) -> Option<Arc<crate::push::PushService>> {
+        self.push.get().cloned()
     }
 
     pub fn runtime_settings(&self) -> RuntimeSettings {
@@ -294,6 +308,10 @@ impl AppState {
     }
 
     fn disconnect_user_except(&self, user_id: &str, keep_device_id: Option<&str>) {
+        // Signed-out devices must not keep receiving file names by push.
+        if let Err(err) = self.db.delete_push_tokens_except(user_id, keep_device_id) {
+            tracing::warn!("cannot remove push tokens of signed-out devices: {err}");
+        }
         let keys: Vec<(String, String)> = self
             .connections
             .iter()
@@ -304,6 +322,7 @@ impl AppState {
             self.connections.remove(&key);
             self.ready_files.remove(&key);
             self.browser_share_devices.remove(&key);
+            self.background_push_devices.remove(&key);
         }
     }
 
@@ -558,6 +577,32 @@ impl AppState {
                 LocalProvider::new(root, effective_quota)?
                     .with_max_file_bytes(self.local_max_file_bytes())
                     .restrict_keys_to(record.user_id.clone()),
+            ));
+        }
+        if let Some(cfg) = crate::storage::baidu::BaiduNetdiskConfig::from_backend(&record.config) {
+            // Baidu refresh tokens are single-use: save every rotated pair.
+            let db = self.db.clone();
+            let (backend_id, user_id) = (record.id.clone(), record.user_id.clone());
+            let client_secret = cfg.client_secret.trim().to_owned();
+            let sink: crate::storage::baidu::BaiduTokenSink = Arc::new(move |previous, tokens| {
+                let mut patch = serde_json::Map::new();
+                patch.insert("access_token".into(), tokens.access_token.clone().into());
+                patch.insert("refresh_token".into(), tokens.refresh_token.clone().into());
+                patch.insert("access_token_expires_at".into(), tokens.expires_at.into());
+                db.patch_storage_backend_config_if_current(
+                    &backend_id,
+                    &user_id,
+                    &[
+                        ("client_secret", client_secret.as_str()),
+                        ("refresh_token", previous.refresh_token.as_str()),
+                        ("access_token", previous.access_token.as_str()),
+                    ],
+                    &patch,
+                )
+            });
+            return Ok(Box::new(
+                crate::storage::baidu::BaiduNetdiskProvider::new(self.http.clone(), cfg)
+                    .with_token_store(&record.id, sink),
             ));
         }
         build_provider(&record.config, self.http.clone())

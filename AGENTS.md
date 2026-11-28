@@ -25,6 +25,10 @@
 2. **严禁泄露凭据与敏感配置**：不要在代码、文档、测试、日志或提交记录中写入真实域名密码、JWT Secret、OAuth Client Secret、网盘 Cookie、SSH 私钥或签名密码。
 3. **保持锁文件与 CI 严格兼容**：Windows CI 使用 `flutter pub get --enforce-lockfile` 和 `cargo ... --locked`。如修改依赖，必须同步更新 `Cargo.lock` / `app/pubspec.lock`。
 
+4a. **凭据加密存储不能绕过**：`storage_backends.config_json`、`system_settings` 的值和管理员 `totp_secret` 只能经 `Database` 的方法读写（`crate::secret_box` 加密，附加认证数据绑定表名与行 ID），不要再写直接读这些列的 SQL（统计用明文 `kind` 列）。密钥来自 `DROPDRAWER_SECRET_KEY` 或数据库同目录的 `secret_key`；密钥缺失或不匹配时必须拒绝启动，不能悄悄生成新密钥。
+4b. **推送通知不带正文**：`crate::push` 只推给同账号下处于后台或没有 WebSocket 连接、且不是来源设备的其他设备；通知只含设备名和文件名，文字条目不能带内容。`disconnect_user_except`（改密码、强制下线、停用）会删除被下线设备的推送令牌，客户端退出登录时注销自己的令牌。Android 不打包 `google-services.json`，Firebase 选项由 `/api/client/config` 的 `push.fcm` 下发（`PushRegistrar.kt`）。
+4c. **百度网盘的 refresh_token 只能用一次**：每次刷新返回的新令牌对都要经 `BaiduTokenSink` 写回存储配置，同一后端的刷新在 `TOKEN_SESSIONS` 里串行；不要恢复成每个请求各自刷新。WebDAV 上传前要逐级 `MKCOL` 父目录（`405` 表示已存在）。
+
 ### P2P & 传输安全不变量
 4. **C-ABI 符号变更需同步双端与文档**：修改 `crates/p2p-core/src/ffi.rs` 导出函数时，必须同步更新 `app/lib/services/p2p_ffi.dart`、重新编译本机动态库，并确认 CI 中的符号检查同步。
 5. **`TransferCancelToken` 必须支持多监听器**：`app/lib/services/api_client.dart` 中的 `TransferCancelToken.attach()` 维护回调列表（严禁改回单回调覆盖）。
@@ -44,6 +48,7 @@
     - 外部应用的 OLE 拖放（`IsExternalOleDragActive()`：检测其他进程的 `CLIPBRDWNDCLASS` 捕获，覆盖资源管理器/第三方软件拖文件以及浏览器/编辑器/聊天软件拖文字；纯框选文字不会触发 OLE 拖放）会**立即**弹出边缘引导条，松手后自动收起，与 macOS 保持一致。`OnTimer`、`WM_ACTIVATE`、`kOutsideClickMessage` 仍需检查 `!IsOleDragActive()` 防止从抽屉拖出文件时误收起。
     - 常规窗口顶部左侧 `78px` 留白仅用于 macOS 红绿灯（`windowService.needsMacTrafficLightPadding`），不要加在 Windows/移动端上。
 16. **抽屉模式切换必须等 Flutter 画好再显示**：原生层切换 `collapsed` / `drag_pill` / `expanded` 时先隐藏窗口（macOS `alphaValue = 0`，Windows 空 `SetWindowRgn`），改尺寸后再发 `onDrawerStateChanged`，收到 Dart 回传的 `drawerFrameReady {mode}` 才显示（超时 160ms 兜底）。否则旧模式的布局会被拉伸进新尺寸的窗口里（"变形"）。改动该协议时必须同步 `drawer_window_service.dart`、`MainFlutterWindow.swift` 与 `drawer_window.cpp`；动画只用等比缩放与临界阻尼弹簧，不要再用 `sx ≠ sy` 的变换。
+16a. **`drawer_screen.dart` 按 part 拆分**：手机端和桌面端的构建方法分别在 `drawer_screen_phone.dart` / `drawer_screen_desktop.dart` 的 `extension` 里，小组件在 `drawer_screen_widgets.dart`。extension 里不能调用 `setState`（protected），需要 `setState` 的方法留在 `_DrawerScreenState` 本体；extension 里引用类的静态成员要写 `_DrawerScreenState.xxx`。服务端路由同理按领域拆在 `crates/server/src/routes/{account,devices,storage_backends,items,shares,ws}.rs`，子模块 `use super::*`，供路由表使用的函数标 `pub(super)`。
 17. **界面配色只用 `MacPalette`，且它不是常量**：手机端跟随系统浅色/深色（`MacPalette.use` + `main.dart` 全量重建），桌面端固定深色（macOS 窗口强制 `darkAqua`）。`MacPalette.*` 是运行时 getter，不能放进 `const` 表达式或参数默认值；不要新增 `Colors.white/black.withValues(...)` 或深色十六进制字面量，改用 `MacPalette.fill()`（中性叠加）、`shade()`（凹陷区域）、`group()`（分组面板）、`background`、`onTextPrimary` 等语义色。Material 3 的分隔线和描边颜色取自 `colorScheme.outlineVariant` / `outline`，不是 `dividerColor`。
 18. **Windows 毛玻璃需要 DWM 确认后才半透明**：`ApplyBackdrop()` 用 `DWMWA_SYSTEMBACKDROP_TYPE`（常规窗口 Mica、边缘抽屉 Acrylic，Windows 11 22H2+）并 `DwmExtendFrameIntoClientArea`；只有原生回报 `backdrop: true` 时 Flutter 才画半透明底色，否则保持不透明 `#202020`。偏好设置里可关闭（注册表 `Backdrop`）。
 19. **应用内更新只给打了发布标签的构建**：`DROPDRAWER_RELEASE_TAG` 必须与 `app/pubspec.yaml` 版本一致（`scripts/check_release_tag.sh`，macOS 打包脚本和两个 CI 工作流都会调用）；未打标签的构建是开发版，不检查更新。原生安装入口 `installUpdate` 需同步 `drawer_window_service.dart`、`MainFlutterWindow.swift`（挂载 DMG、校验新包满足当前应用的指定签名要求后退出替换并重启）、`drawer_files.cpp`（`/SILENT /UPDATE=1` 运行安装器，`DropDrawer.iss` 据此重启应用）与 `MainActivity.kt`（比对签名证书）。macOS 发布版必须始终用同一张证书签名，不要给 Windows 更新包加 Mark-of-the-Web。

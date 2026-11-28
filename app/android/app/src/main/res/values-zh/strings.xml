@@ -5,4 +5,6 @@
     <string name="transfer_channel_description">后台上传或下载文件时保持连接并显示进度</string>
     <string name="share_file_chooser">分享文件</string>
     <string name="share_text_chooser">分享文本</string>
+    <string name="push_channel_name">抽屉新内容</string>
+    <string name="push_channel_description">其他设备往抽屉里放入文件或文字时通知你</string>
 </resources>

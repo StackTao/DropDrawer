@@ -301,6 +301,7 @@ pub(super) async fn remove_device(
     let key = (id.clone(), device_id.clone());
     state.connections.remove(&key);
     state.ready_files.remove(&key);
+    state.background_push_devices.remove(&key);
     state
         .db
         .remove_device_by_admin(&device_id, &id)

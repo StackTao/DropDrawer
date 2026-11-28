@@ -5,4 +5,6 @@
     <string name="transfer_channel_description">Keeps uploads and downloads connected in the background and shows their progress</string>
     <string name="share_file_chooser">Share file</string>
     <string name="share_text_chooser">Share text</string>
+    <string name="push_channel_name">New in your drawer</string>
+    <string name="push_channel_description">Tells you when another device puts a file or text in your drawer</string>
 </resources>

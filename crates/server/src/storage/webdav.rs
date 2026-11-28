@@ -35,6 +35,32 @@ impl WebDavProvider {
             .join("/");
         format!("{}/{}", self.base_url, encoded)
     }
+
+    /// WebDAV servers answer `409 Conflict` to a PUT whose parent collection is
+    /// missing, and object keys include the owner's folder (`<user>/<item>`), so
+    /// create each parent first. `405` means the collection already exists.
+    async fn ensure_parent_collections(&self, remote_key: &str) -> anyhow::Result<()> {
+        let segments: Vec<&str> = remote_key
+            .trim_start_matches('/')
+            .split('/')
+            .filter(|s| !s.is_empty())
+            .collect();
+        let mkcol = Method::from_bytes(b"MKCOL")?;
+        for depth in 1..segments.len() {
+            let url = format!("{}/", self.object_url(&segments[..depth].join("/")));
+            let resp = self
+                .http
+                .request(mkcol.clone(), &url)
+                .basic_auth(&self.username, Some(&self.password))
+                .send()
+                .await?;
+            let status = resp.status().as_u16();
+            if !(resp.status().is_success() || status == 405 || status == 301) {
+                anyhow::bail!("WebDAV MKCOL failed ({status}) for {url}");
+            }
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -45,6 +71,7 @@ impl StorageProvider for WebDavProvider {
         content_length: Option<u64>,
         stream: ByteStream,
     ) -> anyhow::Result<PutResult> {
+        self.ensure_parent_collections(remote_key).await?;
         let url = self.object_url(remote_key);
         let counter = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
         let counter_clone = counter.clone();

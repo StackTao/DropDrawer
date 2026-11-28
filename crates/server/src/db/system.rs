@@ -50,13 +50,16 @@ impl Database {
 
     pub fn get_setting(&self, key: &str) -> anyhow::Result<Option<String>> {
         let conn = self.lock_conn();
-        conn.query_row(
-            "SELECT value_json FROM system_settings WHERE key = ?1",
-            params![key],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(Into::into)
+        let stored: Option<String> = conn
+            .query_row(
+                "SELECT value_json FROM system_settings WHERE key = ?1",
+                params![key],
+                |row| row.get(0),
+            )
+            .optional()?;
+        stored
+            .map(|value| self.secrets().open(&super::setting_context(key), &value))
+            .transpose()
     }
 
     pub fn set_setting(&self, key: &str, value_json: &str) -> anyhow::Result<()> {
@@ -65,7 +68,11 @@ impl Database {
             "INSERT INTO system_settings (key, value_json, updated_at)
              VALUES (?1, ?2, ?3)
              ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at",
-            params![key, value_json, Utc::now().to_rfc3339()],
+            params![
+                key,
+                self.secrets().seal(&super::setting_context(key), value_json),
+                Utc::now().to_rfc3339()
+            ],
         )?;
         Ok(())
     }

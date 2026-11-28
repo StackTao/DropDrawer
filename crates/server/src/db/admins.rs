@@ -101,15 +101,26 @@ pub(super) fn migrate(conn: &Connection) -> rusqlite::Result<()> {
 const ACCOUNT_COLUMNS: &str = "id, username, password_hash, role, totp_secret, totp_enabled, \
      totp_last_step, disabled, token_version, created_at, last_login_at";
 
-fn map_account(row: &rusqlite::Row<'_>) -> rusqlite::Result<AdminAccount> {
+fn map_account(
+    secrets: &crate::secret_box::SecretBox,
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<AdminAccount> {
+    let id: String = row.get(0)?;
     let role: String = row.get(3)?;
+    let totp_secret = row
+        .get::<_, Option<String>>(4)?
+        .map(|stored| secrets.open(&super::totp_context(&id), &stored))
+        .transpose()
+        .map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, e.into())
+        })?;
     let created: String = row.get(9)?;
     Ok(AdminAccount {
-        id: row.get(0)?,
+        id,
         username: row.get(1)?,
         password_hash: row.get(2)?,
         role: AdminRole::parse(&role),
-        totp_secret: row.get(4)?,
+        totp_secret,
         totp_enabled: row.get::<_, i64>(5)? != 0,
         totp_last_step: row.get(6)?,
         disabled: row.get::<_, i64>(7)? != 0,
@@ -141,7 +152,7 @@ impl Database {
         let mut stmt = conn.prepare(&format!(
             "SELECT {ACCOUNT_COLUMNS} FROM admin_accounts ORDER BY created_at"
         ))?;
-        let rows = stmt.query_map([], map_account)?;
+        let rows = stmt.query_map([], |row| map_account(self.secrets(), row))?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
     }
 
@@ -150,7 +161,7 @@ impl Database {
         conn.query_row(
             &format!("SELECT {ACCOUNT_COLUMNS} FROM admin_accounts WHERE id = ?1"),
             params![id],
-            map_account,
+            |row| map_account(self.secrets(), row),
         )
         .optional()
         .map_err(Into::into)
@@ -161,7 +172,7 @@ impl Database {
         conn.query_row(
             &format!("SELECT {ACCOUNT_COLUMNS} FROM admin_accounts WHERE username = ?1"),
             params![username.trim()],
-            map_account,
+            |row| map_account(self.secrets(), row),
         )
         .optional()
         .map_err(Into::into)
@@ -223,7 +234,7 @@ impl Database {
         let conn = self.lock_conn();
         conn.execute(
             "UPDATE admin_accounts SET totp_secret = ?1, totp_enabled = 0 WHERE id = ?2",
-            params![secret, id],
+            params![self.secrets().seal(&super::totp_context(id), secret), id],
         )?;
         Ok(())
     }

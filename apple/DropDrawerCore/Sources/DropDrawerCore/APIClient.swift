@@ -692,6 +692,22 @@ public final class APIClient: @unchecked Sendable {
         }
     }
 
+    /// Registers this device's APNs token so the server can notify it while the
+    /// app is in the background. `sandbox` matches the app's provisioning profile.
+    public func registerPushToken(deviceId: String, token: String, sandbox: Bool) async throws {
+        let req = try makeRequest(
+            "/api/devices/\(deviceId)/push-token",
+            method: "PUT",
+            jsonBody: ["provider": "apns", "token": token, "sandbox": sandbox]
+        )
+        _ = try await perform(req)
+    }
+
+    public func deletePushToken(deviceId: String) async throws {
+        let req = try makeRequest("/api/devices/\(deviceId)/push-token", method: "DELETE")
+        _ = try await perform(req)
+    }
+
     public func listDevices() async throws -> [DeviceInfo] {
         let req = try makeRequest("/api/devices")
         let data = try await perform(req)

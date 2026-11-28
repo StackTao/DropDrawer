@@ -33,6 +33,7 @@ class MainActivity : FlutterActivity() {
     companion object {
         private const val MOBILE_CHANNEL = "com.dropdrawer/mobile"
         private const val REQUEST_PICK_MEDIA = 4102
+        private const val REQUEST_NOTIFICATIONS = 4103
     }
 
     private var mobileChannel: MethodChannel? = null
@@ -105,6 +106,20 @@ class MainActivity : FlutterActivity() {
                 val imagePath = call.argument<String>("imagePath") ?: ""
                 result.success(readClipboard(imagePath))
             }
+            "configurePush" -> {
+                val options = (call.arguments as? Map<*, *>)
+                    ?.entries
+                    ?.associate { it.key.toString() to it.value?.toString().orEmpty() }
+                    ?: emptyMap()
+                requestNotificationPermission()
+                PushRegistrar.configure(applicationContext, options) { token ->
+                    runOnUiThread { result.success(token) }
+                }
+            }
+            "disablePush" -> {
+                PushRegistrar.disable(applicationContext)
+                result.success(true)
+            }
             "updateTransferNotification" -> {
                 val active = call.argument<Boolean>("active") ?: false
                 if (active) {
@@ -120,6 +135,17 @@ class MainActivity : FlutterActivity() {
             }
             else -> result.notImplemented()
         }
+    }
+
+    /** Android 13+ asks once; the system remembers a refusal. */
+    private fun requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATIONS)
     }
 
     private fun supportsAndroidPhotoPicker(): Boolean {

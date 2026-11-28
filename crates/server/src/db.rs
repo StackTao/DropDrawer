@@ -9,9 +9,14 @@ use protocol::{
 };
 use rusqlite::{params, Connection, OptionalExtension};
 
+use crate::secret_box::{self, SecretBox};
+
 mod admin;
 mod admins;
+mod push;
 mod system;
+
+pub use push::PushTokenRecord;
 
 pub use admins::{AdminAccount, AdminAccountSummary, AdminRole};
 
@@ -21,9 +26,42 @@ pub use admin::{
 };
 pub use system::{AuditEntry, InviteCodeRecord};
 
+/// Associated data that binds each sealed value to the row that holds it.
+pub(crate) fn backend_context(id: &str) -> String {
+    format!("storage_backends/{id}/config")
+}
+pub(crate) fn setting_context(key: &str) -> String {
+    format!("system_settings/{key}")
+}
+pub(crate) fn totp_context(id: &str) -> String {
+    format!("admin_accounts/{id}/totp_secret")
+}
+
+/// RFC 7396 JSON merge patch: `null` removes a key, objects merge recursively.
+fn merge_patch(target: &mut serde_json::Value, patch: &serde_json::Value) {
+    let serde_json::Value::Object(patch) = patch else {
+        *target = patch.clone();
+        return;
+    };
+    if !target.is_object() {
+        *target = serde_json::Value::Object(serde_json::Map::new());
+    }
+    if let serde_json::Value::Object(target) = target {
+        for (key, value) in patch {
+            if value.is_null() {
+                target.remove(key);
+            } else {
+                merge_patch(target.entry(key.clone()).or_insert(serde_json::Value::Null), value);
+            }
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Database {
     conn: Arc<Mutex<Connection>>,
+    /// Seals credentials before they reach SQLite (see [`crate::secret_box`]).
+    secrets: Arc<SecretBox>,
 }
 
 #[derive(Debug, Clone)]
@@ -97,8 +135,61 @@ pub enum GoogleSignupPolicy<'a> {
 }
 
 impl Database {
+    /// Opens the database with the key from the `secret_key` file next to it
+    /// (generated on first use). In-memory databases get a throwaway key.
     pub fn open(path: impl AsRef<Path>) -> anyhow::Result<Self> {
-        if let Some(parent) = path.as_ref().parent()
+        Self::open_with_secret_key(path, None)
+    }
+
+    /// Opens the database, sealing credentials with `key` when given (from
+    /// `DROPDRAWER_SECRET_KEY`) and otherwise with the `secret_key` file next to it.
+    pub fn open_with_secret_key(
+        path: impl AsRef<Path>,
+        key: Option<[u8; 32]>,
+    ) -> anyhow::Result<Self> {
+        let in_memory = {
+            let raw = path.as_ref().to_string_lossy();
+            raw == ":memory:" || raw.starts_with("file::memory:")
+        };
+        let key_path = path
+            .as_ref()
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."))
+            .join(secret_box::KEY_FILE_NAME);
+        let conn = Self::open_connection(path.as_ref())?;
+        let secrets = match key {
+            Some(key) => SecretBox::from_key(&key),
+            None if in_memory => SecretBox::ephemeral(),
+            None => {
+                let existing = secret_box::load_key_file(&key_path, false)?;
+                let key = match existing {
+                    Some(key) => key,
+                    None => {
+                        if Self::has_sealed_values(&conn)? {
+                            anyhow::bail!(
+                                "{} is missing, but this database contains encrypted credentials. \
+                                 Restore the secret_key file that belongs to it, or set DROPDRAWER_SECRET_KEY.",
+                                key_path.display()
+                            );
+                        }
+                        secret_box::load_key_file(&key_path, true)?
+                            .ok_or_else(|| anyhow::anyhow!("cannot create {}", key_path.display()))?
+                    }
+                };
+                SecretBox::from_key(&key)
+            }
+        };
+        let db = Self {
+            conn: Arc::new(Mutex::new(conn)),
+            secrets: Arc::new(secrets),
+        };
+        db.seal_plaintext_secrets()?;
+        Ok(db)
+    }
+
+    fn open_connection(path: &Path) -> anyhow::Result<Connection> {
+        if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
         {
             std::fs::create_dir_all(parent)?;
@@ -139,6 +230,7 @@ impl Database {
                  user_id TEXT NOT NULL,
                  name TEXT NOT NULL,
                  config_json TEXT NOT NULL,
+                 kind TEXT,
                  is_default INTEGER NOT NULL DEFAULT 0,
                  created_at TEXT NOT NULL,
                  FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -258,9 +350,111 @@ impl Database {
         system::migrate(&conn)?;
         admin::migrate(&conn)?;
         admins::migrate(&conn)?;
-        Ok(Self {
-            conn: Arc::new(Mutex::new(conn)),
-        })
+        push::migrate(&conn)?;
+        // The backend kind gets its own column so statistics never need to read
+        // the (encrypted) configuration. Backfill it while configs are still plaintext.
+        let _ = conn.execute("ALTER TABLE storage_backends ADD COLUMN kind TEXT", []);
+        conn.execute(
+            "UPDATE storage_backends SET kind = json_extract(config_json, '$.kind')
+             WHERE kind IS NULL AND json_valid(config_json)",
+            [],
+        )?;
+        Ok(conn)
+    }
+
+    fn has_sealed_values(conn: &Connection) -> anyhow::Result<bool> {
+        let pattern = "enc:v1:%";
+        let found: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM storage_backends WHERE config_json LIKE ?1)
+                 OR EXISTS(SELECT 1 FROM system_settings WHERE value_json LIKE ?1)
+                 OR EXISTS(SELECT 1 FROM admin_accounts WHERE totp_secret LIKE ?1)",
+            params![pattern],
+            |row| row.get(0),
+        )?;
+        Ok(found)
+    }
+
+    /// Encrypts legacy plaintext and verifies existing sealed values at startup.
+    fn seal_plaintext_secrets(&self) -> anyhow::Result<()> {
+        let mut conn = self.lock_conn();
+        let sealed = Self::rewrite_credentials(&mut conn, &self.secrets, true)?;
+        if sealed > 0 {
+            // Rebuild the file so the old plaintext does not linger in free pages or the WAL.
+            conn.execute_batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);")?;
+            tracing::info!(sealed, "encrypted stored credentials that were saved as plaintext");
+        }
+        Ok(())
+    }
+
+    /// Exports a consistent snapshot readable by versions before encryption.
+    /// Plaintext exists only in the mode-0600 export; the live database stays
+    /// encrypted. An existing destination is never replaced.
+    pub fn export_legacy_database(&self, dest: &Path) -> anyhow::Result<()> {
+        let parent = dest
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let temporary = tempfile::NamedTempFile::new_in(parent)?;
+        self.backup_to(temporary.path())?;
+        {
+            let mut conn = Connection::open(temporary.path())?;
+            conn.execute_batch("PRAGMA journal_mode = DELETE;")?;
+            Self::rewrite_credentials(&mut conn, &self.secrets, false)?;
+        }
+        temporary.as_file().sync_all()?;
+        temporary.persist_noclobber(dest)?;
+        Ok(())
+    }
+
+    fn rewrite_credentials(
+        conn: &mut Connection,
+        secrets: &SecretBox,
+        encrypt: bool,
+    ) -> anyhow::Result<usize> {
+        type CredentialColumn = (&'static str, &'static str, fn(&str) -> String);
+        const COLUMNS: [CredentialColumn; 3] = [
+            (
+                "SELECT id, config_json FROM storage_backends",
+                "UPDATE storage_backends SET config_json = ?1 WHERE id = ?2",
+                backend_context,
+            ),
+            (
+                "SELECT key, value_json FROM system_settings",
+                "UPDATE system_settings SET value_json = ?1 WHERE key = ?2",
+                setting_context,
+            ),
+            (
+                "SELECT id, totp_secret FROM admin_accounts WHERE totp_secret IS NOT NULL",
+                "UPDATE admin_accounts SET totp_secret = ?1 WHERE id = ?2",
+                totp_context,
+            ),
+        ];
+        let tx = conn.transaction()?;
+        let mut changed = 0;
+        for (read, write, context) in COLUMNS {
+            let rows: Vec<(String, String)> = {
+                let mut stmt = tx.prepare(read)?;
+                let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+                rows.collect::<rusqlite::Result<_>>()?
+            };
+            for (id, stored) in rows {
+                let context = context(&id);
+                if SecretBox::is_sealed(&stored) {
+                    let plaintext = secrets.open(&context, &stored)?;
+                    if !encrypt {
+                        changed += tx.execute(write, params![plaintext, id])?;
+                    }
+                } else if encrypt {
+                    changed += tx.execute(write, params![secrets.seal(&context, &stored), id])?;
+                }
+            }
+        }
+        tx.commit()?;
+        Ok(changed)
+    }
+
+    pub(crate) fn secrets(&self) -> &SecretBox {
+        &self.secrets
     }
 
     fn lock_conn(&self) -> std::sync::MutexGuard<'_, Connection> {
@@ -846,7 +1040,11 @@ impl Database {
         is_default: bool,
     ) -> anyhow::Result<StorageBackendRecord> {
         let now = Utc::now();
-        let config_json = serde_json::to_string(config)?;
+        let config_value = serde_json::to_value(config)?;
+        let kind = config_value.get("kind").and_then(|k| k.as_str()).map(str::to_owned);
+        let sealed = self
+            .secrets
+            .seal(&backend_context(id), &serde_json::to_string(&config_value)?);
         let conn = self.lock_conn();
         if is_default {
             conn.execute(
@@ -855,9 +1053,9 @@ impl Database {
             )?;
         }
         conn.execute(
-            "INSERT INTO storage_backends (id, user_id, name, config_json, is_default, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![id, user_id, name, config_json, is_default as i32, now.to_rfc3339()],
+            "INSERT INTO storage_backends (id, user_id, name, config_json, kind, is_default, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![id, user_id, name, sealed, kind, is_default as i32, now.to_rfc3339()],
         )?;
         Ok(StorageBackendRecord {
             id: id.to_string(),
@@ -875,7 +1073,7 @@ impl Database {
             "SELECT id, user_id, name, config_json, is_default, created_at
              FROM storage_backends WHERE user_id = ?1 ORDER BY is_default DESC, created_at DESC",
         )?;
-        let rows = stmt.query_map(params![user_id], Self::map_backend_row)?;
+        let rows = stmt.query_map(params![user_id], |row| self.map_backend_row(row))?;
         let mut out = Vec::new();
         for r in rows {
             out.push(r?);
@@ -893,7 +1091,7 @@ impl Database {
             "SELECT id, user_id, name, config_json, is_default, created_at
              FROM storage_backends WHERE id = ?1 AND user_id = ?2",
             params![backend_id, user_id],
-            Self::map_backend_row,
+            |row| self.map_backend_row(row),
         )
         .optional()
         .map_err(Into::into)
@@ -908,7 +1106,7 @@ impl Database {
             "SELECT id, user_id, name, config_json, is_default, created_at
              FROM storage_backends WHERE user_id = ?1 ORDER BY is_default DESC, created_at ASC LIMIT 1",
             params![user_id],
-            Self::map_backend_row,
+            |row| self.map_backend_row(row),
         )
         .optional()
         .map_err(Into::into)
@@ -921,12 +1119,61 @@ impl Database {
         name: &str,
         patch: &serde_json::Map<String, serde_json::Value>,
     ) -> anyhow::Result<bool> {
-        let conn = self.lock_conn();
-        let affected = conn.execute(
-            "UPDATE storage_backends SET name = ?3, config_json = json_patch(config_json, ?4)
+        self.patch_storage_backend(backend_id, user_id, Some(name), patch, None)
+    }
+
+    /// Stores rotated provider credentials only if the credentials used for
+    /// the refresh still match the stored configuration.
+    pub(crate) fn patch_storage_backend_config_if_current(
+        &self,
+        backend_id: &str,
+        user_id: &str,
+        expected: &[(&str, &str)],
+        patch: &serde_json::Map<String, serde_json::Value>,
+    ) -> anyhow::Result<bool> {
+        self.patch_storage_backend(backend_id, user_id, None, patch, Some(expected))
+    }
+
+    fn patch_storage_backend(
+        &self,
+        backend_id: &str,
+        user_id: &str,
+        name: Option<&str>,
+        patch: &serde_json::Map<String, serde_json::Value>,
+        expected: Option<&[(&str, &str)]>,
+    ) -> anyhow::Result<bool> {
+        let context = backend_context(backend_id);
+        let mut conn = self.lock_conn();
+        // Read, patch and write under one transaction (and the connection lock),
+        // so concurrent edits cannot interleave with the decrypt / re-encrypt.
+        let tx = conn.transaction()?;
+        let stored: Option<(String, String)> = tx
+            .query_row(
+                "SELECT config_json, name FROM storage_backends WHERE id = ?1 AND user_id = ?2",
+                params![backend_id, user_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((stored, current_name)) = stored else {
+            return Ok(false);
+        };
+        let mut config: serde_json::Value = serde_json::from_str(&self.secrets.open(&context, &stored)?)?;
+        if expected.is_some_and(|fields| {
+            fields.iter().any(|(field, value)| {
+                config.get(*field).and_then(|v| v.as_str()).unwrap_or("").trim() != *value
+            })
+        }) {
+            return Ok(false);
+        }
+        merge_patch(&mut config, &serde_json::Value::Object(patch.clone()));
+        let kind = config.get("kind").and_then(|k| k.as_str()).map(str::to_owned);
+        let sealed = self.secrets.seal(&context, &serde_json::to_string(&config)?);
+        let affected = tx.execute(
+            "UPDATE storage_backends SET name = ?3, config_json = ?4, kind = ?5
              WHERE id = ?1 AND user_id = ?2",
-            params![backend_id, user_id, name, serde_json::to_string(patch)?],
+            params![backend_id, user_id, name.unwrap_or(&current_name), sealed, kind],
         )?;
+        tx.commit()?;
         Ok(affected > 0)
     }
 
@@ -953,15 +1200,22 @@ impl Database {
         Ok(affected > 0)
     }
 
-    fn map_backend_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StorageBackendRecord> {
-        let cfg_json: String = row.get(3)?;
+    fn map_backend_row(&self, row: &rusqlite::Row<'_>) -> rusqlite::Result<StorageBackendRecord> {
+        let id: String = row.get(0)?;
+        let stored: String = row.get(3)?;
         let is_default: i32 = row.get(4)?;
         let created: String = row.get(5)?;
-        let config: StorageBackendConfig = serde_json::from_str(&cfg_json).map_err(|e| {
-            rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(e))
-        })?;
+        let conversion = |e: Box<dyn std::error::Error + Send + Sync>| {
+            rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, e)
+        };
+        let cfg_json = self
+            .secrets
+            .open(&backend_context(&id), &stored)
+            .map_err(|e| conversion(e.into()))?;
+        let config: StorageBackendConfig =
+            serde_json::from_str(&cfg_json).map_err(|e| conversion(Box::new(e)))?;
         Ok(StorageBackendRecord {
-            id: row.get(0)?,
+            id,
             user_id: row.get(1)?,
             name: row.get(2)?,
             config,

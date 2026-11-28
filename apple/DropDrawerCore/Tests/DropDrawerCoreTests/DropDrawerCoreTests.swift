@@ -29,6 +29,22 @@ private final class StubURLProtocol: URLProtocol, @unchecked Sendable {
 
 @Suite("DropDrawerCore Tests")
 struct DropDrawerCoreTests {
+    @Test("APNs routes by signed provisioning, including development-signed Release packages")
+    func pushEnvironmentUsesProvisioning() throws {
+        for environment in [APNsEnvironment.development, .production] {
+            let plist = try PropertyListSerialization.data(
+                fromPropertyList: ["Entitlements": ["aps-environment": environment.rawValue]],
+                format: .xml,
+                options: 0
+            )
+            let wrapped = Data([0x30, 0x80]) + plist + Data([0x00, 0x00])
+            #expect(APNsEnvironment.fromProvisioningProfile(wrapped) == environment)
+        }
+        #expect(APNsEnvironment.fromProvisioningProfile(nil) == .production)
+        #expect(APNsEnvironment.fromProvisioningProfile(Data([0xff])) == nil)
+    }
+
+
     @Test("DrawerItem decodes server JSON and computes display helpers")
     func decodeDrawerItem() throws {
         let json = """

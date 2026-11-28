@@ -165,17 +165,61 @@ class ClientAnnouncement {
       );
 }
 
+/// Firebase options the server provides for Android push notifications. The
+/// app has no Firebase project of its own, so each deployment can use its own.
+class FcmClientOptions {
+  final String projectId;
+  final String applicationId;
+  final String apiKey;
+  final String senderId;
+
+  const FcmClientOptions({
+    required this.projectId,
+    required this.applicationId,
+    required this.apiKey,
+    required this.senderId,
+  });
+
+  static FcmClientOptions? fromJson(Object? json) {
+    if (json is! Map<String, dynamic>) return null;
+    final projectId = json['project_id'] as String? ?? '';
+    final applicationId = json['application_id'] as String? ?? '';
+    final apiKey = json['api_key'] as String? ?? '';
+    final senderId = json['sender_id'] as String? ?? '';
+    if ([projectId, applicationId, apiKey, senderId].any((v) => v.isEmpty)) {
+      return null;
+    }
+    return FcmClientOptions(
+      projectId: projectId,
+      applicationId: applicationId,
+      apiKey: apiKey,
+      senderId: senderId,
+    );
+  }
+
+  Map<String, String> toMap() => {
+        'project_id': projectId,
+        'application_id': applicationId,
+        'api_key': apiKey,
+        'sender_id': senderId,
+      };
+}
+
 class ClientConfig {
   final String serverVersion;
   final ClientFeatures features;
   final ClientAnnouncement? announcement;
   final String? minClientVersion;
 
+  /// Set when the server can notify Android devices through FCM.
+  final FcmClientOptions? fcm;
+
   const ClientConfig({
     this.serverVersion = '',
     this.features = const ClientFeatures(),
     this.announcement,
     this.minClientVersion,
+    this.fcm,
   });
 
   factory ClientConfig.fromJson(Map<String, dynamic> json) => ClientConfig(
@@ -188,6 +232,9 @@ class ClientConfig {
                 json['announcement'] as Map<String, dynamic>)
             : null,
         minClientVersion: json['min_client_version'] as String?,
+        fcm: json['push'] is Map<String, dynamic>
+            ? FcmClientOptions.fromJson((json['push'] as Map<String, dynamic>)['fcm'])
+            : null,
       );
 }
 

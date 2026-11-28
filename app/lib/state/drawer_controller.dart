@@ -219,9 +219,51 @@ class DropDrawerController extends ChangeNotifier {
       if (identical(_api, api)) {
         clientConfig = cfg;
         notifyListeners();
+        unawaited(_syncPushRegistration(api, cfg));
       }
     } catch (e) {
       if (identical(_api, api)) await _handleAuthFailure(e);
+    }
+  }
+
+  /// `<device id>|<token>` the server last accepted, to avoid re-sending it on
+  /// every reconnect.
+  String? _registeredPushKey;
+  bool _pushForeground = true;
+
+  void setPushForeground(bool foreground) {
+    if (_pushForeground == foreground) return;
+    _pushForeground = foreground;
+    final channel = _ws;
+    if (wsConnected && channel != null) _publishPushVisibility(channel);
+  }
+
+  void _publishPushVisibility(WebSocketChannel channel) {
+    if (!windowService.isAndroid) return;
+    try {
+      channel.sink.add(jsonEncode({
+        'type': 'push_visibility',
+        'payload': {'foreground': _pushForeground},
+      }));
+    } on StateError {
+      // The next socket will publish the current state after reconnecting.
+    }
+  }
+
+  /// Registers this Android device for notifications while it is in the background.
+  Future<void> _syncPushRegistration(ApiClient api, ClientConfig? cfg) async {
+    final options = cfg?.fcm;
+    final device = deviceId;
+    if (options == null || device == null || !windowService.isAndroid) return;
+    final pushToken = await windowService.configurePush(options.toMap());
+    if (pushToken == null || pushToken.isEmpty || !identical(_api, api)) return;
+    final key = '$device|$pushToken';
+    if (_registeredPushKey == key) return;
+    try {
+      await api.registerPushToken(deviceId: device, provider: 'fcm', pushToken: pushToken);
+      _registeredPushKey = key;
+    } catch (_) {
+      // Retried on the next config refresh.
     }
   }
 
@@ -541,6 +583,14 @@ class DropDrawerController extends ChangeNotifier {
   }
 
   Future<void> logout() async {
+    // A signed-out phone must not keep receiving notifications for this account.
+    final pushApi = _api;
+    final pushDevice = deviceId;
+    if (_registeredPushKey != null && pushApi != null && pushDevice != null) {
+      unawaited(pushApi.deletePushToken(pushDevice).catchError((_) {}));
+    }
+    _registeredPushKey = null;
+    unawaited(windowService.disablePush());
     _wsReconnectTimer?.cancel();
     _p2pPollTimer?.cancel();
     _closeWs();
@@ -861,6 +911,7 @@ class DropDrawerController extends ChangeNotifier {
 
     if (!identical(_ws, channel)) return;
     wsConnected = true;
+    _publishPushVisibility(channel);
     notifyListeners();
     if (!p2pReady) return;
 

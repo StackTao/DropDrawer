@@ -325,6 +325,33 @@ class ApiClient {
     return ClientConfig.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
   }
 
+  /// Registers this device's push token so the server can notify it while the
+  /// app is in the background.
+  Future<void> registerPushToken({
+    required String deviceId,
+    required String provider,
+    required String pushToken,
+  }) async {
+    final resp = await http
+        .put(
+          Uri.parse('$_cleanBase/api/devices/${Uri.encodeComponent(deviceId)}/push-token'),
+          headers: _headers(),
+          body: jsonEncode({'provider': provider, 'token': pushToken}),
+        )
+        .timeout(const Duration(seconds: 10));
+    _check(resp);
+  }
+
+  Future<void> deletePushToken(String deviceId) async {
+    final resp = await http
+        .delete(
+          Uri.parse('$_cleanBase/api/devices/${Uri.encodeComponent(deviceId)}/push-token'),
+          headers: _headers(json: false),
+        )
+        .timeout(const Duration(seconds: 10));
+    _check(resp);
+  }
+
   Future<List<DeviceInfo>> listDevices() async {
     final resp = await http.get(
       Uri.parse('$_cleanBase/api/devices'),
